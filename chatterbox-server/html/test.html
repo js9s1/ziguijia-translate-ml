@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<body>
+    <h2>Test 1: Plain file input</h2>
+    <input type="file" id="test1">
+    <p>(click the button above)</p>
+
+    <h2>Test 2: With label</h2>
+    <label for="test2">Click this label</label>
+    <input type="file" id="test2">
+
+    <h2>Test 3: In flex row (like srt.html)</h2>
+    <div style="display:flex;align-items:center;gap:12px;">
+        <label for="test3" style="width:130px;flex-shrink:0;">File label</label>
+        <input type="file" id="test3" style="flex:1;border:1px solid #ddd;border-radius:4px;padding:6px 0;box-sizing:border-box;">
+    </div>
+
+    <h2>Test 4: JS triggered click</h2>
+    <button onclick="document.getElementById('test4').click()">Browse via JS</button>
+    <input type="file" id="test4">
+</body>
+</html>

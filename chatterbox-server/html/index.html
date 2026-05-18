@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>宁师的视频翻译工具</title>
+    <link rel="stylesheet" href="/ning.css">
+</head>
+<body>
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-container">
+            <div class="hourglass">&#8987;</div>
+            <div class="loading-text">加载中，请稍候...</div>
+        </div>
+    </div>
+
+    <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <div>
+            <a href="/web-ui-presentation.html" style="color:#ffc107;text-decoration:none;font-size:0.9em;">📖 使用指南</a>
+        </div>
+        <div id="userArea" style="font-size:0.9em;"></div>
+    </div>
+
+    <div class="container">
+        <div class="hero">
+            <h1>宁师的视频翻译工具</h1>
+            <p>AI驱动的视频翻译与语音克隆工具</p>
+        </div>
+
+        <div class="menu-grid">
+            <a href="/tts" class="menu-item">
+                <div class="icon">🎙️</div>
+                <h2>生成翻译语音</h2>
+                <p>输入文字，选择声音风格，生成克隆语音</p>
+            </a>
+
+            <a href="/srt" class="menu-item">
+                <div class="icon">📝</div>
+                <h2>从SRT生成音轨</h2>
+                <p>上传SRT字幕文件，批量生成翻译语音轨道</p>
+            </a>
+
+            <a href="/video/ning" class="menu-item">
+                <div class="icon">🎬</div>
+                <h2>翻译官方宁视频</h2>
+                <p>使用已有翻译字幕，为官方宁视频配上翻译音频</p>
+            </a>
+
+            <a href="/video/custom" class="menu-item">
+                <div class="icon">🌐</div>
+                <h2>翻译自定义视频</h2>
+                <p>上传任意视频，生成翻译后的视频; 可以上传英文srt，也可以系统自动生成中文srt并翻译成英文 </p>
+            </a>
+        </div>
+
+    </div>
+    <script src="/utils.js"></script>
+    <script src="/auth.js"></script>
+</body>
+</html>

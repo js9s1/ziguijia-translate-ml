@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>搜索结果 - 宁师的视频翻译工具</title>
+    <link rel="stylesheet" href="/ning.css">
+    <style>
+        .result-list {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .result-item {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        .result-item:last-child {
+            border-bottom: none;
+        }
+        .result-item:hover {
+            background: #fafafa;
+        }
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 8px;
+        }
+        .result-title {
+            font-size: 1.1em;
+            color: #333;
+            font-weight: 600;
+        }
+        .result-score {
+            background: #4CAF50;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.85em;
+        }
+        .result-meta {
+            display: flex;
+            gap: 20px;
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 8px;
+        }
+        .result-content {
+            font-size: 0.95em;
+            color: #555;
+            line-height: 1.6;
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 4px;
+            margin-top: 8px;
+        }
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+            margin-top: 30px;
+            padding: 20px;
+        }
+        .pagination button {
+            padding: 8px 16px;
+            border: 1px solid #ddd;
+            background: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .pagination button:hover:not(:disabled) {
+            background: #4CAF50;
+            color: white;
+            border-color: #4CAF50;
+        }
+        .pagination button:disabled {
+            background: #f5f5f5;
+            color: #ccc;
+            cursor: not-allowed;
+        }
+        .pagination .info {
+            padding: 8px 16px;
+            color: #666;
+            font-size: 14px;
+        }
+        .no-results {
+            text-align: center;
+            padding: 60px 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .no-results h3 {
+            color: #666;
+            margin-bottom: 10px;
+        }
+        .error-msg {
+            color: #f44336;
+            text-align: center;
+            padding: 60px 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .search-info {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .search-info h2 {
+            font-size: 1.1em;
+            color: #333;
+            margin-bottom: 8px;
+        }
+        .search-info p {
+            color: #666;
+            font-size: 0.95em;
+        }
+        .result-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid #eee;
+        }
+        .result-actions a {
+            padding: 8px 16px;
+            border-radius: 4px;
+            text-decoration: none;
+            font-size: 0.9em;
+        }
+        .btn-translate {
+            background: #2196F3;
+            color: white;
+        }
+        .btn-translate:hover {
+            background: #1976D2;
+        }
+        .btn-play {
+            background: #4CAF50;
+            color: white;
+        }
+        .btn-play:hover {
+            background: #45a049;
+        }
+        .btn-download {
+            background: #ff9800;
+            color: white;
+        }
+        .btn-download:hover {
+            background: #e68a00;
+        }
+        .result-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 12px;
+        }
+        .expand-link a {
+            color: #2196F3;
+            text-decoration: none;
+            font-size: 0.9em;
+        }
+        .expand-link a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-container">
+            <div class="hourglass">&#8987;</div>
+            <div class="loading-text">加载中，请稍候...</div>
+        </div>
+    </div>
+
+    <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <a href="/" class="back-link">← 返回首页</a>
+        <div id="userArea" style="font-size:0.9em;"></div>
+    </div>
+
+    <div class="container">
+        <div class="search-info">
+            <h2 id="queryText">搜索词:</h2>
+            <p id="resultCount"></p>
+        </div>
+
+        <div id="resultsContainer" class="result-list">
+            <div class="no-results"><h3>加载中...</h3></div>
+        </div>
+
+        <div id="pagination" class="pagination" style="display: none;"></div>
+    </div>
+
+    <script src="/utils.js"></script>
+    <script>
+        const ITEMS_PER_PAGE = 7;
+        let allResults = [];
+        let currentPage = 1;
+        let totalItems = 0;
+
+        function getQueryParams() {
+            const params = new URLSearchParams(window.location.search);
+            return {
+                query: params.get('query') || '',
+                page: parseInt(params.get('page')) || 1
+            };
+        }
+
+        function loadResults() {
+            const { query, page } = getQueryParams();
+            currentPage = page;
+
+            const stored = sessionStorage.getItem('searchResults');
+            if (stored) {
+                try {
+                    const data = JSON.parse(stored);
+                    allResults = data.results || [];
+                    totalItems = allResults.length;
+                    document.getElementById('queryText').textContent = '搜索词: ' + escapeHtml(data.query);
+                    document.getElementById('resultCount').textContent = '共找到 ' + totalItems + ' 个结果';
+                    renderResults();
+                    renderPagination();
+                    return;
+                } catch (e) {
+                    console.error('Failed to load from sessionStorage:', e);
+                }
+            }
+
+            if (!query) {
+                showError('没有搜索词，请从首页搜索');
+                return;
+            }
+
+            fetch('/api/search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: query, top_k: 14 })
+            })
+            .then(response => response.json())
+            .then(data => {
+                sessionStorage.setItem('searchResults', JSON.stringify(data));
+                allResults = data.results || [];
+                totalItems = allResults.length;
+                document.getElementById('queryText').textContent = '搜索词: ' + escapeHtml(query);
+                document.getElementById('resultCount').textContent = '共找到 ' + totalItems + ' 个结果';
+                renderResults();
+                renderPagination();
+            })
+            .catch(err => {
+                showError('搜索失败: ' + err.message);
+            });
+        }
+
+        function renderResults() {
+            const container = document.getElementById('resultsContainer');
+            const start = (currentPage - 1) * ITEMS_PER_PAGE;
+            const end = start + ITEMS_PER_PAGE;
+            const pageItems = allResults.slice(start, end);
+
+            if (pageItems.length === 0) {
+                container.innerHTML = '<div class="no-results"><h3>未找到结果</h3><p>请尝试其他搜索词</p></div>';
+                return;
+            }
+
+            let html = '';
+            pageItems.forEach((item, index) => {
+                const actualIndex = start + index + 1;
+                const contentPreview = item.content ? truncateChinese(item.content, 200) : '';
+                html += `
+                    <div class="result-item">
+                        <div class="result-header">
+                            <div class="result-title">${actualIndex}. ${escapeHtml(item.title)}</div>
+                            <div class="result-score">${(item.score * 100).toFixed(1)}%</div>
+                        </div>
+                        <div class="result-meta">
+                            <span>视频编号: ${escapeHtml(item.video_number)}</span>
+                            <span>日期: ${escapeHtml(item.date)}</span>
+                            <span>时长: ${item.duration ? item.duration + '分钟' : 'N/A'}</span>
+                            <span>页码: ${item.page}</span>
+                        </div>
+                        ${contentPreview ? `<div class="result-content">${escapeHtml(contentPreview)}</div>` : ''}
+                        <div class="expand-link" style="margin-top: 8px; display: ${item.content && item.content.length > 200 ? 'block' : 'none'};">
+                            <a href="javascript:void(0);" class="expand-toggle" data-full="${escapeHtml(item.content || '')}">展开全文</a>
+                        </div>
+                        <div class="result-buttons">
+                            <button class="btn-translate" onclick="openTranslate('${escapeHtml(item.video_number)}')">翻译</button>
+                            <button class="btn-play" onclick="playVideo('${escapeHtml(item.video_number)}')">播放</button>
+                            <button class="btn-download" onclick="downloadVideo('${escapeHtml(item.video_number)}')">下载</button>
+                        </div>
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+        }
+
+        function renderPagination() {
+            const container = document.getElementById('pagination');
+            const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE);
+
+            if (totalPages <= 1) {
+                container.style.display = 'none';
+                return;
+            }
+
+            container.style.display = 'flex';
+
+            let html = `
+                <button onclick="goToPage(1)" ${currentPage === 1 ? 'disabled' : ''}>首页</button>
+                <button onclick="goToPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>上一页</button>
+            `;
+
+            const maxVisible = 5;
+            let startPage = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+            let endPage = Math.min(totalPages, startPage + maxVisible - 1);
+
+            if (endPage - startPage < maxVisible - 1) {
+                startPage = Math.max(1, endPage - maxVisible + 1);
+            }
+
+            for (let i = startPage; i <= endPage; i++) {
+                html += `<button onclick="goToPage(${i})" class="${i === currentPage ? 'active' : ''}" style="${i === currentPage ? 'background:#4CAF50;color:white;border-color:#4CAF50' : ''}">${i}</button>`;
+            }
+
+            html += `
+                <button onclick="goToPage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>下一页</button>
+                <button onclick="goToPage(${totalPages})" ${currentPage === totalPages ? 'disabled' : ''}>末页</button>
+            `;
+
+            html += `<span class="info">第${currentPage}/${totalPages}页</span>`;
+
+            container.innerHTML = html;
+        }
+
+        function goToPage(page) {
+            const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE);
+            if (page < 1 || page > totalPages) return;
+            currentPage = page;
+            renderResults();
+            renderPagination();
+            window.scrollTo(0, 0);
+
+            const url = new URL(window.location);
+            url.searchParams.set('page', page);
+            window.history.pushState({}, '', url);
+        }
+
+        function showError(msg) {
+            document.getElementById('resultsContainer').innerHTML = `<div class="error-msg">${escapeHtml(msg)}</div>`;
+            document.getElementById('pagination').style.display = 'none';
+        }
+
+
+
+
+
+        function truncateChinese(text, maxChars) {
+            if (!text || text.length <= maxChars) return text;
+            let count = 0;
+            let result = '';
+            for (let char of text) {
+                if (char.charCodeAt(0) > 255) {
+                    count += 2;
+                } else {
+                    count += 1;
+                }
+                if (count > maxChars) break;
+                result += char;
+            }
+            return result + '...';
+        }
+
+        let expandedItem = null;
+
+        function toggleContent(link) {
+            const contentDiv = link.parentElement.previousElementSibling;
+            const fullContent = link.getAttribute('data-full');
+
+            if (expandedItem && expandedItem !== link) {
+                expandedItem.textContent = '展开全文';
+                const prevDiv = expandedItem.parentElement.previousElementSibling;
+                if (prevDiv && prevDiv.classList.contains('result-content')) {
+                    prevDiv.textContent = truncateChinese(expandedItem.getAttribute('data-full'), 200);
+                }
+            }
+
+            if (link.textContent === '展开全文') {
+                contentDiv.textContent = unescapeHtml(fullContent);
+                link.textContent = '收起';
+                expandedItem = link;
+            } else {
+                contentDiv.textContent = truncateChinese(fullContent, 200);
+                link.textContent = '展开全文';
+                expandedItem = null;
+            }
+        }
+
+        function openTranslate(videoNumber) {
+            window.open(`/ningVideo.html?number=${encodeURIComponent(videoNumber)}`, '_blank');
+        }
+
+        function playVideo(videoNumber) {
+            window.open(`/video/stream/${encodeURIComponent(videoNumber)}`, '_blank');
+        }
+
+        function downloadVideo(videoNumber) {
+            window.location.href = `/video/download/${encodeURIComponent(videoNumber)}`;
+        }
+
+        window.onload = loadResults;
+
+        document.addEventListener('click', function(e) {
+            if (e.target.classList.contains('expand-toggle')) {
+                toggleContent(e.target);
+            }
+        });
+    </script>
+</body>
+</html>

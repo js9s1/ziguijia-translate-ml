@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>注册 - 宁师的视频翻译工具</title>
+    <link rel="stylesheet" href="/ning.css">
+    <style>
+        .auth-card { max-width: 420px; margin: 60px auto; }
+        .auth-card form { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .auth-card h2 { text-align: center; color: #333; margin-bottom: 24px; }
+        .form-row { display: flex; align-items: center; margin-bottom: 16px; }
+        .form-row label { width: 70px; flex-shrink: 0; font-weight: bold; color: #555; }
+        .form-row input { flex: 1; margin-bottom: 0; }
+        .auth-card .btn-primary { width: 100%; padding: 12px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 8px; }
+        .auth-card .btn-primary:hover { background: #45a049; }
+        .auth-card .btn-secondary { width: 100%; padding: 12px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 10px; }
+        .auth-card .btn-secondary:hover { background: #1976D2; }
+        .auth-card .auth-link { text-align: center; margin-top: 16px; color: #666; }
+        .auth-card .auth-link a { color: #4CAF50; text-decoration: none; }
+        .auth-card .error-msg { color: #f44336; text-align: center; margin-top: 10px; font-size: 0.9em; display: none; }
+        .auth-card .success-msg { color: #4CAF50; text-align: center; margin-top: 10px; font-size: 0.9em; display: none; }
+        .verify-section { display: none; }
+    </style>
+</head>
+<body>
+    <div class="page-header">
+        <a href="/" class="back-link">← 返回首页</a>
+    </div>
+    <div class="container">
+        <div class="auth-card">
+            <form id="registerForm">
+                <h2 id="formTitle">注册</h2>
+
+                <div id="registerSection">
+                    <div class="form-row">
+                        <label for="email">邮箱</label>
+                        <input type="email" id="email" placeholder="输入邮箱">
+                    </div>
+                    <div class="form-row">
+                        <label for="password">密码</label>
+                        <input type="password" id="password" placeholder="输入密码（至少6位）">
+                    </div>
+                    <div class="form-row">
+                        <label for="confirm">确认</label>
+                        <input type="password" id="confirm" placeholder="再次输入密码">
+                    </div>
+                    <button type="button" class="btn-primary" id="registerBtn">注册</button>
+                </div>
+
+                <div class="verify-section" id="verifySection">
+                    <p style="color:#666;text-align:center;margin-bottom:16px;">验证码已发送至 <strong id="verifyEmail"></strong></p>
+                    <div id="codeFallback" style="display:none;background:#fff3cd;border:1px solid #ffc107;border-radius:4px;padding:12px;margin-bottom:16px;text-align:center;font-size:0.95em;">
+                        邮件发送失败。验证码：<strong id="fallbackCode" style="font-size:1.3em;letter-spacing:3px;color:#333;"></strong>
+                    </div>
+                    <div class="form-row">
+                        <label for="code">验证码</label>
+                        <input type="text" id="code" placeholder="输入6位验证码">
+                    </div>
+                    <button type="button" class="btn-primary" id="verifyBtn">验证邮箱</button>
+                    <button type="button" class="btn-secondary" id="resendBtn">重新发送验证码</button>
+                </div>
+
+                <div class="error-msg" id="errorMsg"></div>
+                <div class="success-msg" id="successMsg"></div>
+
+                <div class="auth-link" id="loginLink">
+                    已有账号？<a href="/auth/login">立即登录</a>
+                </div>
+            </form>
+        </div>
+    </div>
+    <script>
+        let registeredEmail = new URLSearchParams(window.location.search).get('email') || '';
+
+        if (registeredEmail) {
+            document.getElementById('registerSection').style.display = 'none';
+            document.getElementById('verifySection').style.display = 'block';
+            document.getElementById('verifyEmail').textContent = registeredEmail;
+            document.getElementById('formTitle').textContent = '验证邮箱';
+            document.getElementById('loginLink').style.display = 'none';
+            document.getElementById('code').focus();
+        }
+
+        document.getElementById('registerBtn').addEventListener('click', function() {
+            const email = document.getElementById('email').value.trim();
+            const password = document.getElementById('password').value;
+            const confirmVal = document.getElementById('confirm').value;
+            const errorEl = document.getElementById('errorMsg');
+            errorEl.style.display = 'none';
+
+            if (!email || !password || !confirmVal) {
+                errorEl.textContent = '请填写所有字段';
+                errorEl.style.display = 'block';
+                return;
+            }
+            if (password !== confirmVal) {
+                errorEl.textContent = '两次密码输入不一致';
+                errorEl.style.display = 'block';
+                return;
+            }
+            if (password.length < 6) {
+                errorEl.textContent = '密码至少6位';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            fetch('/auth/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    registeredEmail = email;
+                    document.getElementById('registerSection').style.display = 'none';
+                    document.getElementById('verifySection').style.display = 'block';
+                    document.getElementById('verifyEmail').textContent = email;
+                    document.getElementById('formTitle').textContent = '验证邮箱';
+                    document.getElementById('loginLink').style.display = 'none';
+                    document.getElementById('code').focus();
+                    if (data.code) {
+                        document.getElementById('codeFallback').style.display = 'block';
+                        document.getElementById('fallbackCode').textContent = data.code;
+                    }
+                } else {
+                    errorEl.textContent = data.error;
+                    errorEl.style.display = 'block';
+                }
+            })
+            .catch(err => {
+                errorEl.textContent = '请求失败: ' + err.message;
+                errorEl.style.display = 'block';
+            });
+        });
+
+        document.getElementById('verifyBtn').addEventListener('click', function() {
+            const code = document.getElementById('code').value.trim();
+            const errorEl = document.getElementById('errorMsg');
+            const successEl = document.getElementById('successMsg');
+            errorEl.style.display = 'none';
+            successEl.style.display = 'none';
+
+            if (!code) {
+                errorEl.textContent = '请输入验证码';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            fetch('/auth/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: registeredEmail, code })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    successEl.textContent = '验证成功！正在跳转到登录...';
+                    successEl.style.display = 'block';
+                    setTimeout(() => { window.location.href = '/auth/login'; }, 1000);
+                } else {
+                    errorEl.textContent = data.error;
+                    errorEl.style.display = 'block';
+                }
+            })
+            .catch(err => {
+                errorEl.textContent = '请求失败: ' + err.message;
+                errorEl.style.display = 'block';
+            });
+        });
+
+        document.getElementById('resendBtn').addEventListener('click', function() {
+            const errorEl = document.getElementById('errorMsg');
+            const successEl = document.getElementById('successMsg');
+            errorEl.style.display = 'none';
+            successEl.style.display = 'none';
+
+            fetch('/auth/resend', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: registeredEmail })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    if (data.code) {
+                        document.getElementById('codeFallback').style.display = 'block';
+                        document.getElementById('fallbackCode').textContent = data.code;
+                    } else {
+                        successEl.textContent = '验证码已重新发送';
+                        successEl.style.display = 'block';
+                    }
+                } else {
+                    errorEl.textContent = data.error;
+                    errorEl.style.display = 'block';
+                }
+            })
+            .catch(err => {
+                errorEl.textContent = '请求失败: ' + err.message;
+                errorEl.style.display = 'block';
+            });
+        });
+    </script>
+</body>
+</html>

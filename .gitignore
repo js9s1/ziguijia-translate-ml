@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+
+# Secrets
+.env
+
+# Databases (generated at runtime)
+*.db
+*.db-shm
+*.db-wal
+
+# Scripts
+start_server.sh
+
+# Generated outputs
+audio_tracks/
+client/*.wav
+
+# Cache / metadata
+chatterbox-server/.jobqueue.lock
+chatterbox-server/jobqueue.py.backup
+chatterbox-server/jobqueue_corrupted.py
+graphify-out/
+
+# IDE / misc
+opencode.json

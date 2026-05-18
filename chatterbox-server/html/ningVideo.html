@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>翻译官方宁视频</title>
+    <link rel="stylesheet" href="/ning.css">
+
+</head>
+<body>
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-container">
+            <div class="hourglass">&#8987;</div>
+            <div class="loading-text">处理中，请稍候...</div>
+        </div>
+    </div>
+    <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <a href="/" class="back-link">← 返回首页</a>
+        <div id="userArea" style="font-size:0.9em;"></div>
+    </div>
+    <div class="container">
+        <h1>翻译官方宁视频</h1>
+        <form id="videoForm">
+            <div class="form-row">
+                <label for="target_language">目标语言</label>
+                <select id="target_language" name="target_language">
+                    <option value="ar">🇸🇦 阿拉伯语 (ar)</option>
+                    <option value="da">🇩🇰 丹麦语 (da)</option>
+                    <option value="de">🇩🇪 德语 (de)</option>
+                    <option value="el">🇬🇷 希腊语 (el)</option>
+                    <option value="en" selected>🇬🇧 英文 (en)</option>
+                    <option value="es">🇪🇸 西班牙语 (es)</option>
+                    <option value="fi">🇫🇮 芬兰语 (fi)</option>
+                    <option value="fr">🇫🇷 法语 (fr)</option>
+                    <option value="he">🇮🇱 希伯来语 (he)</option>
+                    <option value="hi">🇮🇳 印地语 (hi)</option>
+                    <option value="it">🇮🇹 意大利语 (it)</option>
+                    <option value="ja">🇯🇵 日语 (ja)</option>
+                    <option value="ko">🇰🇷 韩语 (ko)</option>
+                    <option value="ms">🇲🇾 马来语 (ms)</option>
+                    <option value="nl">🇳🇱 荷兰语 (nl)</option>
+                    <option value="no">🇳🇴 挪威语 (no)</option>
+                    <option value="pl">🇵🇱 波兰语 (pl)</option>
+                    <option value="pt">🇵🇹 葡萄牙语 (pt)</option>
+                    <option value="ru">🇷🇺 俄语 (ru)</option>
+                    <option value="sv">🇸🇪 瑞典语 (sv)</option>
+                    <option value="sw">🇹🇿 斯瓦希里语 (sw)</option>
+                    <option value="tr">🇹🇷 土耳其语 (tr)</option>
+                    <option value="zh">🇨🇳 中文 (zh)</option>
+                </select>
+            </div>
+
+            <div class="form-row">
+                <label for="number">视频号</label>
+                <input type="text" id="number" name="number" required placeholder="输入视频号">
+            </div>
+
+            <div class="form-row">
+                <label for="srt_file">上传SRT字幕文件</label>
+                <input type="file" id="srt_file" name="srt_file" accept=".srt" required>
+            </div>
+
+            <div class="form-row">
+                <label for="blur">模糊处理</label>
+                <select id="blur" name="blur">
+                    <option value="yes">是</option>
+                    <option value="no">否</option>
+                </select>
+            </div>
+
+            <div class="form-row">
+                <label for="temperature">温度</label>
+                <input type="range" id="temperature" name="temperature" min="0.5" max="1.5" step="0.01" value="0.6">
+                <span class="temp-value" id="tempValue">0.6</span>
+            </div>
+
+            <div class="form-row">
+                <label for="cfg_weight">CFG 权重</label>
+                <input type="range" id="cfg_weight" name="cfg_weight" min="0.0" max="1.5" step="0.01" value="0.5">
+                <span class="temp-value" id="cfgWeightValue">0.5</span>
+            </div>
+
+            <div class="form-row">
+                <label for="exaggeration">口音夸张度</label>
+                <input type="range" id="exaggeration" name="exaggeration" min="0.0" max="1.0" step="0.01" value="0.5">
+                <span class="temp-value" id="exaggerationValue">0.5</span>
+            </div>
+            <button type="submit">开始处理！</button>
+        </form>
+        <div id="resultSection" class="hidden">
+            <label>访问码：</label>
+            <span id="accessCode" class="access-code"></span>
+            <a href="#" id="checkProgressLink" class="btn-download" style="margin-left:10px;vertical-align:middle;">查看进度 →</a>
+        </div>
+    </div>
+    <script>
+        document.getElementById('temperature').addEventListener('input', function(e) {
+            document.getElementById('tempValue').textContent = e.target.value;
+        });
+        document.getElementById('cfg_weight').addEventListener('input', function(e) {
+            document.getElementById('cfgWeightValue').textContent = e.target.value;
+        });
+        document.getElementById('exaggeration').addEventListener('input', function(e) {
+            document.getElementById('exaggerationValue').textContent = e.target.value;
+        });
+        document.getElementById('videoForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const overlay = document.getElementById('loadingOverlay');
+            overlay.classList.add('active');
+            const formData = new FormData();
+            formData.append('number', document.getElementById('number').value);
+            formData.append('srt_file', document.getElementById('srt_file').files[0]);
+            formData.append('temperature', document.getElementById('temperature').value);
+            formData.append('blur', document.getElementById('blur').value);
+            formData.append('target_language', document.getElementById('target_language').value);
+            formData.append('cfg_weight', document.getElementById('cfg_weight').value);
+            formData.append('exaggeration', document.getElementById('exaggeration').value);
+            fetch('/video/ning/process', { method: 'POST', body: formData })
+            .then(function(response) {
+                if (response.status === 401) {
+                    overlay.classList.remove('active');
+                    alert('请先登录');
+                    window.location.href = '/auth/login?next=' + encodeURIComponent('/video/ning');
+                    return;
+                }
+                return response.json();
+            })
+            .then(function(data) {
+                if (!data) return;
+                overlay.classList.remove('active');
+                if (data.error) { alert('错误: ' + data.error); return; }
+                document.getElementById('accessCode').textContent = data.access_code;
+                document.getElementById('checkProgressLink').href = '/result?code=' + data.access_code;
+                document.getElementById('resultSection').classList.remove('hidden');
+                fetch('/srt/status/' + data.access_code).then(function(r) { return r.json(); }).then(function(s) {
+                    const labels = {pending:'等待中', processing:'处理中', completed:'已完成', failed:'已失败'};
+                    document.getElementById('checkProgressLink').textContent = (labels[s.status] || '查看进度') + ' →';
+                }).catch(function() {});
+            })
+            .catch(function(err) { overlay.classList.remove('active'); alert('错误: ' + err.message); });
+        });
+    </script>
+    <script src="/utils.js"></script>
+    <script src="/auth.js"></script>
+</body>
+</html>

@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>处理结果 - 宁的视频翻译工具</title>
+    <link rel="stylesheet" href="/ning.css">
+    <style>
+        .file-list { list-style: none; padding: 0; }
+        .file-list li {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        .file-list li:last-child { border-bottom: none; }
+        .file-info { display: flex; align-items: center; gap: 10px; }
+        .file-name { font-weight: 500; }
+        .file-size { color: #666; font-size: 0.85em; }
+        .file-actions {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            min-width: 280px;
+        }
+        .file-actions a,
+        .file-actions button {
+            box-sizing: border-box;
+            width: 100%;
+            text-align: center;
+        }
+        .btn-download {
+            padding: 5px 15px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 0.9em;
+        }
+        .btn-download:hover { background: #45a049; }
+        .btn-delete {
+            padding: 5px 15px;
+            background: #f44336;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+        .btn-delete:hover { background: #da190b; }
+        .btn-placeholder {
+            visibility: hidden;
+            padding: 5px 15px;
+            font-size: 0.9em;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: 500;
+        }
+        .status-pending { background: #ffc107; color: #000; }
+        .status-processing { background: #2196F3; color: #fff; }
+        .status-completed { background: #4CAF50; color: #fff; }
+        .status-failed { background: #f44336; color: #fff; }
+        .no-files { color: #999; text-align: center; padding: 20px; }
+        .job-info { background: #f5f5f5; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .job-info p { margin: 5px 0; }
+        .btn-play {
+            padding: 5px 15px;
+            background: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+        .btn-play:hover { background: #1976D2; }
+        .btn-resubmit {
+            width: 100px;
+            padding: 1px 0;
+            background: #FF9800;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.65em;
+            margin-left: 4px;
+            vertical-align: middle;
+            text-align: center;
+        }
+        .btn-resubmit:hover { background: #F57C00; }
+        .file-audio { margin-top: 8px; width: 100%; }
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.85);
+            z-index: 10000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal-content {
+            position: relative;
+            max-width: 90vw;
+            max-height: 90vh;
+        }
+        .modal-content video { max-width: 90vw; max-height: 85vh; border-radius: 8px; }
+        .modal-close {
+            position: absolute;
+            top: -40px;
+            right: 0;
+            color: white;
+            font-size: 30px;
+            cursor: pointer;
+            background: none;
+            border: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-container">
+            <div class="hourglass">&#8987;</div>
+            <div class="loading-text">加载中，请稍候...</div>
+        </div>
+    </div>
+
+    <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <a href="/" class="back-link">← 返回首页</a>
+        <div id="userArea" style="font-size:0.9em;"></div>
+    </div>
+
+    <div class="container">
+        <h1>处理结果</h1>
+
+        <div class="job-info" id="jobInfo">
+            <p><strong>访问码:</strong> <span id="accessCode"></span> <span style="margin-left:8px;"><strong>目标语言:</strong> <span id="targetLanguageBadge" style="display:none;" class="status-badge status-completed"></span></span></p>
+            <p><strong>状态:</strong> <span id="status" class="status-badge"></span> <span id="progressText" style="margin-left:8px;color:#666;font-size:0.9em;"></span> <button id="resubmitBtn" onclick="resubmitJob()" class="btn-resubmit" style="display:none;">重新提交</button></p>
+            <p id="paramsRow" style="display:none;"><strong>参数:</strong> <span id="paramDisplay"></span></p>
+            <p><strong>输出目录:</strong> <span id="outputDir"></span></p>
+            <p id="errorPara" style="display:none;"><strong>错误:</strong> <span id="errorMsg" class="error"></span></p>
+        </div>
+
+        <h2>生成的文件</h2>
+        <ul class="file-list" id="fileList">
+            <li class="no-files">加载中...</li>
+        </ul>
+
+        <div style="margin-top: 20px;">
+            <button id="refreshBtn" onclick="refreshFiles()" class="btn-download" style="display:none;">刷新</button>
+        </div>
+
+        <!-- <h2>任务日志</h2>
+        <div id="jobLogSection" style="margin-top: 10px;">
+            <a href="#" id="jobLogLink" class="btn-download" style="display:none;">下载日志</a>
+            <pre id="jobLogContent" style="background:#f5f5f5;padding:10px;border-radius:4px;margin-top:10px;max-height:300px;overflow-y:auto;display:none;"></pre>
+        </div>
+    -->
+    </div>
+
+    <div class="modal-overlay" id="videoModal" onclick="closeVideo()">
+        <div class="modal-content">
+            <button class="modal-close" onclick="closeVideo()">&times;</button>
+            <video id="modalVideo" controls autoplay></video>
+        </div>
+    </div>
+
+    <script>
+        const accessCode = new URLSearchParams(window.location.search).get('code');
+
+        function formatBytes(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        const statusLabels = {
+            pending: '等待中',
+            processing: '处理中',
+            completed: '已完成',
+            failed: '失败',
+        };
+
+        function getStatusClass(status) {
+            return 'status-' + (status || 'pending');
+        }
+
+        function loadJobStatus() {
+            if (!accessCode) {
+                document.getElementById('fileList').innerHTML = '<li class="no-files">无效的访问码</li>';
+                return;
+            }
+
+            fetch('/srt/status/' + accessCode)
+                .then(response => response.json())
+                .then(data => {
+                    const langMap = { en: '🇬🇧 英文', zh: '🇨🇳 中文', ja: '🇯🇵 日语', ko: '🇰🇷 韩语', fr: '🇫🇷 法语', es: '🇪🇸 西班牙语', ru: '🇷🇺 俄语', ms: '🇲🇾 马来语', ar: '🇸🇦 阿拉伯语', da: '🇩🇰 丹麦语', de: '🇩🇪 德语', el: '🇬🇷 希腊语', fi: '🇫🇮 芬兰语', he: '🇮🇱 希伯来语', hi: '🇮🇳 印地语', it: '🇮🇹 意大利语', nl: '🇳🇱 荷兰语', no: '🇳🇴 挪威语', pl: '🇵🇱 波兰语', pt: '🇵🇹 葡萄牙语', sv: '🇸🇪 瑞典语', sw: '🇹🇿 斯瓦希里语', tr: '🇹🇷 土耳其语' };
+                    const langEl = document.getElementById('targetLanguageBadge');
+                    if (data.target_language && langMap[data.target_language]) {
+                        langEl.textContent = langMap[data.target_language];
+                        langEl.style.display = 'inline';
+                    } else if (data.target_language) {
+                        langEl.textContent = '🌐 ' + data.target_language;
+                        langEl.style.display = 'inline';
+                    } else {
+                        langEl.style.display = 'none';
+                    }
+
+                    document.getElementById('accessCode').textContent = accessCode;
+                    document.getElementById('status').textContent = statusLabels[data.status] || data.status;
+                    document.getElementById('status').className = 'status-badge ' + getStatusClass(data.status);
+
+                    const progressEl = document.getElementById('progressText');
+                    if (data.progress) {
+                        progressEl.textContent = '— ' + data.progress;
+                        progressEl.style.display = 'inline';
+                    } else {
+                        progressEl.textContent = '';
+                        progressEl.style.display = 'none';
+                    }
+
+                    document.getElementById('outputDir').textContent = (data.output_dir || 'N/A').replace('/home/js9s', '~');
+
+                    // ── Display temperature / cfg_weight / exaggeration ──
+                    const paramsEl = document.getElementById('paramDisplay');
+                    const paramsRow = document.getElementById('paramsRow');
+                    const parts = [];
+                    if (data.temperature != null) parts.push('温度: ' + data.temperature);
+                    if (data.cfg_weight != null) parts.push('CFG: ' + data.cfg_weight);
+                    if (data.exaggeration != null) parts.push('夸张: ' + data.exaggeration);
+                    if (parts.length) {
+                        paramsEl.textContent = parts.join(' | ');
+                        paramsRow.style.display = 'block';
+                    } else {
+                        paramsRow.style.display = 'none';
+                    }
+
+                    if (data.error) {
+                        document.getElementById('errorPara').style.display = 'block';
+                        document.getElementById('errorMsg').textContent = data.error;
+                    }
+
+                    if (data.status === 'completed') {
+                        loadFiles(data.output_dir);
+                        startPolling(false);
+                    } else if (data.status === 'processing') {
+                        loadFiles(data.output_dir);
+                        startPolling(true);
+                    } else if (data.status === 'pending') {
+                        const posText = data.queue_position !== null ? `（前方还有 ${data.queue_position} 个任务在排队）` : '';
+                        document.getElementById('fileList').innerHTML = `<li class="no-files">任务等待中${posText}，自动刷新中...</li>`;
+                        startPolling(true);
+                    } else if (data.status === 'failed') {
+                        document.getElementById('fileList').innerHTML = '<li class="no-files">任务失败</li>';
+                        document.getElementById('resubmitBtn').style.display = 'inline-block';
+                        startPolling(false);
+                    }
+                })
+                .catch(err => {
+                    document.getElementById('fileList').innerHTML = '<li class="no-files">加载失败: ' + err.message + '</li>';
+                });
+        }
+
+        let pollTimer = null;
+
+        function startPolling(shouldPoll) {
+            if (pollTimer) {
+                clearInterval(pollTimer);
+                pollTimer = null;
+            }
+            if (shouldPoll) {
+                pollTimer = setInterval(pollAndRefresh, 3000);
+            }
+        }
+
+        function pollAndRefresh() {
+            if (!accessCode) return;
+            fetch('/srt/status/' + accessCode)
+                .then(response => response.json())
+                .then(data => {
+                    // ── Update language badge ──
+                    const langMap = { en: '🇬🇧 英文', zh: '🇨🇳 中文', ja: '🇯🇵 日语', ko: '🇰🇷 韩语', fr: '🇫🇷 法语', es: '🇪🇸 西班牙语', ru: '🇷🇺 俄语', ms: '🇲🇾 马来语', ar: '🇸🇦 阿拉伯语', da: '🇩🇰 丹麦语', de: '🇩🇪 德语', el: '🇬🇷 希腊语', fi: '🇫🇮 芬兰语', he: '🇮🇱 希伯来语', hi: '🇮🇳 印地语', it: '🇮🇹 意大利语', nl: '🇳🇱 荷兰语', no: '🇳🇴 挪威语', pl: '🇵🇱 波兰语', pt: '🇵🇹 葡萄牙语', sv: '🇸🇪 瑞典语', sw: '🇹🇿 斯瓦希里语', tr: '🇹🇷 土耳其语' };
+                    const langEl = document.getElementById('targetLanguageBadge');
+                    if (data.target_language && langMap[data.target_language]) {
+                        langEl.textContent = langMap[data.target_language];
+                        langEl.style.display = 'inline';
+                    } else if (data.target_language) {
+                        langEl.textContent = '🌐 ' + data.target_language;
+                        langEl.style.display = 'inline';
+                    } else {
+                        langEl.style.display = 'none';
+                    }
+
+                    document.getElementById('status').textContent = statusLabels[data.status] || data.status;
+                    document.getElementById('status').className = 'status-badge ' + getStatusClass(data.status);
+                    document.getElementById('outputDir').textContent = (data.output_dir || 'N/A').replace('/home/js9s', '~');
+
+                    // ── Display temperature / cfg_weight / exaggeration ──
+                    var pe = document.getElementById('paramDisplay');
+                    var pr = document.getElementById('paramsRow');
+                    var pts = [];
+                    if (data.temperature != null) pts.push('温度: ' + data.temperature);
+                    if (data.cfg_weight != null) pts.push('CFG: ' + data.cfg_weight);
+                    if (data.exaggeration != null) pts.push('夸张: ' + data.exaggeration);
+                    if (pts.length) { pe.textContent = pts.join(' | '); pr.style.display = 'block'; }
+                    else { pr.style.display = 'none'; }
+
+                    const progressEl = document.getElementById('progressText');
+                    if (data.progress) {
+                        progressEl.textContent = '— ' + data.progress;
+                        progressEl.style.display = 'inline';
+                    } else {
+                        progressEl.textContent = '';
+                        progressEl.style.display = 'none';
+                    }
+
+                    if (data.error) {
+                        document.getElementById('errorPara').style.display = 'block';
+                        document.getElementById('errorMsg').textContent = data.error;
+                    } else {
+                        document.getElementById('errorPara').style.display = 'none';
+                    }
+                    document.getElementById('resubmitBtn').style.display = data.status === 'failed' ? 'inline-block' : 'none';
+
+                    if (data.status === 'completed') {
+                        loadFiles(data.output_dir);
+                        startPolling(false);
+                    } else if (data.status === 'processing') {
+                        loadFiles(data.output_dir);
+                    } else if (data.status === 'failed') {
+                        document.getElementById('fileList').innerHTML = '<li class="no-files">任务失败</li>';
+                        startPolling(false);
+                    }
+                })
+                .catch(err => {
+                    console.error('Poll failed:', err);
+                });
+        }
+
+        function loadFiles(outputDir) {
+            if (!outputDir) {
+                document.getElementById('fileList').innerHTML = '<li class="no-files">无输出目录</li>';
+                return;
+            }
+
+            fetch('/files/list?dir=' + encodeURIComponent(outputDir))
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        document.getElementById('fileList').innerHTML = '<li class="no-files">加载失败: ' + data.error + '</li>';
+                        return;
+                    }
+
+                    if (!data.files || data.files.length === 0) {
+                        document.getElementById('fileList').innerHTML = '<li class="no-files">没有生成的文件</li>';
+                        return;
+                    }
+
+                    const filteredFiles = data.files.filter(f => f.name !== 'job.log');
+                    if (filteredFiles.length === 0) {
+                        document.getElementById('fileList').innerHTML = '<li class="no-files">没有生成的文件</li>';
+                        return;
+                    }
+                    const downloadPath = f => '/files/download?path=' + encodeURIComponent(outputDir + '/' + f.name);
+                    const ext = f => f.name.split('.').pop().toLowerCase();
+                    const playBtn = f => {
+                        const e = ext(f);
+                        if (e === 'wav') return `<button onclick="playAudio(this,'${downloadPath(f)}')" class="btn-play">播放</button>`;
+                        if (e === 'mp4') return `<button onclick="playVideo('${downloadPath(f)}')" class="btn-play">播放</button>`;
+                        return `<span class="btn-placeholder">播放</span>`;
+                    };
+                    document.getElementById('fileList').innerHTML = filteredFiles.map(file => `
+                        <li>
+                            <div class="file-info">
+                                <span class="file-name">${file.name}</span>
+                                <span class="file-size">${formatBytes(file.size)}</span>
+                            </div>
+                            <div class="file-actions">
+                                ${playBtn(file)}
+                                <a href="${downloadPath(file)}" class="btn-download">下载</a>
+                                <button onclick="deleteFile('${outputDir}', '${file.name}')" class="btn-delete">删除</button>
+                            </div>
+                        </li>
+                    `).join('');
+                })
+                .catch(err => {
+                    document.getElementById('fileList').innerHTML = '<li class="no-files">加载失败: ' + err.message + '</li>';
+                });
+        }
+
+        function resubmitJob() {
+            if (!accessCode) return;
+            if (!confirm('确定要重新提交此任务吗？')) return;
+            fetch('/srt/resubmit/' + accessCode, { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        location.reload();
+                    } else {
+                        alert('重新提交失败: ' + (data.error || '未知错误'));
+                    }
+                })
+                .catch(err => alert('重新提交失败: ' + err.message));
+        }
+
+        function refreshFiles() {
+            if (!accessCode) return;
+            fetch('/srt/status/' + accessCode)
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('status').textContent = statusLabels[data.status] || data.status;
+                    document.getElementById('status').className = 'status-badge ' + getStatusClass(data.status);
+                    document.getElementById('outputDir').textContent = (data.output_dir || 'N/A').replace('/home/js9s', '~');
+
+                    // ── Display temperature / cfg_weight / exaggeration ──
+                    var pe = document.getElementById('paramDisplay');
+                    var pr = document.getElementById('paramsRow');
+                    var pts = [];
+                    if (data.temperature != null) pts.push('温度: ' + data.temperature);
+                    if (data.cfg_weight != null) pts.push('CFG: ' + data.cfg_weight);
+                    if (data.exaggeration != null) pts.push('夸张: ' + data.exaggeration);
+                    if (pts.length) { pe.textContent = pts.join(' | '); pr.style.display = 'block'; }
+                    else { pr.style.display = 'none'; }
+
+                    const progressEl = document.getElementById('progressText');
+                    if (data.progress) {
+                        progressEl.textContent = '— ' + data.progress;
+                        progressEl.style.display = 'inline';
+                    } else {
+                        progressEl.textContent = '';
+                        progressEl.style.display = 'none';
+                    }
+
+                    if (data.error) {
+                        document.getElementById('errorPara').style.display = 'block';
+                        document.getElementById('errorMsg').textContent = data.error;
+                    } else {
+                        document.getElementById('errorPara').style.display = 'none';
+                    }
+                    document.getElementById('resubmitBtn').style.display = data.status === 'failed' ? 'inline-block' : 'none';
+                    if (data.status === 'completed') {
+                        loadFiles(data.output_dir);
+                        startPolling(false);
+                    } else if (data.status === 'processing') {
+                        loadFiles(data.output_dir);
+                    } else if (data.status === 'pending') {
+                        const posText = data.queue_position !== null ? `（前方还有 ${data.queue_position} 个任务在排队）` : '';
+                        document.getElementById('fileList').innerHTML = `<li class="no-files">任务等待中${posText}...</li>`;
+                    } else if (data.status === 'failed') {
+                        document.getElementById('fileList').innerHTML = '<li class="no-files">任务失败</li>';
+                    }
+                })
+                .catch(err => {
+                    console.error('Refresh failed:', err);
+                    document.getElementById('fileList').innerHTML = '<li class="no-files">刷新失败: ' + err.message + '</li>';
+                });
+        }
+
+        function playAudio(btn, downloadUrl) {
+            const existing = document.querySelector('.file-audio[data-src="' + downloadUrl + '"]');
+            if (existing) { existing.remove(); return; }
+            const audio = document.createElement('audio');
+            audio.className = 'file-audio';
+            audio.setAttribute('data-src', downloadUrl);
+            audio.controls = true;
+            audio.src = downloadUrl;
+            btn.closest('li').insertAdjacentElement('afterend', audio);
+            audio.play();
+        }
+
+        function playVideo(downloadUrl) {
+            document.getElementById('modalVideo').src = downloadUrl;
+            document.getElementById('videoModal').classList.add('active');
+        }
+
+        function closeVideo() {
+            const modal = document.getElementById('videoModal');
+            modal.classList.remove('active');
+            document.getElementById('modalVideo').pause();
+            document.getElementById('modalVideo').src = '';
+        }
+
+        function deleteFile(outputDir, filename) {
+            if (!confirm('确定要删除文件 ' + filename + ' 吗？')) return;
+
+            fetch('/files/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: outputDir + '/' + filename })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    loadFiles(outputDir);
+                } else {
+                    alert('删除失败: ' + (data.error || '未知错误'));
+                }
+            })
+            .catch(err => alert('删除失败: ' + err.message));
+        }
+
+
+        loadJobStatus();
+    </script>
+    <script src="/utils.js"></script>
+    <script src="/auth.js"></script>
+</body>
+</html>

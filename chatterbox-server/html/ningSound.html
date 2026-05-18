@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>克隆宁师语音</title>
+    <link rel="stylesheet" href="/ning.css">
+</head>
+<body>
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-container">
+            <div class="hourglass">&#8987;</div>
+            <div class="loading-text">任务已提交，正在处理...</div>
+        </div>
+    </div>
+
+    <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <a href="/" class="back-link">← 返回首页</a>
+        <div id="userArea" style="font-size:0.9em;"></div>
+    </div>
+
+    <div class="container">
+        <h1>克隆宁师语音</h1>
+    <form id="ttsForm">
+        <div class="form-row">
+            <label for="target_language">目标语言</label>
+            <select id="target_language" name="target_language">
+                <option value="ar">🇸🇦 阿拉伯语 (ar)</option>
+                <option value="da">🇩🇰 丹麦语 (da)</option>
+                <option value="de">🇩🇪 德语 (de)</option>
+                <option value="el">🇬🇷 希腊语 (el)</option>
+                <option value="en" selected>🇬🇧 英文 (en)</option>
+                <option value="es">🇪🇸 西班牙语 (es)</option>
+                <option value="fi">🇫🇮 芬兰语 (fi)</option>
+                <option value="fr">🇫🇷 法语 (fr)</option>
+                <option value="he">🇮🇱 希伯来语 (he)</option>
+                <option value="hi">🇮🇳 印地语 (hi)</option>
+                <option value="it">🇮🇹 意大利语 (it)</option>
+                <option value="ja">🇯🇵 日语 (ja)</option>
+                <option value="ko">🇰🇷 韩语 (ko)</option>
+                <option value="ms">🇲🇾 马来语 (ms)</option>
+                <option value="nl">🇳🇱 荷兰语 (nl)</option>
+                <option value="no">🇳🇴 挪威语 (no)</option>
+                <option value="pl">🇵🇱 波兰语 (pl)</option>
+                <option value="pt">🇵🇹 葡萄牙语 (pt)</option>
+                <option value="ru">🇷🇺 俄语 (ru)</option>
+                <option value="sv">🇸🇪 瑞典语 (sv)</option>
+                <option value="sw">🇹🇿 斯瓦希里语 (sw)</option>
+                <option value="tr">🇹🇷 土耳其语 (tr)</option>
+                <option value="zh">🇨🇳 中文 (zh)</option>
+            </select>
+        </div>
+
+        <div class="form-row">
+            <label for="inputMode">输入方式</label>
+            <select id="inputMode" name="inputMode">
+                <option value="text">输入文字</option>
+                <option value="file">上传文件</option>
+            </select>
+        </div>
+
+        <div id="textInputSection">
+            <label for="text" id="textLabel">English文字 <span id="charCount" style="font-weight:normal;color:#999;font-size:0.85em;">0/500</span></label>
+            <textarea id="text" name="text" required maxlength="500" placeholder="Enter the text you want to convert to speech..." style="width:100%;height:120px;padding:10px;margin-bottom:16px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;" oninput="document.getElementById('charCount').textContent=this.value.length+'/500'"></textarea>
+        </div>
+
+        <div id="fileInputSection" class="hidden">
+            <div class="form-row">
+                <label for="file">上传文本文件</label>
+                <input type="file" id="file" name="file" accept=".txt">
+            </div>
+            <div class="info-text">文件内容将按 <code>&lt;数字&gt;</code> 标记分段，每段生成语音后以指定秒数的静音拼接。例如：<code>&lt;2&gt;第一段&lt;3&gt;第二段</code></div>
+        </div>
+
+        <div class="form-row">
+            <label for="filename">输出语音文件名</label>
+            <input type="text" id="filename" name="filename" value="output.wav" placeholder="output.wav">
+        </div>
+
+        <div class="form-row">
+            <label for="temperature">温度</label>
+            <input type="range" id="temperature" name="temperature" min="0.5" max="1.5" step="0.01" value="0.6">
+            <span class="temp-value" id="tempValue">0.6</span>
+        </div>
+
+        <div class="form-row">
+            <label for="cfg_weight">CFG 权重</label>
+            <input type="range" id="cfg_weight" name="cfg_weight" min="0.0" max="1.5" step="0.01" value="0.5">
+            <span class="temp-value" id="cfgWeightValue">0.5</span>
+        </div>
+
+        <div class="form-row">
+            <label for="exaggeration">口音夸张度</label>
+            <input type="range" id="exaggeration" name="exaggeration" min="0.0" max="1.0" step="0.01" value="0.5">
+            <span class="temp-value" id="exaggerationValue">0.5</span>
+        </div>
+
+        <button type="submit">产生语音！</button>
+    </form>
+
+    <div id="resultSection" class="hidden">
+        <label>访问码：</label>
+        <span id="accessCode" class="access-code"></span>
+        <a href="#" id="checkLink" class="btn-download" style="margin-left:10px;vertical-align:middle;">查看进度 →</a>
+    </div>
+
+    <div id="audioSection">
+        <label>生成的语音：</label>
+        <audio id="audioPlayer" controls></audio>
+        <button type="button" class="btn-secondary" id="downloadBtn">保存到文件</button>
+    </div>
+    </div>
+
+    <script src="/utils.js"></script>
+    <script src="/auth.js"></script>
+    <script>
+document.getElementById('inputMode').addEventListener('change', function(e) {
+    var textSection = document.getElementById('textInputSection');
+    var fileSection = document.getElementById('fileInputSection');
+    var textInput = document.getElementById('text');
+    var fileInput = document.getElementById('file');
+
+    if (e.target.value === 'text') {
+        textSection.classList.remove('hidden');
+        fileSection.classList.add('hidden');
+        textInput.setAttribute('required', '');
+        textInput.removeAttribute('disabled');
+        fileInput.removeAttribute('required');
+    } else {
+        textSection.classList.add('hidden');
+        fileSection.classList.remove('hidden');
+        textInput.removeAttribute('required');
+        textInput.setAttribute('disabled', '');
+        fileInput.setAttribute('required', '');
+    }
+});
+
+document.getElementById('temperature').addEventListener('input', function(e) {
+    document.getElementById('tempValue').textContent = e.target.value;
+});
+
+// Language name mapping for the text label
+const langNames = {
+    ar: 'Arabic', da: 'Danish', de: 'German', el: 'Greek',
+    en: 'English', es: 'Spanish', fi: 'Finnish', fr: 'French',
+    he: 'Hebrew', hi: 'Hindi', it: 'Italian', ja: 'Japanese',
+    ko: 'Korean', ms: 'Malay', nl: 'Dutch', no: 'Norwegian',
+    pl: 'Polish', pt: 'Portuguese', ru: 'Russian', sv: 'Swedish',
+    sw: 'Swahili', tr: 'Turkish', zh: 'Chinese',
+};
+
+document.getElementById('target_language').addEventListener('change', function() {
+    var lang = langNames[this.value] || 'English';
+    document.getElementById('textLabel').innerHTML = lang + '文字 <span id="charCount" style="font-weight:normal;color:#999;font-size:0.85em;">0/500</span>';
+});
+document.getElementById('cfg_weight').addEventListener('input', function(e) {
+    document.getElementById('cfgWeightValue').textContent = e.target.value;
+});
+document.getElementById('exaggeration').addEventListener('input', function(e) {
+    document.getElementById('exaggerationValue').textContent = e.target.value;
+});
+
+document.getElementById('ttsForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    var overlay = document.getElementById('loadingOverlay');
+    overlay.classList.add('active');
+
+    var inputMode = document.getElementById('inputMode').value;
+    var temperature = document.getElementById('temperature').value;
+    var target_language = document.getElementById('target_language').value;
+    var cfg_weight = document.getElementById('cfg_weight').value;
+    var exaggeration = document.getElementById('exaggeration').value;
+    var filename = document.getElementById('filename').value || 'output.wav';
+
+    try {
+        var response;
+        if (inputMode === 'text') {
+            var text = document.getElementById('text').value;
+            if (!text) {
+                alert('请输入文字内容');
+                overlay.classList.remove('active');
+                return;
+            }
+            response = await fetch('/tts/process', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: text, filename: filename, temperature: temperature, target_language: target_language, cfg_weight: cfg_weight, exaggeration: exaggeration })
+            });
+        } else {
+            var fileInput = document.getElementById('file');
+            if (!fileInput.files || !fileInput.files[0]) {
+                alert('请选择要上传的文件');
+                overlay.classList.remove('active');
+                return;
+            }
+            var formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            formData.append('temperature', temperature);
+            formData.append('target_language', target_language);
+            formData.append('cfg_weight', cfg_weight);
+            formData.append('exaggeration', exaggeration);
+            formData.append('filename', filename);
+            response = await fetch('/audio/process', {
+                method: 'POST',
+                body: formData
+            });
+        }
+
+        var data = await response.json();
+
+        if (response.status === 401) {
+            alert('请先登录后再使用语音合成功能');
+            window.location.href = '/auth/login?next=' + encodeURIComponent('/tts');
+            overlay.classList.remove('active');
+            return;
+        }
+
+        if (!response.ok || data.error) {
+            alert('Error: ' + (data.error || 'Unknown error'));
+            overlay.classList.remove('active');
+            return;
+        }
+
+        overlay.classList.remove('active');
+        document.getElementById('accessCode').textContent = data.access_code;
+        document.getElementById('checkLink').href = '/result?code=' + data.access_code;
+        document.getElementById('resultSection').classList.remove('hidden');
+
+    } catch (err) {
+        alert('Error: ' + err.message);
+        overlay.classList.remove('active');
+    }
+});
+    </script>
+</body>
+</html>

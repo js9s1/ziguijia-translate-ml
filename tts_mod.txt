@@ -1,0 +1,29 @@
+# Chatterbox TTS modifications
+# Recorded: 2026-05-15
+# All changes are in /home/js9s/src/chatterbox/src/chatterbox/
+
+## 1. s3tokenizer/__init__.py — Fix out-of-range special token crash
+
+**Problem:** T3 can generate speech tokens up to 8193 (speech_tokens_dict_size=8194), but the flow model's input_embedding only has vocab_size=6561. The old drop_invalid_tokens only stripped SOS(6561) and EOS(6562), allowing tokens 6563–8193 to reach the embedding layer and cause `IndexError: index out of range in self`.
+
+**Fix:** Changed drop_invalid_tokens to filter all tokens >= SPEECH_VOCAB_SIZE (6561) using `x[x < SPEECH_VOCAB_SIZE]`, matching the already-correct version in s3gen/s3gen.py. Removed orphaned SOS/EOS constants.
+
+## 2. mtl_tts.py — Add map_location="cpu" to torch.load calls
+
+**Problem:** Loading model weights with torch.load(..., weights_only=True) without map_location raises a RuntimeError on CPU-only machines.
+
+**Fix:** Added `map_location="cpu"` to both ve.pt and s3gen.pt torch.load calls.
+
+## 3. t3/t3.py — Force eager attention to avoid SDPA warnings
+
+**Problem:** PyTorch SDPA (scaled dot-product attention) warnings during transformer inference.
+
+**Fix:** Added code to force eager attention mode by disabling flash SDPA and mem-efficient SDPA backends at PyTorch level.
+
+## 4. t3/inference/alignment_stream_analyzer.py — Tighter hallucination/repetition detection
+
+**Problem:** Hallucination patterns (repeating tokens, long-tail activations) were not caught aggressively enough.
+
+**Fix:** 
+- Reduced long_tail activation threshold from 5 (200ms) to 3 (120ms)
+- Expanded token repetition detection: catches 4x identical tokens, alternating patterns (A,B,A,B or A,A,B,B), and 3x same in last 4

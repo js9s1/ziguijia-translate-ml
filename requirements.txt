@@ -1,0 +1,23 @@
+# Core server
+flask>=2.3
+gunicorn>=20
+requests>=2.31
+psutil>=5
+werkzeug>=2.3
+
+# ML / Audio
+torch>=2.0
+torchaudio>=2.0
+srt>=3.0
+numpy>=1.24,<2.0
+
+# Video search (FastAPI)
+fastapi>=0.109
+uvicorn>=0.27
+pydantic>=2.5
+qdrant-client>=1.7
+sentence-transformers>=2.2
+python-dotenv>=1.0
+
+# Custom dependency (install from source):
+# chatterbox @ https://github.com/js9s1/chatterbox

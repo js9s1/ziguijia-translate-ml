@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>播放视频</title>
+    <link rel="stylesheet" href="/ning.css">
+    <style>
+        .video-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .video-info {
+            margin-bottom: 15px;
+        }
+        .video-info h2 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .video-info p {
+            color: #666;
+            margin: 5px 0;
+        }
+        video {
+            width: 100%;
+            max-width: 800px;
+            border-radius: 8px;
+            background: #000;
+        }
+        .error-msg {
+            color: #f44336;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .btn-secondary {
+            display: inline-block;
+            padding: 8px 20px;
+            background: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 1em;
+        }
+        .btn-secondary:hover {
+            background: #1976D2;
+        }
+    </style>
+</head>
+<body>
+    <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <a href="/" class="back-link">← 返回首页</a>
+        <div id="userArea" style="font-size:0.9em;"></div>
+    </div>
+
+    <div class="container">
+        <div id="videoContainer" class="video-container" style="display: none;">
+            <div class="video-info">
+                <h2 id="videoTitle">视频</h2>
+                <p>视频编号: <span id="videoNumber"></span></p>
+                <p>日期: <span id="videoDate"></span></p>
+                <p>时长: <span id="videoDuration"></span>分钟</p>
+            </div>
+            <video id="videoPlayer" controls>
+                您的浏览器不支持视频播放。
+            </video>
+        </div>
+
+        <div id="errorContainer" class="error-msg" style="display: none;">
+            <p id="errorMessage">无法找到视频</p>
+            <p style="margin-top: 15px;">
+                <a href="/" class="btn-secondary">返回首页</a>
+            </p>
+        </div>
+    </div>
+
+    <script>
+        function getQueryParam(name) {
+            const params = new URLSearchParams(window.location.search);
+            return params.get(name);
+        }
+
+        function loadVideo() {
+            const videoNumber = getQueryParam('number');
+            if (!videoNumber) {
+                showError('没有指定视频编号');
+                return;
+            }
+
+            document.getElementById('videoNumber').textContent = videoNumber;
+
+            fetch('/api/video/info/' + encodeURIComponent(videoNumber))
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        showError(data.error);
+                        return;
+                    }
+                    document.getElementById('videoTitle').textContent = data.title || '视频';
+                    document.getElementById('videoDate').textContent = data.date || 'N/A';
+                    document.getElementById('videoDuration').textContent = data.duration || 'N/A';
+
+                    if (data.video_url) {
+                        document.getElementById('videoPlayer').src = data.video_url;
+                        document.getElementById('videoContainer').style.display = 'block';
+                    } else {
+                        showError('视频文件不存在或无法访问');
+                    }
+                })
+                .catch(err => {
+                    showError('加载视频信息失败: ' + err.message);
+                });
+        }
+
+        function showError(msg) {
+            document.getElementById('errorMessage').textContent = msg;
+            document.getElementById('errorContainer').style.display = 'block';
+        }
+
+        window.onload = loadVideo;
+    </script>
+    <script src="/utils.js"></script>
+    <script src="/auth.js"></script>
+</body>
+</html>

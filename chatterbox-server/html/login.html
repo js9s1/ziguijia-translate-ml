@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - 宁师的视频翻译工具</title>
+    <link rel="stylesheet" href="/ning.css">
+    <style>
+        .auth-card { max-width: 420px; margin: 60px auto; }
+        .auth-card form { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .auth-card h2 { text-align: center; color: #333; margin-bottom: 24px; }
+        .form-row { display: flex; align-items: center; margin-bottom: 16px; }
+        .form-row label { width: 70px; flex-shrink: 0; font-weight: bold; color: #555; }
+        .form-row input { flex: 1; margin-bottom: 0; }
+        .auth-card .btn-primary { width: 100%; padding: 12px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin-top: 8px; }
+        .auth-card .btn-primary:hover { background: #45a049; }
+        .auth-card .auth-link { text-align: center; margin-top: 16px; color: #666; }
+        .auth-card .auth-link a { color: #4CAF50; text-decoration: none; }
+        .auth-card .error-msg { color: #f44336; text-align: center; margin-top: 10px; font-size: 0.9em; display: none; }
+        .auth-card .success-msg { color: #4CAF50; text-align: center; margin-top: 10px; font-size: 0.9em; display: none; }
+    </style>
+</head>
+<body>
+    <div class="page-header">
+        <a href="/" class="back-link">← 返回首页</a>
+    </div>
+    <div class="container">
+        <div class="auth-card">
+            <form id="loginForm">
+                <h2>登录</h2>
+                <div class="form-row">
+                    <label for="email">邮箱</label>
+                    <input type="email" id="email" placeholder="输入邮箱">
+                </div>
+                <div class="form-row">
+                    <label for="password">密码</label>
+                    <input type="password" id="password" placeholder="输入密码">
+                </div>
+                <button type="button" class="btn-primary" id="loginBtn">登录</button>
+                <div class="error-msg" id="errorMsg"></div>
+                <div class="success-msg" id="successMsg"></div>
+                <div class="auth-link">
+                    还没有账号？<a href="/auth/register">立即注册</a>
+                </div>
+            </form>
+        </div>
+    </div>
+    <script>
+        document.getElementById('loginBtn').addEventListener('click', function() {
+            const email = document.getElementById('email').value.trim();
+            const password = document.getElementById('password').value;
+            const errorEl = document.getElementById('errorMsg');
+            const successEl = document.getElementById('successMsg');
+            errorEl.style.display = 'none';
+            successEl.style.display = 'none';
+
+            if (!email || !password) {
+                errorEl.textContent = '请填写所有字段';
+                errorEl.style.display = 'block';
+                return;
+            }
+
+            fetch('/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    successEl.textContent = '登录成功，正在跳转...';
+                    successEl.style.display = 'block';
+                    var next = new URLSearchParams(window.location.search).get('next') || '/';
+                    setTimeout(function() { window.location.href = next; }, 800);
+                } else if (data.need_verify) {
+                    var msg = '邮箱未验证，<a href="/auth/register?email=' + encodeURIComponent(data.email) + '" style="color:#f44336;">去验证</a>';
+                    if (data.code) {
+                        msg += '<br>验证码：<strong>' + data.code + '</strong>';
+                    }
+                    errorEl.innerHTML = msg;
+                    errorEl.style.display = 'block';
+                } else {
+                    errorEl.textContent = data.error;
+                    errorEl.style.display = 'block';
+                }
+            })
+            .catch(err => {
+                errorEl.textContent = '请求失败: ' + err.message;
+                errorEl.style.display = 'block';
+            });
+        });
+    </script>
+</body>
+</html>

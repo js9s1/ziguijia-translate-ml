@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的任务 - 宁师的视频翻译工具</title>
+    <link rel="stylesheet" href="/ning.css">
+    <style>
+        .jobs-container { background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); overflow: hidden; }
+        .jobs-table { width: 100%; border-collapse: collapse; }
+        .jobs-table th { background: #f5f5f5; padding: 12px 15px; text-align: left; font-weight: 600; color: #555; border-bottom: 2px solid #eee; }
+        .jobs-table td { padding: 12px 15px; border-bottom: 1px solid #f0f0f0; }
+        .jobs-table tr:hover { background: #fafafa; }
+        .status-badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 0.85em; font-weight: 500; }
+        .status-pending { background: #ffc107; color: #000; }
+        .status-processing { background: #2196F3; color: #fff; }
+        .status-completed { background: #4CAF50; color: #fff; }
+        .status-failed { background: #f44336; color: #fff; }
+        .btn-view { display: inline-block; padding: 5px 15px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; text-decoration: none; font-size: 0.9em; }
+        .btn-view:hover { background: #45a049; }
+        .btn-cancel { display: inline-block; padding: 5px 15px; background: #f44336; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9em; }
+        .btn-cancel:hover { background: #d32f2f; }
+        .btn-delete { display: inline-block; padding: 5px 15px; background: #999; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9em; }
+        .btn-delete:hover { background: #777; }
+        .empty-state { text-align: center; padding: 60px 20px; color: #999; }
+        .empty-state h3 { margin-bottom: 10px; }
+        .empty-state a { color: #4CAF50; }
+    </style>
+</head>
+<body>
+    <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <a href="/" class="back-link">← 返回首页</a>
+        <div id="userArea" style="font-size:0.9em;"></div>
+    </div>
+
+    <div class="container">
+        <h1>我的任务</h1>
+        <div class="jobs-container" id="jobsContainer">
+            <div class="empty-state"><h3>加载中...</h3></div>
+        </div>
+    </div>
+
+    <script src="/utils.js"></script>
+    <script src="/my-jobs.js"></script>
+    <script src="/auth.js"></script>
+</body>
+</html>

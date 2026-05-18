@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>宁师视频翻译工具 - Web UI 使用指南</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --primary-color: #00d4aa;
+            --secondary-color: #00a8cc;
+            --accent-color: #667eea;
+            --text-color: #ffffff;
+            --text-muted: #888;
+            --bg-color: #0a0a0a;
+            --bg-secondary: #1a1a2e;
+            --bg-tertiary: #16213e;
+            --card-bg: rgba(255, 255, 255, 0.05);
+            --border-color: rgba(255, 255, 255, 0.1);
+            --danger-color: #ff5252;
+            --warning-color: #ffc107;
+            --success-color: #73bf69;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0a0a;
+            color: #ffffff;
+            overflow: hidden;
+            min-height: 100vh;
+        }
+        .progress-bar {
+            position: fixed; top: 0; left: 0; height: 4px;
+            background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+            transition: width 0.3s; z-index: 1000;
+        }
+        .slide {
+            display: none; width: 100vw; height: 100vh; padding: 50px 70px;
+            position: relative;
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%);
+        }
+        .slide.active { display: flex; flex-direction: column; }
+        .slide-header { margin-bottom: 30px; flex-shrink: 0; }
+        .slide-category {
+            font-size: 14px; text-transform: uppercase; letter-spacing: 3px;
+            color: var(--primary-color); margin-bottom: 10px;
+        }
+        .slide-title {
+            font-size: 42px; font-weight: 700;
+            background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            background-clip: text; line-height: 1.2;
+        }
+        .slide-subtitle {
+            font-size: 20px; color: var(--text-muted); margin-top: 8px;
+        }
+        .slide-content { flex: 1; display: flex; flex-direction: column; justify-content: center; overflow: hidden; }
+        .slide-footer {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 12px 0; margin-right: 130px;
+            border-top: 1px solid var(--border-color);
+            font-size: 13px; color: #555; flex-shrink: 0; margin-top: auto;
+        }
+        .title-slide { justify-content: center; align-items: center; text-align: center; }
+        .title-slide .main-title {
+            font-size: 64px; font-weight: 800;
+            background: linear-gradient(90deg, var(--primary-color), var(--secondary-color), var(--accent-color));
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            background-clip: text; margin-bottom: 20px;
+        }
+        .title-slide .subtitle { font-size: 28px; color: var(--text-muted); margin-bottom: 60px; }
+        .title-slide .author { font-size: 22px; color: var(--primary-color); }
+        .title-slide .date { font-size: 16px; color: #666; margin-top: 10px; }
+        .section-slide { justify-content: center; align-items: center; text-align: center; }
+        .section-slide .section-number {
+            font-size: 100px; font-weight: 800;
+            color: rgba(0, 212, 170, 0.2); line-height: 1;
+        }
+        .section-slide .section-title { font-size: 52px; font-weight: 700; color: #fff; margin-top: -20px; }
+        .section-slide .section-subtitle { font-size: 22px; color: #666; margin-top: 15px; }
+        .two-column { display: grid; grid-template-columns: 1fr 1fr; gap: 50px; align-items: center; height: 100%; }
+        .three-column { display: grid; grid-template-columns: repeat(3, 1fr); gap: 25px; }
+        .card {
+            background: var(--card-bg); border: 1px solid var(--border-color);
+            border-radius: 16px; padding: 25px;
+            transition: transform 0.3s, border-color 0.3s;
+        }
+        .card:hover { transform: translateY(-5px); border-color: var(--primary-color); }
+        .card-icon { font-size: 40px; margin-bottom: 15px; }
+        .card-title { font-size: 20px; font-weight: 600; margin-bottom: 12px; color: var(--primary-color); }
+        .card-content { color: #aaa; line-height: 1.6; font-size: 15px; }
+        ul { list-style: none; padding-left: 0; }
+        ul li {
+            padding: 12px 0; padding-left: 25px; position: relative;
+            font-size: 18px; color: #ccc; border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        ul li:last-child { border-bottom: none; }
+        ul li:before { content: "→"; position: absolute; left: 0; color: var(--primary-color); }
+        .code-block {
+            background: #0d1117; border: 1px solid #30363d; border-radius: 12px;
+            padding: 20px; font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 14px; line-height: 1.6; overflow: auto; color: #e6edf3;
+        }
+        .code-keyword { color: #ff7b72; }
+        .code-string { color: #a5d6ff; }
+        .code-comment { color: #8b949e; }
+        .code-command { color: #00d4aa; }
+        .highlight-box {
+            background: linear-gradient(135deg, rgba(0, 212, 170, 0.1), rgba(0, 168, 204, 0.1));
+            border-left: 4px solid var(--primary-color);
+            padding: 25px; border-radius: 0 16px 16px 0; margin: 20px 0;
+        }
+        .highlight-box strong { color: var(--primary-color); }
+        .metric-row { display: flex; gap: 40px; justify-content: center; margin: 30px 0; }
+        .metric { text-align: center; }
+        .metric-value { font-size: 56px; font-weight: 800; color: var(--primary-color); line-height: 1; }
+        .metric-label { font-size: 16px; color: var(--text-muted); margin-top: 10px; }
+        .diagram {
+            display: flex; flex-direction: column; align-items: center; gap: 15px;
+            padding: 30px; background: rgba(0, 0, 0, 0.3);
+            border-radius: 16px; border: 1px solid #333;
+        }
+        .diagram-box {
+            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            border: 2px solid var(--primary-color); border-radius: 12px;
+            padding: 15px 25px; text-align: center; min-width: 150px;
+        }
+        .diagram-box.primary { border-color: var(--primary-color); box-shadow: 0 0 20px rgba(0, 212, 170, 0.2); }
+        .diagram-box.secondary { border-color: var(--accent-color); }
+        .diagram-box-title { font-size: 14px; font-weight: 600; color: var(--primary-color); }
+        .diagram-box-content { font-size: 12px; color: #888; }
+        .diagram-arrow { width: 2px; height: 30px; background: linear-gradient(to bottom, var(--primary-color), transparent); position: relative; }
+        .diagram-arrow::after { content: "▼"; position: absolute; bottom: -15px; left: 50%; transform: translateX(-50%); color: var(--primary-color); font-size: 12px; }
+        .diagram-row { display: flex; gap: 20px; align-items: center; justify-content: center; }
+        .comparison-table { width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 16px; }
+        .comparison-table th, .comparison-table td { padding: 15px 20px; text-align: left; border-bottom: 1px solid #333; }
+        .comparison-table th { background: rgba(0, 212, 170, 0.1); color: var(--primary-color); font-weight: 600; }
+        .tag { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; margin-right: 10px; }
+        .tag-feature { background: rgba(0, 212, 170, 0.2); color: var(--primary-color); }
+        .tag-auth { background: rgba(102, 126, 234, 0.2); color: var(--accent-color); }
+        .tag-workflow { background: rgba(255, 193, 7, 0.2); color: var(--warning-color); }
+        h3 { font-size: 22px; margin-bottom: 15px; }
+        strong { color: var(--primary-color); }
+        .nav-controls {
+            position: fixed; bottom: 30px; right: 30px;
+            display: flex; gap: 10px; z-index: 1000;
+        }
+        .nav-btn {
+            width: 50px; height: 50px; border: none; border-radius: 50%;
+            background: rgba(0, 212, 170, 0.2); color: var(--primary-color);
+            font-size: 20px; cursor: pointer; transition: background 0.3s;
+        }
+        .nav-btn:hover { background: rgba(0, 212, 170, 0.4); }
+        .nav-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+        .slide-counter {
+            position: fixed; bottom: 32px; left: 70px;
+            font-size: 12px; color: #444; z-index: 1000;
+            font-family: 'SF Mono', monospace;
+        }
+        .workflow-steps { display: flex; flex-direction: column; gap: 12px; }
+        .workflow-step {
+            display: flex; align-items: center; gap: 16px;
+            background: var(--card-bg); border: 1px solid var(--border-color);
+            border-radius: 12px; padding: 14px 20px;
+        }
+        .step-num {
+            width: 36px; height: 36px; border-radius: 50%;
+            background: var(--primary-color); color: #000;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 700; font-size: 16px; flex-shrink: 0;
+        }
+        .step-text { font-size: 16px; color: #ccc; }
+        .step-icon { font-size: 24px; flex-shrink: 0; }
+        .screenshot-mock {
+            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            border: 1px solid #333; border-radius: 12px; padding: 20px;
+            width: 100%; max-width: 480px; margin: 0 auto;
+        }
+        .mock-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        .mock-back { color: var(--primary-color); font-size: 14px; }
+        .mock-user { display: flex; gap: 10px; align-items: center; font-size: 13px; }
+        .mock-btn { padding: 4px 12px; border-radius: 4px; font-size: 12px; cursor: default; }
+        .mock-btn-green { background: #4CAF50; color: #fff; }
+        .mock-btn-blue { background: #2196F3; color: #fff; }
+        .mock-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px;
+        }
+        .mock-menu-item {
+            background: rgba(255,255,255,0.05); border: 1px solid #333;
+            border-radius: 8px; padding: 12px; text-align: center;
+        }
+        .mock-menu-item .icon { font-size: 24px; margin-bottom: 4px; }
+        .mock-menu-item .label { font-size: 12px; color: #aaa; }
+        .mock-menu-item .desc { font-size: 10px; color: #555; }
+
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes slideInLeft { from { opacity: 0; transform: translateX(-40px); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes slideInRight { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes scaleIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+        .slide.active .animate-fade { animation: fadeIn 0.6s ease-out both; }
+        .slide.active .animate-left { animation: slideInLeft 0.6s ease-out both; }
+        .slide.active .animate-right { animation: slideInRight 0.6s ease-out both; }
+        .slide.active .animate-scale { animation: scaleIn 0.6s ease-out both; }
+        .delay-1 { animation-delay: 0.1s; }
+        .delay-2 { animation-delay: 0.2s; }
+        .delay-3 { animation-delay: 0.3s; }
+        .delay-4 { animation-delay: 0.4s; }
+        .delay-5 { animation-delay: 0.5s; }
+        .delay-6 { animation-delay: 0.6s; }
+
+        .feature-badge {
+            display: inline-block; padding: 2px 10px; border-radius: 10px;
+            font-size: 11px; font-weight: 600; margin-left: 8px;
+        }
+        .badge-new { background: rgba(0, 212, 170, 0.2); color: var(--primary-color); }
+        .badge-login { background: rgba(102, 126, 234, 0.2); color: var(--accent-color); }
+        .badge-file { background: rgba(255, 193, 7, 0.2); color: var(--warning-color); }
+
+        .tag-tts { background: rgba(0, 212, 170, 0.2); color: var(--primary-color); }
+        .tag-srt { background: rgba(0, 168, 204, 0.2); color: var(--secondary-color); }
+        .tag-video { background: rgba(102, 126, 234, 0.2); color: var(--accent-color); }
+        .tag-auto { background: rgba(255, 193, 7, 0.2); color: var(--warning-color); }
+
+        .input-mock {
+            background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+            padding: 12px 16px; font-size: 14px; color: #e6edf3; margin-bottom: 12px;
+        }
+        .input-mock .label { color: #8b949e; font-size: 12px; margin-bottom: 4px; }
+        .input-mock .value { color: #e6edf3; }
+        .slider-mock {
+            height: 4px; background: #30363d; border-radius: 2px; position: relative; margin: 8px 0;
+        }
+        .slider-mock .fill { height: 100%; width: 40%; background: var(--primary-color); border-radius: 2px; }
+        .slider-mock .thumb { width: 16px; height: 16px; background: var(--primary-color); border-radius: 50%; position: absolute; left: 40%; top: -6px; }
+
+        @media print {
+            body { background: white; overflow: visible; }
+            .slide { display: flex !important; opacity: 1 !important; box-shadow: none; page-break-after: always; margin: 0 auto 2rem; }
+            .nav-controls, .slide-counter, .progress-bar { display: none !important; }
+        }
+    </style>
+</head>
+<body>
+    <div class="progress-bar" id="progressBar"></div>
+
+    <!-- Slide 1: Title -->
+    <div class="slide title-slide active">
+        <div class="main-title animate-fade">宁师视频翻译工具</div>
+        <div class="subtitle animate-fade delay-1">Web 用户界面使用指南</div>
+        <div class="author animate-fade delay-2">AI 驱动的视频翻译与语音克隆平台</div>
+        <div class="date animate-fade delay-3">2025</div>
+    </div>
+
+    <!-- Slide 2: Overview -->
+    <div class="slide">
+        <div class="slide-header">
+            <div class="slide-category animate-fade">概述</div>
+            <div class="slide-title animate-fade">平台功能总览</div>
+            <div class="slide-subtitle animate-fade delay-1">四大核心功能模块</div>
+        </div>
+        <div class="slide-content">
+            <div class="three-column">
+                <div class="card animate-scale delay-1">
+                    <div class="card-icon">🎙️</div>
+                    <div class="card-title">生成翻译语音</div>
+                    <div class="card-content">输入文字或上传文件，选择目标语言 + 温度 + CFG 权重 + 夸张度参数，生成多语言 AI 克隆语音。<br><span class="tag tag-tts">TTS</span></div>
+                </div>
+                <div class="card animate-scale delay-2">
+                    <div class="card-icon">📝</div>
+                    <div class="card-title">从 SRT 生成音轨</div>
+                    <div class="card-content">上传 SRT 字幕文件，选择目标语言，批量生成对应时间轴的多语言翻译语音。<br><span class="tag tag-srt">SRT</span></div>
+                </div>
+                <div class="card animate-scale delay-3">
+                    <div class="card-icon">🎬</div>
+                    <div class="card-title">翻译官方宁视频</div>
+                    <div class="card-content">为官方宁视频配上多语言翻译音频，可选模糊处理、目标语言、CFG 权重等。<br><span class="tag tag-video">Video</span></div>
+                </div>
+                <div class="card animate-scale delay-4" style="grid-column: 2;">
+                    <div class="card-icon">🌐</div>
+                    <div class="card-title">翻译自定义视频</div>
+                    <div class="card-content">上传任意视频 + 多语言字幕，或使用自动翻译（Whisper + HY-MT）支持 23 种输出语言。<br><span class="tag tag-auto">Auto</span></div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-footer">
+            <div class="footer-left"><span>宁师视频翻译工具 · Web UI 使用指南</span></div>
+            <span>2</span>
+        </div>
+    </div>
+
+    <!-- Slide 3: User Flow -->
+    <div class="slide">
+        <div class="slide-header">
+            <div class="slide-category animate-fade">工作流程</div>
+            <div class="slide-title animate-fade">用户操作全流程</div>
+            <div class="slide-subtitle animate-fade delay-1">从登录到获取结果的完整链路</div>
+        </div>
+        <div class="slide-content">
+            <div class="two-column">
+                <div class="workflow-steps">
+                    <div class="workflow-step animate-left delay-1">
+                        <div class="step-num">1</div>
+                        <div class="step-text"><strong>注册/登录</strong> — 邮箱注册，验证码激活</div>
+                        <div class="step-icon">🔐</div>
+                    </div>
+                    <div class="workflow-step animate-left delay-2">
+                        <div class="step-num">2</div>
+                        <div class="step-text"><strong>选择功能</strong> — 从首页导航进入对应页面</div>
+                        <div class="step-icon">🗂️</div>
+                    </div>
+                    <div class="workflow-step animate-left delay-3">
+                        <div class="step-num">3</div>
+                        <div class="step-text"><strong>提交任务</strong> — 填写参数，上传文件，提交处理</div>
+                        <div class="step-icon">📤</div>
+                    </div>
+                    <div class="workflow-step animate-left delay-4">
+                        <div class="step-num">4</div>
+                        <div class="step-text"><strong>获取结果</strong> — 通过访问码查看进度，下载/播放生成文件</div>
+                        <div class="step-icon">✅</div>
+                    </div>
+                </div>
+                <div class="animate-right delay-2">
+                    <div class="diagram">
+                        <div class="diagram-box primary">
+                            <div class="diagram-box-title">Web 浏览器</div>
+                            <div class="diagram-box-content">用户交互界面</div>
+                        </div>
+                        <div class="diagram-arrow"></div>
+                        <div class="diagram-box secondary">
+                            <div class="diagram-box-title">Flask 后端</div>
+                            <div class="diagram-box-content">REST API 处理请求</div>
+                        </div>
+                        <div class="diagram-arrow"></div>
+                        <div class="diagram-box secondary">
+                            <div class="diagram-box-title">任务队列</div>
+                            <div class="diagram-box-content">异步处理作业</div>
+                        </div>
+                        <div class="diagram-arrow"></div>
+                        <div class="diagram-box primary">
+                            <div class="diagram-box-title">AI 推理引擎</div>
+                            <div class="diagram-box-content">TTS / 翻译模型</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-footer">
+            <div class="footer-left"><span>宁师视频翻译工具 · Web UI 使用指南</span></div>
+            <span>3</span>
+        </div>
+    </div>
+
+    <!-- Slide 4: Landing Page -->
+    <div class="slide">
+        <div class="slide-header">
+            <div class="slide-category animate-fade">首页</div>
+            <div class="slide-title animate-fade">Landing Page 导航</div>
+            <div class="slide-subtitle animate-fade delay-1">功能入口与用户状态</div>
+        </div>
+        <div class="slide-content">
+            <div class="two-column">
+                <div class="animate-left delay-1">
+                    <h3>页面布局</h3>
+                    <ul>
+                        <li><strong>顶部栏</strong> — 返回首页链接 + 用户登录/注册/退出状态</li>
+                        <li><strong>标题区</strong> — "宁师的视频翻译工具" 品牌标识</li>
+                        <li><strong>功能菜单网格</strong> — 4 个核心功能入口卡片</li>
+                        <li><strong>用户认证</strong> — 未登录显示登录/注册，已登录显示邮箱 + 我的任务</li>
+                    </ul>
+                </div>
+                <div class="animate-right delay-2">
+                    <div class="screenshot-mock">
+                        <div class="mock-header">
+                            <span class="mock-back">← 返回首页</span>
+                            <div class="mock-user">
+                                <span class="mock-btn mock-btn-green">登录</span>
+                                <span style="color:#555;">|</span>
+                                <span class="mock-btn" style="border:1px solid #4CAF50;color:#4CAF50;">注册</span>
+                            </div>
+                        </div>
+                        <div style="text-align:center;margin-bottom:16px;">
+                            <div style="font-size:20px;font-weight:700;background:linear-gradient(90deg,#00d4aa,#00a8cc);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">宁师的视频翻译工具</div>
+                            <div style="font-size:13px;color:#666;">AI 驱动的视频翻译与语音克隆工具</div>
+                        </div>
+                        <div class="mock-grid">
+                            <div class="mock-menu-item"><div class="icon">🎙️</div><div class="label">生成翻译语音</div><div class="desc">文字转克隆语音</div></div>
+                            <div class="mock-menu-item"><div class="icon">📝</div><div class="label">从SRT生成音轨</div><div class="desc">批量字幕配音</div></div>
+                            <div class="mock-menu-item"><div class="icon">🎬</div><div class="label">翻译官方宁视频</div><div class="desc">官方视频配音</div></div>
+                            <div class="mock-menu-item"><div class="icon">🌐</div><div class="label">翻译自定义视频</div><div class="desc">上传视频翻译</div></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-footer">
+            <div class="footer-left"><span>宁师视频翻译工具 · Web UI 使用指南</span></div>
+            <span>4</span>
+        </div>
+    </div>
+
+    <!-- Slide 5: Auth -->
+    <div class="slide section-slide">
+        <div class="section-number animate-fade">01</div>
+        <div class="section-title animate-fade delay-1">用户认证系统</div>
+        <div class="section-subtitle animate-fade delay-2">注册 · 登录 · 会话管理</div>
+    </div>
+
+    <!-- Slide 6: Auth Detail -->
+    <div class="slide">
+        <div class="slide-header">
+            <div class="slide-category animate-fade">用户认证</div>
+            <div class="slide-title animate-fade">注册与登录流程</div>
+            <div class="slide-subtitle animate-fade delay-1">邮箱验证 + 会话安全</div>
+        </div>
+        <div class="slide-content">
+            <div class="two-column">
+                <div class="animate-left delay-1">
+                    <h3>注册流程</h3>
+                    <ul>
+                        <li>访问 <code>/auth/register</code> 注册页面</li>
+                        <li>填写邮箱和密码</li>
+                        <li>接收验证码并完成邮箱验证</li>
+                        <li>自动跳转至登录页面</li>
+                    </ul>
+                    <h3 class="mt-20">登录流程</h3>
+                    <ul>
+                        <li>访问 <code>/auth/login</code> 登录页面</li>
+                        <li>输入邮箱和密码</li>
+                        <li>成功后自动重定向至首页</li>
+                        <li>会话保持 7 天（Session Cookie）</li>
+                    </ul>
+                </div>
+                <div class="animate-right delay-2">
+                    <h3>安全机制</h3>
+                    <div class="highlight-box">
+                        <strong>会话安全</strong><br>
+                        HttpOnly Cookie · SameSite=Lax · 随机 Secret Key
+                    </div>
+                    <div class="highlight-box" style="border-left-color:var(--accent-color);background:linear-gradient(135deg,rgba(102,126,234,0.1),rgba(0,168,204,0.1));">
+                        <strong>登录保护</strong><br>
+                        所有任务处理接口均需 <span class="tag tag-auth">@login_required</span> 装饰器保护，未登录返回 401
+                    </div>
+                    <div class="highlight-box" style="border-left-color:var(--warning-color);background:linear-gradient(135deg,rgba(255,193,7,0.1),rgba(255,193,7,0.1));">
+                        <strong>用户状态</strong><br>
+                        顶部栏实时显示登录状态，已登录用户显示邮箱 + "我的任务" + "退出" 链接
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-footer">
+            <div class="footer-left"><span>宁师视频翻译工具 · Web UI 使用指南</span></div>
+            <span>6</span>
+        </div>
+    </div>
+
+    <!-- Slide 7: TTS -->
+    <div class="slide section-slide">
+        <div class="section-number animate-fade">02</div>
+        <div class="section-title animate-fade delay-1">生成翻译语音</div>
+        <div class="section-subtitle animate-fade delay-2">Text-to-Speech 语音克隆</div>
+    </div>
+
+    <!-- Slide 8: TTS Detail -->
+    <div class="slide">
+        <div class="slide-header">
+            <div class="slide-category animate-fade">TTS 功能</div>
+            <div class="slide-title animate-fade">语音克隆操作指南</div>
+            <div class="slide-subtitle animate-fade delay-1">两种输入模式 + 温度调节</div>
+        </div>
+        <div class="slide-content">
+            <div class="two-column">
+                <div class="animate-left delay-1">
+                    <h3>操作步骤</h3>
+                    <div class="workflow-steps">
+                        <div class="workflow-step" style="padding:10px 16px;">
+                            <div class="step-num" style="width:28px;height:28px;font-size:13px;">1</div>
+                            <div class="step-text" style="font-size:14px;">选择 <strong>输入方式</strong>：文字或上传文件</div>
+                        </div>
+                        <div class="workflow-step" style="padding:10px 16px;">
+                            <div class="step-num" style="width:28px;height:28px;font-size:13px;">2</div>
+                            <div class="step-text" style="font-size:14px;">输入文字（≤500 字符）或上传 <code>.txt</code> 文件</div>
+                        </div>
+                        <div class="workflow-step" style="padding:10px 16px;">
+                            <div class="step-num" style="width:28px;height:28px;font-size:13px;">3</div>
+                            <div class="step-text" style="font-size:14px;">设置 <strong>温度</strong>（0.5–1.5）+ <strong>目标语言</strong> + <strong>CFG 权重</strong> + <strong>夸张度</strong></div>
+                        </div>
+                        <div class="workflow-step" style="padding:10px 16px;">
+                            <div class="step-num" style="width:28px;height:28px;font-size:13px;">4</div>
+                            <div class="step-text" style="font-size:14px;">提交任务，获取 <strong>访问码</strong> 查看结果</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="animate-right delay-2">
+                    <div style="display:flex;flex-direction:column;gap:16px;">
+                        <div>
+                            <h3>✏️ 文字输入模式</h3>
+                            <div class="input-mock">
+                                <div class="label">输入文字</div>
+                                <div class="value">今天我们来学习人工智能翻译技术。这个工具可以将视频中的语音翻译成多种语言。</div>
+                            </div>
+                            <div style="display:flex;gap:8px;align-items:center;">
+                                <span style="font-size:13px;color:#888;">温度：</span>
+                                <div class="slider-mock" style="flex:1;max-width:200px;">
+                                    <div class="fill" style="width:50%;"></div>
+                                    <div class="thumb"></div>
+                                </div>
+                                <span style="font-size:13px;color:var(--primary-color);">0.8</span>
+                            </div>
+                            <div class="highlight-box" style="margin-top:8px;padding:12px;border-left-color:var(--secondary-color);background:linear-gradient(135deg,rgba(0,168,204,0.1),rgba(0,168,204,0.1));">
+                                <strong>提示：</strong> 文字输入 ≤ 500 字符，直接调用 Chatterbox Multilingual TTS 生成单段 WAV，支持 23 种语言
+                            </div>
+                        </div>
+                        <div>
+                            <h3>📄 文件上传模式</h3>
+                            <div class="code-block" style="font-size:13px;">
+                                <span class="code-comment">&lt;!-- 文件中的分段标记 --&gt;</span><br><br>
+                                <span class="code-keyword">&lt;2&gt;</span>第一段文字内容<br>
+                                <span class="code-keyword">&lt;3&gt;</span>第二段文字内容<br>
+                                <span class="code-keyword">&lt;5&gt;</span>第三段文字内容<br><br>
+                                <span class="code-comment">// 数字 = 段间静音秒数</span>
+                            </div>
+                            <div class="highlight-box" style="margin-top:8px;padding:12px;border-left-color:var(--accent-color);">
+                                <strong>提示：</strong> 文件模式下多段语音将按指定静音间隔拼接为完整 WAV
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-footer">
+            <div class="footer-left"><span>宁师视频翻译工具 · Web UI 使用指南</span></div>
+            <span>8</span>
+        </div>
+    </div>
+
+    <!-- Slide 9: Parameter Reference -->
+    <div class="slide">
+        <div class="slide-header">
+            <div class="slide-category animate-fade">参数说明</div>
+            <div class="slide-title animate-fade">生成参数详解</div>
+            <div class="slide-subtitle animate-fade delay-1">温度 · 目标语言 · CFG 权重 · 夸张度</div>
+        </div>
+        <div class="slide-content">
+            <div class="two-column">
+                <div class="animate-left delay-1">
+                    <div class="card" style="margin-bottom:16px;">
+                        <div class="card-title">🌡️ 温度 (Temperature)</div>
+                        <div class="card-content">
+                            <strong>范围：</strong> 0.5 – 1.5 &nbsp;|&nbsp; <strong>默认：</strong> 0.8<br><br>
+                            控制生成语音的随机性和多样性。<br>
+                            <strong>较低值</strong>（0.5–0.7）→ 稳定、一致性高，适合正式内容<br>
+                            <strong>较高值</strong>（0.8–1.5）→ 更富变化，适合创意内容<br><br>
+                            <em>提示：</em> 温度越高，同一段文字每次生成的语音越不同。
+                        </div>
+                    </div>
+                    <div class="card" style="margin-bottom:16px;">
+                        <div class="card-title">🌐 目标语言 (Target Language)</div>
+                        <div class="card-content">
+                            <strong>支持：</strong> 23 种语言（🇬🇧 英语、🇨🇳 中文、🇯🇵 日语、🇰🇷 韩语、🇫🇷 法语、🇩🇪 德语、🇪🇸 西班牙语 等）<br><br>
+                            决定 TTS 模型生成的语音语言。<br>
+                            <strong>自动翻译模式</strong>还控制 HY-MT 机器翻译的输出语言。<br><br>
+                            <em>提示：</em> 选择与输入文本匹配的语言可获最佳效果。
+                        </div>
+                    </div>
+                </div>
+                <div class="animate-right delay-2">
+                    <div class="card" style="margin-bottom:16px;">
+                        <div class="card-title">⚖️ CFG 权重 (Classifier-Free Guidance)</div>
+                        <div class="card-content">
+                            <strong>范围：</strong> 0.0 – 1.5 &nbsp;|&nbsp; <strong>默认：</strong> 0.5<br><br>
+                            控制模型对输入条件的遵循程度。<br>
+                            <strong>较低值</strong>（0.0–0.3）→ 更多自由发挥，语音更自然<br>
+                            <strong>较高值</strong>（0.6–1.5）→ 更严格遵循提示，发音更清晰<br><br>
+                            <em>提示：</em> 对复杂文本可适当提高 CFG 权重以改善发音准确性。
+                        </div>
+                    </div>
+                    <div class="card" style="margin-bottom:16px;">
+                        <div class="card-title">🎭 夸张度 (Exaggeration)</div>
+                        <div class="card-content">
+                            <strong>范围：</strong> 0.0 – 1.0 &nbsp;|&nbsp; <strong>默认：</strong> 0.5<br><br>
+                            控制语音的情感表现力和语调起伏。<br>
+                            <strong>较低值</strong>（0.0–0.3）→ 平淡、中性，适合新闻或说明<br>
+                            <strong>较高值</strong>（0.6–1.0）→ 富有情感和韵律，适合故事或演讲<br><br>
+                            <em>提示：</em> 夸张度会影响 speaker embedding 的情感维度。
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-footer">
+            <div class="footer-left"><span>宁师视频翻译工具 · Web UI 使用指南</span></div>
+            <span>9</span>
+        </div>
+    </div>
+
+    <!-- Slide 10: SRT -->
+    <div class="slide section-slide">
+        <div class="section-number animate-fade">03</div>
+        <div class="section-title animate-fade delay-1">从 SRT 生成音轨</div>
+        <div class="section-subtitle animate-fade delay-2">批量字幕转语音</div>
+    </div>
+
+    <!-- Slide 10: SRT Detail -->
+    <div class="slide">
+        <div class="slide-header">
+            <div class="slide-category animate-fade">SRT 功能</div>
+            <div class="slide-title animate-fade">字幕转语音操作指南</div>
+            <div class="slide-subtitle animate-fade delay-1">上传 SRT → 批量 TTS → 分段语音文件</div>
+        </div>
+        <div class="slide-content">
+            <div class="two-column">
+                <div class="animate-left delay-1">
+                    <h3>SRT 处理流程</h3>
+                    <ul>
+                        <li>上传 <code>.srt</code> 标准字幕文件</li>
+                        <li>调节 <strong>温度</strong> + <strong>目标语言</strong> + <strong>CFG 权重</strong> + <strong>夸张度</strong></li>
+                        <li>系统自动解析每条字幕的时间轴</li>
+                        <li>逐条调用 TTS 引擎生成对应语音</li>
+                        <li>输出按时间轴排序的 WAV 文件列表</li>
+                    </ul>
+                    <div class="highlight-box" style="margin-top:15px;">
+                        <strong>输出：</strong> 每个 SRT 段落对应一个 WAV 文件，可在结果页播放/下载
+                    </div>
+                </div>
+                <div class="animate-right delay-2">
+                    <h3>SRT 文件格式示例</h3>
+                    <div class="code-block" style="font-size:13px;">
+                        <span class="code-number">1</span><br>
+                        <span class="code-string">00:00:01,000 --> 00:00:04,000</span><br>
+                        <span style="color:#ff7b72;">John:</span> Hello, welcome to this video.<br><br>
+                        <span class="code-number">2</span><br>
+                        <span class="code-string">00:00:05,000 --> 00:00:09,000</span><br>
+                        <span style="color:#79c0ff;">Mary:</span> Today we will learn about AI translation.<br><br>
+                        <span class="code-number">3</span><br>
+                        <span class="code-string">00:00:10,000 --> 00:00:14,500</span><br>
+                        <span style="color:#ff7b72;">John:</span> Let's get started!
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-footer">
+            <div class="footer-left"><span>宁师视频翻译工具 · Web UI 使用指南</span></div>
+            <span>11</span>
+        </div>
+    </div>
+
+    <!-- Slide 11: Video Translate -->
+    <div class="slide section-slide">
+        <div class="section-number animate-fade">04</div>
+        <div class="section-title animate-fade delay-1">视频翻译功能</div>
+        <div class="section-subtitle animate-fade delay-2">官方宁视频 & 自定义视频</div>
+    </div>
+
+    <!-- Slide 12: Official Ning Video -->
+    <div class="slide">
+        <div class="slide-header">
+            <div class="slide-category animate-fade">视频翻译</div>
+            <div class="slide-title animate-fade">🎬 翻译官方宁视频</div>
+            <div class="slide-subtitle animate-fade delay-1">为官方视频配上翻译音频</div>
+        </div>
+        <div class="slide-content">
+            <div class="two-column">
+                <div class="animate-left delay-1">
+                    <h3>操作步骤</h3>
+                    <div class="workflow-steps">
+                        <div class="workflow-step" style="padding:10px 16px;">
+                            <div class="step-num" style="width:28px;height:28px;font-size:13px;">1</div>
+                            <div class="step-text" style="font-size:14px;">输入 <strong>视频号</strong> 定位官方宁视频</div>
+                        </div>
+                        <div class="workflow-step" style="padding:10px 16px;">
+                            <div class="step-num" style="width:28px;height:28px;font-size:13px;">2</div>
+                            <div class="step-text" style="font-size:14px;">上传对应翻译 <strong>SRT 字幕文件</strong></div>
+                        </div>
+                        <div class="workflow-step" style="padding:10px 16px;">
+                            <div class="step-num" style="width:28px;height:28px;font-size:13px;">3</div>
+                            <div class="step-text" style="font-size:14px;">选择 <strong>模糊处理</strong>（是/否）</div>
+                        </div>
+                        <div class="workflow-step" style="padding:10px 16px;">
+                            <div class="step-num" style="width:28px;height:28px;font-size:13px;">4</div>
+                            <div class="step-text" style="font-size:14px;">调节温度/目标语言/CFG 权重/夸张度，提交任务</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="animate-right delay-2">
+                    <h3>后端处理流程</h3>
+                    <div class="code-block" style="font-size:13px;">
+                        <span class="code-comment"># srt_action.py → _run_video_job()</span>
+                        <br><br>
+                        1. 解析 <span class="code-string">video_number</span> 定位官方视频源文件<br>
+                        2. 调用 <span class="code-command">gen_video_orig.sh</span> 脚本：<br>
+                        &nbsp;&nbsp;&nbsp;├─ <span class="code-string">gen_audio.py</span> 解析 SRT 字幕<br>
+                        &nbsp;&nbsp;&nbsp;├─ Chatterbox Multilingual TTS 逐条生成翻译语音<br>
+                        &nbsp;&nbsp;&nbsp;├─ 根据时间轴拼接完整音频轨道<br>
+                        &nbsp;&nbsp;&nbsp;├─ FFmpeg 合并音频与原视频<br>
+                        &nbsp;&nbsp;&nbsp;└─ 可选模糊处理（中文字幕）<br>
+                        3. 输出 <span class="code-keyword">output_final.mp4</span><br><br>
+                        <span class="code-comment"># 输出目录: /video/{video_number}-{access_code}/</span>
+                    </div>
+                    <div class="highlight-box" style="margin-top:10px;">
+                        <strong>输出：</strong> 含翻译配音的 MP4 视频文件
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-footer">
+            <div class="footer-left"><span>宁师视频翻译工具 · Web UI 使用指南</span></div>
+            <span>13</span>
+        </div>
+    </div>
+
+    <!-- Slide 13: Custom Video -->
+    <div class="slide">
+        <div class="slide-header">
+            <div class="slide-category animate-fade">视频翻译</div>
+            <div class="slide-title animate-fade">🌐 翻译自定义视频</div>
+            <div class="slide-subtitle animate-fade delay-1">上传任意视频进行翻译配音</div>
+        </div>
+        <div class="slide-content">
+            <div class="two-column">
+                <div class="animate-left delay-1">
+                    <h3>📋 SRT 模式</h3>
+                    <div class="workflow-steps">
+                        <div class="workflow-step" style="padding:10px 16px;">
+                            <div class="step-num" style="width:28px;height:28px;font-size:13px;">1</div>
+                            <div class="step-text" style="font-size:14px;">上传 <strong>视频文件</strong> + <strong>SRT 字幕</strong></div>
+                        </div>
+                        <div class="workflow-step" style="padding:10px 16px;">
+                            <div class="step-num" style="width:28px;height:28px;font-size:13px;">2</div>
+                            <div class="step-text" style="font-size:14px;">调节温度/目标语言/CFG 权重/夸张度，提交任务</div>
+                        </div>
+                    </div>
+                    <div class="highlight-box" style="margin-top:10px;border-left-color:var(--secondary-color);background:linear-gradient(135deg,rgba(0,168,204,0.1),rgba(0,168,204,0.1));">
+                        <strong>后端：</strong> Chatterbox Multilingual TTS 为字幕生成多语言音频 → gen_video.py 合并到视频
+                    </div>
+                    <h3 style="margin-top:20px;">🤖 自动模式</h3>
+                    <div class="workflow-steps">
+                        <div class="workflow-step" style="padding:10px 16px;">
+                            <div class="step-num" style="width:28px;height:28px;font-size:13px;">1</div>
+                            <div class="step-text" style="font-size:14px;">仅上传 <strong>视频文件</strong>（无需字幕）</div>
+                        </div>
+                        <div class="workflow-step" style="padding:10px 16px;">
+                            <div class="step-num" style="width:28px;height:28px;font-size:13px;">2</div>
+                            <div class="step-text" style="font-size:14px;">调节温度/目标语言/CFG 权重/夸张度，提交任务</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="animate-right delay-2">
+                    <h3>后端处理流程</h3>
+                    <div class="code-block" style="font-size:13px;">
+                        <span class="code-comment"># srt_action.py 中的两种任务处理函数</span>
+                        <br><br>
+                        <span class="code-keyword">【SRT 模式】_run_video_custom_job()</span><br>
+                        &nbsp;&nbsp;Step 1: <span class="code-string">gen_audio.py</span> 解析上传的 SRT<br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├─ Chatterbox Multilingual TTS 逐条生成翻译语音<br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└─ 输出 adjusted SRT + WAV<br>
+                        &nbsp;&nbsp;Step 2: <span class="code-string">gen_video.py</span><br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├─ 将翻译音轨合成到视频中<br>
+                        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└─ 输出 output_modified.mp4<br><br>
+                        <span class="code-keyword">【自动模式】_run_video_auto_job()</span><br>
+                        &nbsp;&nbsp;Step 0: FFmpeg 提取音频<br>
+                        &nbsp;&nbsp;Step 1: <span class="code-command">Whisper.cpp</span> ASR → 中文 SRT<br>
+                        &nbsp;&nbsp;Step 2: <span class="code-command">HY-MT</span> 机器翻译 → 目标语言 SRT<br>
+                        &nbsp;&nbsp;Step 3: <span class="code-string">gen_audio.py</span> 生成配音<br>
+                        &nbsp;&nbsp;Step 4: <span class="code-string">gen_video.py</span> 合成最终视频
+                    </div>
+                    <div class="highlight-box" style="margin-top:10px;border-left-color:var(--warning-color);background:linear-gradient(135deg,rgba(255,193,7,0.1),rgba(255,193,7,0.1));">
+                        <strong>自动模式：</strong> 无需字幕文件，系统自动完成语音识别 + 翻译（支持 23 种目标语言）+ 配音全流程
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-footer">
+            <div class="footer-left"><span>宁师视频翻译工具 · Web UI 使用指南</span></div>
+            <span>14</span>
+        </div>
+    </div>
+
+    <!-- Slide 14: Result Page -->
+    <div class="slide section-slide">
+        <div class="section-number animate-fade">05</div>
+        <div class="section-title animate-fade delay-1">结果查看与管理</div>
+        <div class="section-subtitle animate-fade delay-2">访问码追踪 · 文件操作 · 任务管理</div>
+    </div>
+
+    <!-- Slide 15: Job Status Tracking -->
+    <div class="slide">
+        <div class="slide-header">
+            <div class="slide-category animate-fade">结果页</div>
+            <div class="slide-title animate-fade">📋 任务状态追踪</div>
+            <div class="slide-subtitle animate-fade delay-1">通过访问码追踪任务进度</div>
+        </div>
+        <div class="slide-content">
+            <div class="two-column">
+                <div class="animate-left delay-1">
+                    <h3>任务状态说明</h3>
+                    <ul>
+                        <li><span class="tag" style="background:#ffc107;color:#000;">等待中</span> 任务排队等待处理</li>
+                        <li><span class="tag" style="background:#2196F3;color:#fff;">处理中</span> AI 引擎正在执行</li>
+                        <li><span class="tag" style="background:#4CAF50;color:#fff;">已完成</span> 生成完毕，可查看文件</li>
+                        <li><span class="tag" style="background:#f44336;color:#fff;">已失败</span> 可重新提交任务</li>
+                    </ul>
+                    <div class="highlight-box" style="margin-top:20px;border-left-color:var(--secondary-color);">
+                        <strong>访问码机制：</strong><br>
+                        每个任务提交后自动生成唯一 8 位访问码<br>
+                        可通过 <code>/result/{access_code}</code> 直接查看结果
+                    </div>
+                </div>
+                <div class="animate-right delay-2">
+                    <h3>用户 js9s 的任务列表示例</h3>
+                    <div class="screenshot-mock" style="max-width:100%;">
+                        <div style="font-size:14px;font-weight:600;margin-bottom:10px;color:var(--primary-color);">我的任务 — js9s@example.com</div>
+                        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                            <thead><tr style="border-bottom:1px solid #333;"><th style="padding:5px 6px;text-align:left;color:#888;">访问码</th><th style="padding:5px 6px;text-align:left;color:#888;">类型</th><th style="padding:5px 6px;text-align:left;color:#888;">状态</th><th style="padding:5px 6px;text-align:left;color:#888;">时间</th></tr></thead>
+                            <tbody>
+                                <tr><td style="padding:5px 6px;font-family:monospace;">A1B2C3D4</td><td style="padding:5px 6px;">自动翻译视频</td><td style="padding:5px 6px;"><span style="background:#4CAF50;color:#fff;padding:1px 6px;border-radius:8px;font-size:10px;">已完成</span></td><td style="padding:5px 6px;color:#888;">2025-05-09 14:32</td></tr>
+                                <tr><td style="padding:5px 6px;font-family:monospace;">E5F6G7H8</td><td style="padding:5px 6px;">宁视频翻译</td><td style="padding:5px 6px;"><span style="background:#4CAF50;color:#fff;padding:1px 6px;border-radius:8px;font-size:10px;">已完成</span></td><td style="padding:5px 6px;color:#888;">2025-05-09 13:15</td></tr>
+                                <tr><td style="padding:5px 6px;font-family:monospace;">I9J0K1L2</td><td style="padding:5px 6px;">自定义视频</td><td style="padding:5px 6px;"><span style="background:#2196F3;color:#fff;padding:1px 6px;border-radius:8px;font-size:10px;">处理中</span></td><td style="padding:5px 6px;color:#888;">2025-05-09 12:48</td></tr>
+                                <tr><td style="padding:5px 6px;font-family:monospace;">M3N4O5P6</td><td style="padding:5px 6px;">自定义视频</td><td style="padding:5px 6px;"><span style="background:#f44336;color:#fff;padding:1px 6px;border-radius:8px;font-size:10px;">已失败</span></td><td style="padding:5px 6px;color:#888;">2025-05-09 11:20</td></tr>
+                                <tr><td style="padding:5px 6px;font-family:monospace;">Q7R8S9T0</td><td style="padding:5px 6px;">音频生成</td><td style="padding:5px 6px;"><span style="background:#4CAF50;color:#fff;padding:1px 6px;border-radius:8px;font-size:10px;">已完成</span></td><td style="padding:5px 6px;color:#888;">2025-05-08 16:05</td></tr>
+                                <tr><td style="padding:5px 6px;font-family:monospace;">U1V2W3X4</td><td style="padding:5px 6px;">语音合成</td><td style="padding:5px 6px;"><span style="background:#ffc107;color:#000;padding:1px 6px;border-radius:8px;font-size:10px;">等待中</span></td><td style="padding:5px 6px;color:#888;">2025-05-09 15:00</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div style="text-align:right;margin-top:6px;font-size:11px;color:#666;">
+                        <span style="color:var(--primary-color);">点击访问码</span> 跳转至对应结果页
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-footer">
+            <div class="footer-left"><span>宁师视频翻译工具 · Web UI 使用指南</span></div>
+            <span>16</span>
+        </div>
+    </div>
+
+    <!-- Slide 16: File Operations -->
+    <div class="slide">
+        <div class="slide-header">
+            <div class="slide-category animate-fade">结果页</div>
+            <div class="slide-title animate-fade">📁 文件操作与管理</div>
+            <div class="slide-subtitle animate-fade delay-1">查看、播放、下载、管理输出文件</div>
+        </div>
+        <div class="slide-content">
+            <div class="two-column">
+                <div class="animate-left delay-1">
+                    <h3>文件操作功能</h3>
+                    <ul>
+                        <li><strong>▶ 播放</strong> — 内嵌音频播放器 / 模态视频播放器</li>
+                        <li><strong>⬇ 下载</strong> — 直接下载生成的 WAV / MP4 / SRT 文件</li>
+                        <li><strong>🗑 删除</strong> — 删除不需要的输出文件</li>
+                        <li><strong>🔄 刷新</strong> — 处理中可手动刷新状态</li>
+                        <li><strong>🔁 重新提交</strong> — 失败任务一键重试</li>
+                    </ul>
+                    <div class="highlight-box" style="margin-top:20px;border-left-color:var(--warning-color);background:linear-gradient(135deg,rgba(255,193,7,0.1),rgba(255,193,7,0.1));">
+                        <strong>提示：</strong> 自动模式生成的 <code>whisper.srt</code> 是原始语音识别结果，可用于校对翻译质量
+                    </div>
+                </div>
+                <div class="animate-right delay-2">
+                    <h3>任务 <code style="color:var(--primary-color);">A1B2C3D4</code> 的输出文件</h3>
+                    <div class="screenshot-mock" style="max-width:100%;">
+                        <div style="font-size:14px;font-weight:600;margin-bottom:10px;color:var(--primary-color);">📂 /video/A1B2C3D4/</div>
+                        <div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:8px 12px;font-family:monospace;font-size:13px;line-height:1.8;">
+                            <div style="color:#e6edf3;">📄 <span style="color:#58a6ff;">whisper.srt</span> <span style="background:rgba(255,193,7,0.2);color:#ffc107;padding:1px 6px;border-radius:4px;font-size:10px;">ASR 结果</span></div>
+                            <div style="color:#8b949e;padding-left:20px;">← whisper.cpp 语音识别原始字幕</div>
+                            <div style="color:#e6edf3;">📄 <span style="color:#58a6ff;">translated.srt</span> <span style="background:rgba(102,126,234,0.2);color:#667eea;padding:1px 6px;border-radius:4px;font-size:10px;">翻译字幕</span></div>
+                            <div style="color:#8b949e;padding-left:20px;">← HY-MT 机器翻译结果</div>
+                            <div style="color:#e6edf3;">📄 <span style="color:#58a6ff;">output_adjusted.srt</span></div>
+                            <div style="color:#8b949e;padding-left:20px;">← 配音对齐后的时间轴字幕</div>
+                            <div style="color:#e6edf3;">🎵 <span style="color:#58a6ff;">output.wav</span></div>
+                            <div style="color:#8b949e;padding-left:20px;">← Chatterbox Multilingual TTS 生成的完整配音音频</div>
+                            <div style="color:#e6edf3;">🎬 <span style="color:#58a6ff;">output_modified.mp4</span></div>
+                            <div style="color:#8b949e;padding-left:20px;">← 合成翻译配音的最终视频</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-footer">
+            <div class="footer-left"><span>宁师视频翻译工具 · Web UI 使用指南</span></div>
+            <span>17</span>
+        </div>
+    </div>
+
+    <!-- Slide 17: My Jobs -->
+    <div class="slide">
+        <div class="slide-header">
+            <div class="slide-category animate-fade">任务管理</div>
+            <div class="slide-title animate-fade">我的任务页面</div>
+            <div class="slide-subtitle animate-fade delay-1">统一查看/管理所有历史任务</div>
+        </div>
+        <div class="slide-content">
+            <div class="two-column">
+                <div class="animate-left delay-1">
+                    <h3>任务列表功能</h3>
+                    <ul>
+                        <li><strong>表格视图</strong> — 类型、访问码、状态、创建时间</li>
+                        <li><strong>状态徽标</strong> — 颜色区分任务状态</li>
+                        <li><strong>查看</strong> — 跳转至对应结果页</li>
+                        <li><strong>取消</strong> — 取消处理中的任务</li>
+                        <li><strong>删除</strong> — 清理已完成/失败的历史任务</li>
+                    </ul>
+                </div>
+                <div class="animate-right delay-2">
+                    <div class="screenshot-mock" style="max-width:100%;">
+                        <div style="font-size:16px;font-weight:600;margin-bottom:12px;color:var(--primary-color);">我的任务</div>
+                        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                            <thead><tr style="border-bottom:1px solid #333;"><th style="padding:6px 8px;text-align:left;color:#888;">访问码</th><th style="padding:6px 8px;text-align:left;color:#888;">类型</th><th style="padding:6px 8px;text-align:left;color:#888;">状态</th><th style="padding:6px 8px;text-align:left;color:#888;">操作</th></tr></thead>
+                            <tbody>
+                                <tr><td style="padding:8px;font-family:monospace;font-size:12px;color:#aaa;">495F07A8</td><td style="padding:8px;">音频生成</td><td style="padding:8px;"><span style="background:#4CAF50;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;">已完成</span></td><td style="padding:8px;"><span style="color:#4CAF50;">查看</span></td></tr>
+                                <tr><td style="padding:8px;font-family:monospace;font-size:12px;color:#aaa;">7ED90BBB</td><td style="padding:8px;">宁视频翻译</td><td style="padding:8px;"><span style="background:#4CAF50;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;">已完成</span></td><td style="padding:8px;"><span style="color:#4CAF50;">查看</span></td></tr>
+                                <tr><td style="padding:8px;font-family:monospace;font-size:12px;color:#aaa;">B6412BD3</td><td style="padding:8px;">自动翻译视频</td><td style="padding:8px;"><span style="background:#4CAF50;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;">已完成</span></td><td style="padding:8px;"><span style="color:#4CAF50;">查看</span></td></tr>
+                                <tr><td style="padding:8px;font-family:monospace;font-size:12px;color:#aaa;">8482164D</td><td style="padding:8px;">自定义视频</td><td style="padding:8px;"><span style="background:#f44336;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;">已失败</span></td><td style="padding:8px;"><span style="color:#4CAF50;">查看</span> <span style="color:#999;margin-left:6px;">删除</span></td></tr>
+                                <tr><td style="padding:8px;font-family:monospace;font-size:12px;color:#aaa;">BE016743</td><td style="padding:8px;">语音合成</td><td style="padding:8px;"><span style="background:#4CAF50;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;">已完成</span></td><td style="padding:8px;"><span style="color:#4CAF50;">查看</span></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-footer">
+            <div class="footer-left"><span>宁师视频翻译工具 · Web UI 使用指南</span></div>
+            <span>18</span>
+        </div>
+    </div>
+
+    <!-- Slide 18: Architecture -->
+    <div class="slide section-slide">
+        <div class="section-number animate-fade">06</div>
+        <div class="section-title animate-fade delay-1">技术架构</div>
+        <div class="section-subtitle animate-fade delay-2">前端 · 后端 · AI 推理</div>
+    </div>
+
+    <!-- Slide 19: Tech Stack -->
+    <div class="slide">
+        <div class="slide-header">
+            <div class="slide-category animate-fade">技术架构</div>
+            <div class="slide-title animate-fade">前后端技术栈</div>
+            <div class="slide-subtitle animate-fade delay-1">简洁高效的全栈架构</div>
+        </div>
+        <div class="slide-content">
+            <div class="two-column">
+                <div class="animate-left delay-1">
+                    <h3>前端</h3>
+                    <ul>
+                        <li><strong>HTML + CSS + JavaScript</strong> — 无框架依赖的轻量前端</li>
+                        <li><strong>响应式表单</strong> — 文件上传、滑块、输入切换</li>
+                        <li><strong>异步任务</strong> — Fetch API 与后端交互</li>
+                        <li><strong>内嵌媒体播放</strong> — 音频/视频播放与模态窗口</li>
+                    </ul>
+                </div>
+                <div class="animate-right delay-2">
+                    <h3>后端</h3>
+                    <ul>
+                        <li><strong>Flask</strong> — Python Web 框架</li>
+                        <li><strong>异步任务队列</strong> — SQLite + 文件锁实现</li>
+                        <li><strong>用户认证</strong> — Session + 邮箱验证</li>
+                        <li><strong>静态服务</strong> — 路由通配符统一托管 HTML/CSS/JS</li>
+                    </ul>
+                    <div class="highlight-box" style="margin-top:20px;">
+                        <strong>AI 引擎：</strong> Chatterbox Multilingual TTS（23 种语言） + Whisper 语音识别 + HY-MT 机器翻译
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-footer">
+            <div class="footer-left"><span>宁师视频翻译工具 · Web UI 使用指南</span></div>
+            <span>20</span>
+        </div>
+    </div>
+
+    <!-- Slide 20: Summary -->
+    <div class="slide">
+        <div class="slide-header">
+            <div class="slide-category animate-fade">总结</div>
+            <div class="slide-title animate-fade">核心要点回顾</div>
+        </div>
+        <div class="slide-content">
+            <div class="three-column">
+                <div class="card animate-scale delay-1">
+                    <div class="card-icon">🔐</div>
+                    <div class="card-title">认证先行</div>
+                    <div class="card-content">所有功能需登录使用，邮箱验证注册，Session 会话保持</div>
+                </div>
+                <div class="card animate-scale delay-2">
+                    <div class="card-icon">🎯</div>
+                    <div class="card-title">访问码追踪</div>
+                    <div class="card-content">每个任务生成唯一访问码，用于进度查询和结果管理</div>
+                </div>
+                <div class="card animate-scale delay-3">
+                    <div class="card-icon">🎛️</div>
+                    <div class="card-title">温度控制</div>
+                    <div class="card-content">温度参数（0.5–1.5）调节语音多样性，所有 TTS 场景均支持</div>
+                </div>
+                <div class="card animate-scale delay-4">
+                    <div class="card-icon">📁</div>
+                    <div class="card-title">文件管理</div>
+                    <div class="card-content">播放、下载、删除、重新提交，完整的结果文件操作链</div>
+                </div>
+                <div class="card animate-scale delay-5">
+                    <div class="card-icon">🔄</div>
+                    <div class="card-title">自动翻译</div>
+                    <div class="card-content">Whisper + HY-MT 全自动流水线，无需手动准备字幕</div>
+                </div>
+                <div class="card animate-scale delay-6">
+                    <div class="card-icon">📋</div>
+                    <div class="card-title">任务中心</div>
+                    <div class="card-content">统一的历史任务管理面板，取消/删除/查看一站式操作</div>
+                </div>
+            </div>
+        </div>
+        <div class="slide-footer">
+            <div class="footer-left"><span>宁师视频翻译工具 · Web UI 使用指南</span></div>
+            <span>21</span>
+        </div>
+    </div>
+
+    <!-- Slide 22: Thank You -->
+    <div class="slide title-slide">
+        <div class="main-title animate-fade">谢谢观看</div>
+        <div class="subtitle animate-fade delay-1">宁师视频翻译工具 · Web UI 使用指南</div>
+        <div class="author animate-fade delay-2">AI 驱动的视频翻译与语音克隆平台</div>
+        <div class="date animate-fade delay-3">开始使用 → 访问首页</div>
+    </div>
+
+    <div class="nav-controls">
+        <button class="nav-btn" id="prevBtn" onclick="prevSlide()" title="上一页 (←)">←</button>
+        <button class="nav-btn" id="nextBtn" onclick="nextSlide()" title="下一页 (→)">→</button>
+    </div>
+    <div class="slide-counter">
+        <span id="currentSlide">1</span> / <span id="totalSlides">21</span>
+    </div>
+
+    <script>
+        let currentSlideIndex = 0;
+        const slides = document.querySelectorAll('.slide');
+        const totalSlides = slides.length;
+        document.getElementById('totalSlides').textContent = totalSlides;
+        updateSlide();
+        function updateSlide() {
+            slides.forEach((slide, index) => slide.classList.remove('active'));
+            slides[currentSlideIndex].classList.add('active');
+            document.getElementById('currentSlide').textContent = currentSlideIndex + 1;
+            document.getElementById('progressBar').style.width = ((currentSlideIndex + 1) / totalSlides) * 100 + '%';
+            document.getElementById('prevBtn').disabled = currentSlideIndex === 0;
+            document.getElementById('nextBtn').disabled = currentSlideIndex === totalSlides - 1;
+        }
+        function nextSlide() { if (currentSlideIndex < totalSlides - 1) { currentSlideIndex++; updateSlide(); } }
+        function prevSlide() { if (currentSlideIndex > 0) { currentSlideIndex--; updateSlide(); } }
+        function goToSlide(index) { if (index >= 0 && index < totalSlides) { currentSlideIndex = index; updateSlide(); } }
+        function toggleFullscreen() { if (!document.fullscreenElement) { document.documentElement.requestFullscreen(); } else { document.exitFullscreen(); } }
+        document.addEventListener('keydown', (e) => {
+            switch (e.key) {
+                case 'ArrowRight': case ' ': case 'Enter': e.preventDefault(); nextSlide(); break;
+                case 'ArrowLeft': case 'Backspace': e.preventDefault(); prevSlide(); break;
+                case 'Home': e.preventDefault(); goToSlide(0); break;
+                case 'End': e.preventDefault(); goToSlide(totalSlides - 1); break;
+                case 'f': case 'F': e.preventDefault(); toggleFullscreen(); break;
+            }
+        });
+        let touchStartX = 0;
+        document.addEventListener('touchstart', (e) => { touchStartX = e.changedTouches[0].screenX; });
+        document.addEventListener('touchend', (e) => {
+            const diff = touchStartX - e.changedTouches[0].screenX;
+            if (Math.abs(diff) > 50) { if (diff > 0) nextSlide(); else prevSlide(); }
+        });
+    </script>
+</body>
+</html>

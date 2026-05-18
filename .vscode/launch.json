@@ -1,0 +1,24 @@
+{
+    
+    "version": "0.2.0",
+    "configurations": [
+           {
+            "name": "Python: Current File with Args",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal", 
+            "args": [
+                "/home/js9s/子归家/audio_tracks/648B1FEE/51578忠平大姐修改后的.srt", 
+            "--audio_prompt","/home/js9s/子归家/assets/std_ning.wav", 
+            "--temperature", "0.6" ,
+            "--output_dir", "/home/js9s/子归家/audio_tracks/648B1FEE",
+            "--output_srt","output_adjusted.srt",
+            "--output_wav", "output.wav",
+            "--changed_json", "changed_segments.json"
+            ], 
+    
+           }
+       ]
+}
+

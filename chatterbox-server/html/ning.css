@@ -1,0 +1,380 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #f5f5f5;
+    min-height: 100vh;
+}
+
+.page-header {
+    background: white;
+    padding: 15px 20px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.back-link {
+    color: #4CAF50;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+.back-link:hover {
+    text-decoration: underline;
+}
+
+#userArea a:hover {
+    text-decoration: underline;
+}
+h1 {
+    text-align: center;
+    color: #333;
+}
+form {
+    background: white;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+.form-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 16px;
+    gap: 12px;
+}
+.form-row label {
+    width: 130px;
+    flex-shrink: 0;
+    margin-bottom: 0;
+    font-weight: bold;
+    color: #555;
+}
+.form-row input,
+.form-row select,
+.form-row textarea {
+    flex: 1;
+    margin-bottom: 0;
+    padding: 8px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    box-sizing: border-box;
+}
+.form-row input[type="file"] {
+    padding: 6px 0;
+    border: none;
+}
+.form-row input[type="range"] {
+    padding: 0;
+    border: none;
+}
+.form-row textarea {
+    height: 100px;
+}
+.form-row .temp-value {
+    font-weight: bold;
+    color: #4CAF50;
+    min-width: 30px;
+}
+label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+    color: #555;
+}
+input[type="text"], textarea {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 20px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    box-sizing: border-box;
+}
+textarea {
+    height: 120px;
+    resize: vertical;
+}
+input[type="file"] {
+    margin-bottom: 20px;
+}
+button {
+    width: 100%;
+    padding: 12px;
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 16px;
+}
+button:hover {
+    background-color: #45a049;
+}
+.optional {
+    font-weight: normal;
+    color: #999;
+    font-size: 0.9em;
+}
+#audioSection {
+    display: none;
+    margin-top: 20px;
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+#audioSection.visible {
+    display: block;
+}
+audio {
+    width: 100%;
+    margin: 10px 0;
+}
+.btn-secondary {
+    background-color: #2196F3;
+    margin-top: 10px;
+}
+.btn-secondary:hover {
+    background-color: #1976D2;
+}
+.loading-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 9999;
+    justify-content: center;
+    align-items: center;
+}
+.loading-overlay.active {
+    display: flex;
+}
+.hourglass {
+    font-size: 80px;
+    color: white;
+    animation: spin 1.5s linear infinite;
+}
+.loading-text {
+    color: white;
+    font-size: 20px;
+    margin-top: 20px;
+    text-align: center;
+}
+.loading-container {
+    text-align: center;
+}
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.container {
+    max-width: 960px;
+    margin: 30px auto;
+    padding: 20px;
+}
+.hero {
+    text-align: center;
+    margin-bottom: 40px;
+}
+.hero h1 {
+    font-size: 2.5em;
+    color: #333;
+    margin-bottom: 10px;
+}
+.hero p {
+    color: #666;
+    font-size: 1.1em;
+}
+.menu-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+}
+.menu-item {
+    background: white;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    text-decoration: none;
+    color: inherit;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.menu-item:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+.menu-item h2 {
+    color: #4CAF50;
+    margin-bottom: 10px;
+    font-size: 1.3em;
+}
+.menu-item p {
+    color: #666;
+    font-size: 0.95em;
+    line-height: 1.5;
+}
+.icon {
+    font-size: 3em;
+    margin-bottom: 15px;
+}
+.status-check {
+    margin-top: 40px;
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+.status-check h3 {
+    margin-top: 0;
+    color: #333;
+}
+.status-check form {
+    display: flex;
+    gap: 10px;
+}
+.status-check input {
+    flex: 1;
+}
+.status-check button {
+    width: auto;
+    padding: 10px 20px;
+}
+#statusResult {
+    margin-top: 15px;
+    padding: 10px;
+    border-radius: 4px;
+}
+#statusResult.hidden {
+    display: none;
+}
+#statusResult .error {
+    color: #f44336;
+}
+input[type="range"] {
+    width: 100%;
+    margin-bottom: 20px;
+    -webkit-appearance: none;
+    height: 8px;
+    border-radius: 4px;
+    background: linear-gradient(to right, blue, red);
+}
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: white;
+    cursor: pointer;
+    border: 2px solid #333;
+}
+.hidden {
+    display: none;
+}
+.access-code {
+    font-size: 1.5em;
+    font-weight: bold;
+    color: #4CAF50;
+    background: #e8f5e9;
+    padding: 5px 15px;
+    border-radius: 4px;
+    letter-spacing: 2px;
+}
+.info-text {
+    color: #666;
+    font-size: 0.9em;
+    margin-top: 10px;
+}
+
+@media (max-width: 600px) {
+    body {
+        font-size: 14px;
+    }
+
+    .container {
+        margin: 10px auto;
+        padding: 10px;
+    }
+
+    .hero h1 {
+        font-size: 1.8em;
+    }
+
+    .hero p {
+        font-size: 1em;
+    }
+
+    .menu-grid {
+        grid-template-columns: 1fr;
+        gap: 15px;
+    }
+
+    .menu-item {
+        padding: 20px;
+    }
+
+    .menu-item h2 {
+        font-size: 1.2em;
+    }
+
+    .icon {
+        font-size: 2.5em;
+    }
+
+    form {
+        padding: 15px;
+    }
+
+    label {
+        font-size: 0.95em;
+    }
+
+    button {
+        padding: 10px;
+        font-size: 15px;
+    }
+
+    .access-code {
+        font-size: 1.2em;
+        word-break: break-all;
+    }
+
+    .status-check form {
+        flex-direction: column;
+    }
+
+    .status-check input {
+        width: 100%;
+    }
+
+    .status-check button {
+        width: 100%;
+    }
+
+    .hourglass {
+        font-size: 60px;
+    }
+
+    .loading-text {
+        font-size: 16px;
+    }
+
+    .file-list li {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+
+    .file-actions {
+        width: 100%;
+        display: flex;
+        gap: 10px;
+    }
+
+    .file-actions a,
+    .file-actions button {
+        flex: 1;
+        text-align: center;
+    }
+}
