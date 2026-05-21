@@ -14,6 +14,13 @@ export SMTP_FROM="your-email@example.com"
 export FLASK_SECRET_KEY="chatterbox-fixed-secret-key-2024"
 export HF_TOKEN="$(cat ${HOME}/src/chatterbox/hf_t)"
 
+# GPU acceleration for Renoir (gfx902) — using gfx900 code path
+export HSA_OVERRIDE_GFX_VERSION=9.0.0
+export MIOPEN_DEBUG_DISABLE_WORKSPACE_CHECK=1
+
+# PyTorch memory management — enable expandable segments to reduce fragmentation
+export PYTORCH_ALLOC_CONF=expandable_segments:True
+
 #if ! docker ps --format '{{.Names}}' | grep -q qdrant; then
 #    echo "Starting qdrant..."
 #    docker rm qdrant 2>/dev/null

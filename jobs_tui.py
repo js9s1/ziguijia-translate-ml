@@ -84,6 +84,7 @@ class Job:
     created_at: str | None
     user_id: int | None
     username: str = ""
+    target_language: str | None = None
 
     @property
     def display_type(self) -> str:
@@ -352,6 +353,8 @@ class State:
             opts.append(("output", "\[o]输出"))
         if self.selected_job and self.selected_job.status in ("pending", "processing"):
             opts.append(("cancel", "\[k]取消"))
+        if self.selected_job and self.selected_job.user_id is not None:
+            opts.append(("user_jobs", "\[u]该用户任务"))
         opts.append(("delete", "\[r]删除"))
         opts.append(("close", "\[c]关闭"))
         return opts
@@ -606,6 +609,98 @@ def render_detail(job: Job, mode: str) -> Panel:
             border_style="yellow",
         )
     return Panel("")
+
+
+def load_user_jobs(user_id: int) -> list[Job]:
+    """Load all jobs for a given user_id."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id "
+        "FROM jobs WHERE user_id = ? ORDER BY created_at DESC",
+        (user_id,),
+    ).fetchall()
+    conn.close()
+    jobs = [Job(**dict(r)) for r in rows]
+    username_map = _batch_load_usernames([j.user_id for j in jobs])
+    for j in jobs:
+        j.username = username_map.get(j.user_id, "")
+    return jobs
+
+
+def show_user_jobs_tui(current_job: Job, state: State, console: Console):
+    """Show a paginated job list filtered to the current job's user."""
+    jobs = load_user_jobs(current_job.user_id)
+    if not jobs:
+        console.clear()
+        console.print(f"[yellow]用户 {current_job.username} 没有其他任务[/]")
+        console.print("\n[dim]按任意键返回...[/dim]")
+        os.read(sys.stdin.fileno(), 1)
+        return
+
+    total = len(jobs)
+    pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = 0
+    cursor = 0
+
+    while True:
+        start = page * PAGE_SIZE
+        end = min(start + PAGE_SIZE, total)
+        page_jobs = jobs[start:end]
+
+        # Build a temporary State-like view for rendering
+        class TempState:
+            def __init__(self):
+                self.all = jobs
+                self.total = total
+                self.pages = pages
+                self.page = page
+                self.cursor = cursor
+                self.start = start
+                self.end = end
+                self.visible = list(reversed(page_jobs))
+                self.search_query = ""
+                self._message = None
+                self._message_time = 0.0
+
+        s = TempState()
+
+        console.clear()
+        console.print(render_summary(jobs, f"用户: {current_job.username}"))
+        console.print()
+        console.print(render_table(s))
+        console.print()
+        console.print(Align.center("[dim]↑↓ 移动  ←→翻页  Q=返回[/dim]"))
+
+        with raw_mode():
+            key = read_key()
+
+        if key in ("q", "Q", "ESC", "\x1b"):
+            return
+
+        elif key == "UP":
+            if cursor > 0:
+                cursor -= 1
+            elif page > 0:
+                page -= 1
+                cursor = PAGE_SIZE - 1
+
+        elif key == "DOWN":
+            max_cursor = len(s.visible) - 1
+            if cursor < max_cursor:
+                cursor += 1
+            elif page < pages - 1:
+                page += 1
+                cursor = 0
+
+        elif key == "LEFT":
+            if page > 0:
+                page -= 1
+                cursor = 0
+
+        elif key == "RIGHT":
+            if page + 1 < pages:
+                page += 1
+                cursor = 0
 
 
 # ── Output browser ──────────────────────────────────────
@@ -871,6 +966,8 @@ def run_menu_screen(s: State, console: Console):
             action = "output"
         elif key in ("k", "K"):
             action = "cancel"
+        elif key in ("u", "U"):
+            action = "user_jobs"
         elif key in ("r", "R"):
             action = "delete"
         elif key in ("c", "C"):
@@ -897,6 +994,10 @@ def run_menu_screen(s: State, console: Console):
 
             elif action == "output":
                 run_output_browser(job, console)
+
+            elif action == "user_jobs":
+                show_user_jobs_tui(job, s, console)
+                continue
 
             elif action == "cancel":
                 cancel_job(job.access_code)
@@ -991,6 +1092,10 @@ def run_menu_screen(s: State, console: Console):
 
             elif action == "output":
                 run_output_browser(job, console)
+
+            elif action == "user_jobs":
+                show_user_jobs_tui(job, s, console)
+                continue
 
             elif action == "cancel":
                 cancel_job(job.access_code)

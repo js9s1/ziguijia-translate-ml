@@ -101,7 +101,7 @@ def load_user_jobs(user_id: int) -> list[dict]:
     conn = get_jobs_conn()
     rows = conn.execute(
         "SELECT access_code, run_func_name, status, error, created_at "
-        "FROM jobs WHERE user_id = ? AND status != 'deleted' ORDER BY created_at DESC",
+        "FROM jobs WHERE user_id = ? ORDER BY created_at DESC",
         (user_id,),
     ).fetchall()
     conn.close()

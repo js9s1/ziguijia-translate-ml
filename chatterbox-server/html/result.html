@@ -257,7 +257,7 @@
                         document.getElementById('fileList').innerHTML = `<li class="no-files">任务等待中${posText}，自动刷新中...</li>`;
                         startPolling(true);
                     } else if (data.status === 'failed') {
-                        document.getElementById('fileList').innerHTML = '<li class="no-files">任务失败</li>';
+                        loadFiles(data.output_dir);
                         document.getElementById('resubmitBtn').style.display = 'inline-block';
                         startPolling(false);
                     }
@@ -334,7 +334,7 @@
                     } else if (data.status === 'processing') {
                         loadFiles(data.output_dir);
                     } else if (data.status === 'failed') {
-                        document.getElementById('fileList').innerHTML = '<li class="no-files">任务失败</li>';
+                        loadFiles(data.output_dir);
                         startPolling(false);
                     }
                 })

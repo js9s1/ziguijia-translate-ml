@@ -185,7 +185,8 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
             }
         )
 
-        accumulated_offset += total_wav_duration - orig_duration
+        if total_wav_duration > orig_duration :
+            accumulated_offset += total_wav_duration - orig_duration
 
     original_total = (subs[-1].end - subs[0].start).total_seconds()
     total_duration = original_total + accumulated_offset

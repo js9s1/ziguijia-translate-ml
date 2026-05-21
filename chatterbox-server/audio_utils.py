@@ -12,6 +12,61 @@ from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 from config import AUDIO_PROMPT_PATH
 
 
+def _check_gpu_healthy() -> bool:
+    """Probe GPU with a tiny CUDA operation in a subprocess (with timeout).
+    This catches GPU Hang conditions that `torch.cuda.is_available()` misses."""
+    import subprocess
+    import sys
+    probe_code = (
+        "import torch\n"
+        "try:\n"
+        "    torch.zeros(1, device='cuda') + 1\n"
+        "    print('OK')\n"
+        "except Exception:\n"
+        "    print('FAIL')"
+    )
+    try:
+        r = subprocess.run(
+            [sys.executable, "-c", probe_code],
+            capture_output=True, text=True, timeout=15,
+            env={**os.environ, "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", "0")},
+        )
+        ok = "OK" in r.stdout
+        if not ok:
+            print(f"GPU health check failed — stderr: {r.stderr.strip()}")
+        return ok
+    except subprocess.TimeoutExpired:
+        print("GPU health check timed out — GPU appears hung")
+        return False
+    except Exception as e:
+        print(f"GPU health check error: {e}")
+        return False
+
+
+def _choose_device(preferred: str = "cuda") -> str:
+    """Pick device: GPU if healthy with enough free memory, otherwise CPU.
+    Performs a subprocess probe to catch GPU Hang conditions."""
+    if preferred == "cpu":
+        return "cpu"
+    if not torch.cuda.is_available():
+        print("CUDA not available — using CPU")
+        return "cpu"
+    if not _check_gpu_healthy():
+        print("GPU unhealthy (hang detected) — falling back to CPU")
+        return "cpu"
+    try:
+        free, total = torch.cuda.mem_get_info()
+        free_gb = free / (1024**3)
+        total_gb = total / (1024**3)
+        # Model needs roughly 6 GiB; leave some margin
+        if free_gb < 7.3:
+            print(f"GPU free memory {free_gb:.1f} GiB / {total_gb:.1f} GiB — too low, using CPU")
+            return "cpu"
+        return "cuda"
+    except Exception:
+        return "cpu"
+
+
 # HF_TOKEN must be set via environment variable for HuggingFace authentication
 # Example: export HF_TOKEN="your_token_here"
 
@@ -38,17 +93,24 @@ class NingAudio:
         self.model = None
         self.sample_rate = None
 
-    def get_model(self, device: str = "cpu") -> ChatterboxMultilingualTTS:
+    def get_model(self, device: str = "cuda") -> ChatterboxMultilingualTTS:
+        if NingAudio._model is not None:
+            # Already loaded; if on CPU but GPU has freed up, reload to GPU
+            if self.model and self.model.device == "cpu" and _choose_device(device) == "cuda":
+                print("GPU memory available, reloading model to GPU")
+                NingAudio._model = None
+                torch.cuda.empty_cache()
         if NingAudio._model is None:
             import warnings
             warnings.filterwarnings("ignore")
-            NingAudio._model = ChatterboxMultilingualTTS.from_pretrained(device=device)
+            actual_device = _choose_device(device)
+            NingAudio._model = ChatterboxMultilingualTTS.from_pretrained(device=actual_device)
             NingAudio._model.prepare_conditionals(self.audio_prompt_path)
         self.model = NingAudio._model
         self.sample_rate = self.model.sr
         return self.model
 
-    def setup(self, device: str = "cpu"):
+    def setup(self, device: str = "cuda"):
         self.get_model(device)
 
     def wav_to_bytes(self, wav: torch.Tensor, sample_rate: int) -> io.BytesIO:
@@ -70,12 +132,12 @@ class NingAudio:
         if prompt_file:
             self.model.prepare_conditionals(prompt_file)
         wav = self.model.generate(
-            text,
-            language_id=target_language,
-            temperature=temperature,
-            cfg_weight=cfg_weight,
-            exaggeration=exaggeration,
-        )
+                text,
+                language_id=target_language,
+                temperature=temperature,
+                cfg_weight=cfg_weight,
+                exaggeration=exaggeration,
+            )
         return self.wav_to_bytes(wav, self.model.sr)
 
     def generate_silence(self, duration_sec, sample_rate):
