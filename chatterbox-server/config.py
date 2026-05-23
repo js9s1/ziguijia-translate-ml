@@ -50,6 +50,10 @@ HY_MT_DIR = os.environ.get(
     "HY_MT_DIR",
     "__HY_MT_DIR__",
 )
+RAPID_VIDEOCR_PIPELINE_SCRIPT = os.environ.get(
+    "RAPID_VIDEOCR_PIPELINE_SCRIPT",
+    os.path.join(PROJECT_ROOT, "rapid_videocr_pipeline.sh"),
+)
 
 # ── Default ports ──────────────────────────────────────────
 PORT = 18789

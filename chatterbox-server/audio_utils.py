@@ -7,6 +7,7 @@ from typing import Optional
 import srt
 import torch
 import torchaudio as ta
+import soundfile as sf
 
 from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 from config import AUDIO_PROMPT_PATH
@@ -96,15 +97,26 @@ class NingAudio:
     def get_model(self, device: str = "cuda") -> ChatterboxMultilingualTTS:
         if NingAudio._model is not None:
             # Already loaded; if on CPU but GPU has freed up, reload to GPU
-            if self.model and self.model.device == "cpu" and _choose_device(device) == "cuda":
+            if self.model and self.model.device == "cpu" and _choose_device("cuda") == "cuda":
                 print("GPU memory available, reloading model to GPU")
                 NingAudio._model = None
                 torch.cuda.empty_cache()
         if NingAudio._model is None:
             import warnings
             warnings.filterwarnings("ignore")
-            actual_device = _choose_device(device)
-            NingAudio._model = ChatterboxMultilingualTTS.from_pretrained(device=actual_device)
+            # When user requests CUDA, try it directly — don't pre-check memory,
+            # since mem_get_info() may show low free memory before the model loads.
+            # If it OOMs, fall back to CPU.
+            actual_device = "cuda" if device == "cuda" else _choose_device(device)
+            try:
+                NingAudio._model = ChatterboxMultilingualTTS.from_pretrained(device=actual_device)
+            except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
+                if actual_device == "cuda":
+                    print(f"CUDA OOM ({e}), falling back to CPU")
+                    torch.cuda.empty_cache()
+                    NingAudio._model = ChatterboxMultilingualTTS.from_pretrained(device="cpu")
+                else:
+                    raise
             NingAudio._model.prepare_conditionals(self.audio_prompt_path)
         self.model = NingAudio._model
         self.sample_rate = self.model.sr
@@ -115,7 +127,7 @@ class NingAudio:
 
     def wav_to_bytes(self, wav: torch.Tensor, sample_rate: int) -> io.BytesIO:
         buffer = io.BytesIO()
-        ta.save(buffer, wav, sample_rate, format="wav")
+        sf.write(buffer, wav.squeeze(0).cpu().numpy(), sample_rate, format='WAV')
         buffer.seek(0)
         return buffer
 
@@ -157,7 +169,7 @@ class NingAudio:
         # Ensure wav is 2D tensor [1, samples]
         if wav.dim() == 1:
             wav = wav.unsqueeze(0)
-        ta.save(output_path, wav, sample_rate)
+        sf.write(output_path, wav.squeeze(0).cpu().numpy(), sample_rate)
         wav_duration = wav.shape[1] / sample_rate
         return wav, wav_duration
 
@@ -191,4 +203,4 @@ class NingAudio:
         return combined
 
     def save_audio(self, output_path, wav_tensor, sample_rate):
-        ta.save(output_path, wav_tensor, sample_rate)
+        sf.write(output_path, wav_tensor.squeeze(0).cpu().numpy(), sample_rate)

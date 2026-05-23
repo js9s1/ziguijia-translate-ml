@@ -1,4 +1,5 @@
 import logging
+import multiprocessing
 import os
 import shutil
 import signal
@@ -27,7 +28,10 @@ class JobStatus(Enum):
 
 
 def _get_run_func(name: str) -> Optional[Callable]:
-    from srt_action import _run_gen_audio, _run_video_job, _run_video_custom_job, _run_tts_job, _run_video_auto_job, _run_audio_segmentation_job
+    from audio_job import _run_gen_audio, _run_audio_segmentation_job
+    from tts_job import _run_tts_job
+    from video_ning_job import _run_video_job, _run_video_ning_ocr_job
+    from video_custom_job import _run_video_custom_job, _run_video_auto_job, _run_video_ocr_job
     if name == "_run_gen_audio":
         return _run_gen_audio
     if name == "_run_video_job":
@@ -40,7 +44,30 @@ def _get_run_func(name: str) -> Optional[Callable]:
         return _run_video_auto_job
     if name == "_run_audio_segmentation_job":
         return _run_audio_segmentation_job
+    if name == "_run_video_ocr_job":
+        return _run_video_ocr_job
+    if name == "_run_video_ning_ocr_job":
+        return _run_video_ning_ocr_job
     return None
+
+
+def _job_process_wrapper(job_data: dict, run_func_name: str):
+    """Entry point for a child process executing a single job.
+
+    Cleans up state inherited from the parent via fork (DB connection),
+    then runs the job handler. Exits with 0 on success, non-zero on failure.
+    """
+    import sys
+
+    # Close any DB connection inherited from the parent process.
+    # The child opens its own connection when it needs one.
+    jq = get_job_queue()
+    jq._close_conn()
+
+    run_func = _get_run_func(run_func_name)
+    if run_func is None:
+        sys.exit(1)
+    run_func(job_data)
 
 
 class JobQueue:
@@ -171,6 +198,10 @@ class JobQueue:
             run_func_name = "_run_video_auto_job"
         elif run_func.__name__ == "_run_audio_segmentation_job":
             run_func_name = "_run_audio_segmentation_job"
+        elif run_func.__name__ == "_run_video_ocr_job":
+            run_func_name = "_run_video_ocr_job"
+        elif run_func.__name__ == "_run_video_ning_ocr_job":
+            run_func_name = "_run_video_ning_ocr_job"
 
         conn.execute("""
             INSERT INTO jobs (access_code, srt_path, output_dir, temperature, status, error, run_func_name, video_number, video_file, user_id, text, blur, target_language, cfg_weight, exaggeration)
@@ -197,6 +228,16 @@ class JobQueue:
         self._queue.put(access_code)
 
         return access_code
+
+    def _close_conn(self):
+        """Close the current thread-local DB connection, if open.
+
+        Used after ``os.fork()`` so the child process doesn't share
+        the parent's connection — each process manages its own.
+        """
+        if hasattr(self._local, "conn") and self._local.conn is not None:
+            self._local.conn.close()
+            self._local.conn = None
 
     def _ensure_worker(self):
         if not self._running:
@@ -253,23 +294,53 @@ class JobQueue:
             logger.info(f"Job {access_code} already claimed by another worker, skipping")
             return
 
+        job.pop("run_func_name", None)
+        job.pop("created_at", None)
+
+        # Run the job in a child process so we can detect cancellation
+        # and abort without blocking the queue worker.
+        proc = multiprocessing.Process(
+            target=_job_process_wrapper,
+            args=(job, run_func_name),
+            daemon=True,
+        )
+        proc.start()
+
+        cancelled = False
         try:
-            job.pop("run_func_name", None)
-            job.pop("created_at", None)
-            run_func(job)
-            # After run_func returns, check if we were cancelled mid-execution
-            if self._cancel_event.is_set():
-                logger.info(f"Job {access_code} was cancelled, marking as failed")
+            while proc.is_alive():
+                proc.join(timeout=5)
+                if self._cancel_event.is_set():
+                    cancelled = True
+                else:
+                    # Poll the DB — the job may have been cancelled externally
+                    # (e.g. via TUI or another server instance).
+                    try:
+                        row = conn.execute(
+                            "SELECT status FROM jobs WHERE access_code = ?",
+                            (access_code,)
+                        ).fetchone()
+                        if row is None or row["status"] != JobStatus.PROCESSING.value:
+                            cancelled = True
+                    except Exception:
+                        pass
+
+                if cancelled:
+                    proc.terminate()
+                    proc.join(timeout=3)
+                    if proc.is_alive():
+                        proc.kill()
+                        proc.join(timeout=2)
+                    break
+
+            if cancelled:
                 now = time.strftime('%Y-%m-%d %H:%M:%S')
                 conn.execute(
-                    "UPDATE jobs SET status = ?, error = ? WHERE access_code = ?",
-                    (JobStatus.FAILED.value, "Cancelled by user", access_code)
+                    "UPDATE jobs SET status = ?, error = ?, cancelled_at = ? WHERE access_code = ?",
+                    (JobStatus.FAILED.value, "Cancelled by user", now, access_code)
                 )
-                conn.execute(
-                    "UPDATE jobs SET cancelled_at = ? WHERE access_code = ?",
-                    (now, access_code)
-                )
-            else:
+                logger.info(f"Job {access_code} was cancelled")
+            elif proc.exitcode == 0:
                 conn.execute(
                     "UPDATE jobs SET status = ? WHERE access_code = ?",
                     (JobStatus.COMPLETED.value, access_code)
@@ -280,13 +351,28 @@ class JobQueue:
                     (now, access_code)
                 )
                 logger.info(f"Job {access_code} completed successfully")
+            else:
+                now = time.strftime('%Y-%m-%d %H:%M:%S')
+                sig = f" (exit {proc.exitcode})" if proc.exitcode is not None else ""
+                conn.execute(
+                    "UPDATE jobs SET status = ?, error = ?, failed_at = ? WHERE access_code = ?",
+                    (JobStatus.FAILED.value, f"Job process failed{sig}", now, access_code)
+                )
+                logger.warning(f"Job {access_code} failed with exit code {proc.exitcode}")
         except Exception as e:
+            # Ensure the child process is cleaned up on unexpected errors
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=3)
+                if proc.is_alive():
+                    proc.kill()
+                    proc.join(timeout=2)
             now = time.strftime('%Y-%m-%d %H:%M:%S')
             conn.execute(
                 "UPDATE jobs SET status = ?, error = ?, failed_at = ? WHERE access_code = ?",
                 (JobStatus.FAILED.value, str(e)[:500], now, access_code)
             )
-            logger.error(f"Job {access_code} failed: {e}")
+            logger.error(f"Job {access_code} handler error: {e}")
 
         conn.commit()
 
@@ -344,6 +430,8 @@ class JobQueue:
             "_run_tts_job": "语音合成",
             "_run_video_auto_job": "自动翻译视频",
             "_run_audio_segmentation_job": "音频分段合成",
+            "_run_video_ocr_job": "OCR翻译视频",
+            "_run_video_ning_ocr_job": "宁视频OCR翻译",
         }
         return [{
             "access_code": r[0],

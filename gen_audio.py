@@ -9,7 +9,7 @@ from datetime import timedelta
 
 import srt
 import torch
-import torchaudio as ta
+import soundfile as sf
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "chatterbox-server"))
 
@@ -108,7 +108,7 @@ def combine_audio_segments(segments_info, total_duration, sample_rate):
 
 
 def save_audio(output_path, wav_tensor, sample_rate):
-    ta.save(output_path, wav_tensor, sample_rate)
+    sf.write(output_path, wav_tensor.squeeze(0).cpu().numpy(), sample_rate)
 
 
 def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_dir=ASSETS_DIR, target_language="en", cfg_weight=0.5, exaggeration=0.5):
@@ -132,7 +132,7 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
     for i, sub in enumerate(subs):
         speaker, clean_content = extract_speaker(sub.content)
         display = f"[{speaker}] " if speaker else ""
-        chunks = split_text(clean_content, 220)
+        chunks = split_text(clean_content, 120)
         print(f"Processing segment {i}: {display}{clean_content[:50]}... ({len(chunks)} chunk(s))")
 
         orig_start = sub.start.total_seconds()

@@ -1,19 +1,16 @@
 """Shared subprocess pipeline steps for audio/video job handlers."""
 
-import logging
 import os
 import subprocess
 import time
-from typing import Optional
 
+from log_utils import job_log, job_log_lines
 from config import (
     PYTHON_BIN,
     GEN_AUDIO_SCRIPT,
     GEN_VIDEO_SCRIPT,
     AUDIO_PROMPT_PATH,
 )
-
-logger = logging.getLogger(__name__)
 
 
 def run_gen_audio_step(
@@ -45,11 +42,13 @@ def run_gen_audio_step(
     wav_path_out = os.path.join(output_dir, output_wav)
     changed_json_out = os.path.join(output_dir, changed_json)
 
-    # Redirect stderr to job.log to prevent pipe buffer deadlock
+    # Write both stdout and stderr directly to job.log to avoid pipe
+    # buffer deadlock and unnecessary in-memory buffering.
     log_path = os.path.join(output_dir, "job.log")
-    job_log = open(log_path, "a")
-    job_log.write(f"\n--- gen_audio {access_code} ---\n")
-    job_log.flush()
+    job_log(access_code, output_dir, f"--- gen_audio ---")
+
+    proc_log = open(log_path, "a")
+    proc_pos = proc_log.tell()
 
     process = subprocess.Popen(
         [
@@ -66,8 +65,8 @@ def run_gen_audio_step(
             "--cfg_weight", str(cfg_weight),
             "--exaggeration", str(exaggeration),
         ],
-        stdout=subprocess.PIPE,
-        stderr=job_log,
+        stdout=proc_log,
+        stderr=proc_log,
         text=True,
     )
 
@@ -85,17 +84,19 @@ def run_gen_audio_step(
                 f"正在合成音频... ({elapsed // 60}分{elapsed % 60}秒)"
             )
 
-    stdout, _ = process.communicate()
-    job_log.close()
+    proc_log.close()
 
-    for line in stdout.strip().splitlines():
-        logger.info(f"[Job {access_code}] {line}")
+    # Read back only the output written by this subprocess invocation
+    with open(log_path, "r") as f:
+        f.seek(proc_pos)
+        sub_out = f.read()
+
+    output_lines = sub_out.strip().splitlines()
+    if output_lines:
+        job_log_lines(access_code, output_dir, output_lines)
 
     if process.returncode != 0:
-        stderr_text = open(log_path).read()
-        for line in stderr_text.strip().splitlines():
-            logger.error(f"[Job {access_code}] {line}")
-        raise RuntimeError(stderr_text[:500] if stderr_text else "gen_audio failed")
+        raise RuntimeError(sub_out[:500] if sub_out else "gen_audio failed")
 
     expected = [srt_path_out, wav_path_out]
     missing = [f for f in expected if not os.path.exists(f)]
@@ -119,11 +120,15 @@ def run_gen_video_step(
     timeout: int = 7200,
 ):
     """Run the gen_video.py subprocess to produce the final video."""
-    # Redirect stderr to job.log to prevent pipe buffer deadlock
-    log_path = os.path.join(os.path.dirname(output_path), "job.log")
-    job_log = open(log_path, "a")
-    job_log.write(f"\n--- gen_video {os.path.basename(output_path)} ---\n")
-    job_log.flush()
+    # Write both stdout and stderr directly to job.log to avoid pipe
+    # buffer deadlock and unnecessary in-memory buffering.
+    output_dir = os.path.dirname(output_path)
+    log_path = os.path.join(output_dir, "job.log")
+    job_log(access_code, output_dir, f"--- gen_video {os.path.basename(output_path)} ---")
+
+    proc_log = open(log_path, "a")
+    proc_pos = proc_log.tell()
+
     process = subprocess.Popen(
         [
             PYTHON_BIN,
@@ -134,8 +139,8 @@ def run_gen_video_step(
             changed_json,
             "--output", output_path,
         ],
-        stdout=subprocess.PIPE,
-        stderr=job_log,
+        stdout=proc_log,
+        stderr=proc_log,
         text=True,
     )
 
@@ -153,17 +158,19 @@ def run_gen_video_step(
                 f"正在合成视频... ({elapsed // 60}分{elapsed % 60}秒)"
             )
 
-    stdout, _ = process.communicate()
-    job_log.close()
+    proc_log.close()
 
-    for line in stdout.strip().splitlines():
-        logger.info(f"[Job {access_code}] {line}")
+    # Read back only the output written by this subprocess invocation
+    with open(log_path, "r") as f:
+        f.seek(proc_pos)
+        sub_out = f.read()
+
+    output_lines = sub_out.strip().splitlines()
+    if output_lines:
+        job_log_lines(access_code, output_dir, output_lines)
 
     if process.returncode != 0:
-        stderr_text = open(log_path).read()
-        for line in stderr_text.strip().splitlines():
-            logger.error(f"[Job {access_code}] {line}")
-        raise RuntimeError(stderr_text[:500] if stderr_text else "gen_video failed")
+        raise RuntimeError(sub_out[:500] if sub_out else "gen_video failed")
 
     if not os.path.exists(output_path):
         raise RuntimeError(f"gen_video completed but output file missing: {output_path}")

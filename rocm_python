@@ -1,0 +1,5 @@
+#!/bin/bash
+# Run Python with ROCm environment for AMD Renoir APU (gfx90c)
+export HSA_OVERRIDE_GFX_VERSION=9.0.0
+export ROCBLAS_TENSILE_LIBPATH=/opt/rocm/lib/rocblas/library
+exec /home/js9s/.pyenv/versions/3.11.14/bin/python3.11 "$@"

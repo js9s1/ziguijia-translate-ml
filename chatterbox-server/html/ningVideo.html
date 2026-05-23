@@ -56,6 +56,14 @@
             </div>
 
             <div class="form-row">
+                <label for="mode">翻译模式</label>
+                <select id="mode" name="mode">
+                    <option value="srt">上传SRT字幕</option>
+                    <option value="ocr">OCR识别翻译（RapidVideOCR + HY-MT）</option>
+                </select>
+            </div>
+
+            <div class="form-row" id="srtSection">
                 <label for="srt_file">上传SRT字幕文件</label>
                 <input type="file" id="srt_file" name="srt_file" accept=".srt" required>
             </div>
@@ -97,6 +105,17 @@
         </div>
     </div>
     <script>
+        document.getElementById('mode').addEventListener('change', function() {
+            var srtSection = document.getElementById('srtSection');
+            if (this.value === 'ocr') {
+                srtSection.classList.add('hidden');
+                document.getElementById('srt_file').removeAttribute('required');
+            } else {
+                srtSection.classList.remove('hidden');
+                document.getElementById('srt_file').setAttribute('required', '');
+            }
+        });
+
         document.getElementById('temperature').addEventListener('input', function(e) {
             document.getElementById('tempValue').textContent = e.target.value;
         });
@@ -112,13 +131,22 @@
             overlay.classList.add('active');
             const formData = new FormData();
             formData.append('number', document.getElementById('number').value);
-            formData.append('srt_file', document.getElementById('srt_file').files[0]);
             formData.append('temperature', document.getElementById('temperature').value);
             formData.append('blur', document.getElementById('blur').value);
             formData.append('target_language', document.getElementById('target_language').value);
             formData.append('cfg_weight', document.getElementById('cfg_weight').value);
             formData.append('exaggeration', document.getElementById('exaggeration').value);
-            fetch('/video/ning/process', { method: 'POST', body: formData })
+
+            var mode = document.getElementById('mode').value;
+            var url;
+            if (mode === 'ocr') {
+                url = '/video/ning/ocr-process';
+            } else {
+                formData.append('srt_file', document.getElementById('srt_file').files[0]);
+                url = '/video/ning/process';
+            }
+
+            fetch(url, { method: 'POST', body: formData })
             .then(function(response) {
                 if (response.status === 401) {
                     overlay.classList.remove('active');

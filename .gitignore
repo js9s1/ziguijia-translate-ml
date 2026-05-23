@@ -17,6 +17,10 @@ start_server.sh
 audio_tracks/
 client/*.wav
 
+# GPU crash dumps
+gpucore.*
+chatterbox-server/gpucore.*
+
 # Cache / metadata
 chatterbox-server/.jobqueue.lock
 chatterbox-server/jobqueue.py.backup
@@ -24,4 +28,4 @@ chatterbox-server/jobqueue_corrupted.py
 graphify-out/
 
 # IDE / misc
-opencode.jsongpucore.4584
+opencode.json

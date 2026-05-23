@@ -6,7 +6,7 @@ import sys
 import time
 from collections import defaultdict
 
-from srt_action import process_srt_file
+from audio_job import process_srt_file
 from jobqueue import get_job_queue
 from auth import get_user_manager
 from config import AUDIO_TRACKS_DIR, VIDEO_DIR
@@ -111,7 +111,7 @@ def audio_process():
             target_language = request.form.get("target_language", "en")
             cfg_weight = float(request.form.get("cfg_weight", 0.5))
             exaggeration = float(request.form.get("exaggeration", 0.5))
-            from srt_action import process_audio_file
+            from audio_job import process_audio_file
             result = process_audio_file(content, file.filename, temperature, session["user_id"],
                                         target_language=target_language, cfg_weight=cfg_weight, exaggeration=exaggeration)
             return jsonify(result)
@@ -120,7 +120,7 @@ def audio_process():
             text = data.get("text", "")
             if not text:
                 return jsonify({"error": "Missing text"}), 400
-            from srt_action import process_tts
+            from tts_job import process_tts
             result = process_tts(text, data.get("filename", "output.wav"), session["user_id"],
                                  temperature=float(data.get("temperature", 0.8)),
                                  target_language=data.get("target_language", "en"),
@@ -140,7 +140,7 @@ def tts_process():
         text = data.get("text", "")
         if not text:
             return jsonify({"error": "Missing text"}), 400
-        from srt_action import process_tts
+        from tts_job import process_tts
         result = process_tts(text, data.get("filename", "output.wav"), session["user_id"],
                              temperature=float(data.get("temperature", 0.8)),
                              target_language=data.get("target_language", "en"),
@@ -385,13 +385,36 @@ def video_ning_process():
         cfg_weight = float(request.form.get("cfg_weight", 0.5))
         exaggeration = float(request.form.get("exaggeration", 0.5))
 
-        from srt_action import process_video_ning
+        from video_ning_job import process_video_ning
         blur = request.form.get("blur", "yes")
         result = process_video_ning(number, srt_file, temperature, session["user_id"], blur,
                                     target_language=target_language, cfg_weight=cfg_weight, exaggeration=exaggeration)
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error processing video: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/video/ning/ocr-process", methods=["POST"])
+@login_required
+def video_ning_ocr_process():
+    try:
+        number = request.form.get("number")
+        if not number:
+            return jsonify({"error": "No video number provided"}), 400
+
+        temperature = float(request.form.get("temperature", 0.6))
+        target_language = request.form.get("target_language", "en")
+        cfg_weight = float(request.form.get("cfg_weight", 0.5))
+        exaggeration = float(request.form.get("exaggeration", 0.5))
+
+        from video_ning_job import process_video_ning_ocr
+        blur = request.form.get("blur", "yes")
+        result = process_video_ning_ocr(number, temperature, session["user_id"], blur,
+                                        target_language=target_language, cfg_weight=cfg_weight, exaggeration=exaggeration)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error OCR processing ning video: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -416,7 +439,7 @@ def video_custom_process():
         cfg_weight = float(request.form.get("cfg_weight", 0.5))
         exaggeration = float(request.form.get("exaggeration", 0.5))
 
-        from srt_action import process_video_custom
+        from video_custom_job import process_video_custom
         result = process_video_custom(video_file, srt_file, temperature, session["user_id"],
                                       target_language=target_language, cfg_weight=cfg_weight, exaggeration=exaggeration)
         return jsonify(result)
@@ -438,12 +461,34 @@ def video_custom_auto_process():
         cfg_weight = float(request.form.get("cfg_weight", 0.5))
         exaggeration = float(request.form.get("exaggeration", 0.5))
 
-        from srt_action import process_video_auto
+        from video_custom_job import process_video_auto
         result = process_video_auto(video_file, temperature, session["user_id"],
                                     target_language=target_language, cfg_weight=cfg_weight, exaggeration=exaggeration)
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error auto processing video: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/video/custom/ocr-process", methods=["POST"])
+@login_required
+def video_custom_ocr_process():
+    try:
+        if "video_file" not in request.files:
+            return jsonify({"error": "No video file uploaded"}), 400
+
+        video_file = request.files["video_file"]
+        temperature = float(request.form.get("temperature", 0.6))
+        target_language = request.form.get("target_language", "en")
+        cfg_weight = float(request.form.get("cfg_weight", 0.5))
+        exaggeration = float(request.form.get("exaggeration", 0.5))
+
+        from video_custom_job import process_video_ocr
+        result = process_video_ocr(video_file, temperature, session["user_id"],
+                                   target_language=target_language, cfg_weight=cfg_weight, exaggeration=exaggeration)
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error OCR processing video: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 
