@@ -178,7 +178,12 @@ def tts_stream(access_code):
 @app.route("/health", methods=["GET"])
 def health_check():
     """Health check endpoint"""
-    return jsonify({"status": "healthy", "message": "Server is running"})
+    import torch, os
+    return jsonify({
+        "status": "healthy", "message": "Server is running",
+        "cuda": torch.cuda.is_available(),
+        "hsa_override": os.environ.get("HSA_OVERRIDE_GFX_VERSION", "not set"),
+    })
 
 
 @app.route("/result", methods=["GET"])

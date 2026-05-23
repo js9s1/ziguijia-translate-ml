@@ -52,6 +52,17 @@ def _choose_device(preferred: str = "cuda") -> str:
     if not torch.cuda.is_available():
         print("CUDA not available — using CPU")
         return "cpu"
+    # AMD Renoir/VanGogh/Dali iGPUs (gfx90c, gfx1030, gfx1103) share system
+    # memory and can pass small tensor probes but crash with real TTS models
+    # under ROCm 7.x. Check device name and force CPU for known problematic GPUs.
+    try:
+        gpu_name = torch.cuda.get_device_name(0).lower()
+        problem_gpus = ["renoir", "radeon graphics", "gfx90c", "van gogh", "dali"]
+        if any(p in gpu_name for p in problem_gpus):
+            print(f"GPU ({torch.cuda.get_device_name(0)}) known unstable with TTS on ROCm — using CPU")
+            return "cpu"
+    except Exception:
+        pass
     if not _check_gpu_healthy():
         print("GPU unhealthy (hang detected) — falling back to CPU")
         return "cpu"
@@ -104,10 +115,9 @@ class NingAudio:
         if NingAudio._model is None:
             import warnings
             warnings.filterwarnings("ignore")
-            # When user requests CUDA, try it directly — don't pre-check memory,
-            # since mem_get_info() may show low free memory before the model loads.
-            # If it OOMs, fall back to CPU.
-            actual_device = "cuda" if device == "cuda" else _choose_device(device)
+            # Use _choose_device for all cases — it checks GPU health, model
+            # compatibility (known-problem iGPUs), and free memory.
+            actual_device = _choose_device(device)
             try:
                 NingAudio._model = ChatterboxMultilingualTTS.from_pretrained(device=actual_device)
             except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
