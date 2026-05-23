@@ -110,11 +110,12 @@ def _run_video_ning_ocr_job(job_data: dict):
     def _done(name: str) -> bool:
         ckpt = get_job_queue().get_checkpoint(access_code)
         steps = ["download", "decompress", "trim", "ocr", "translate", "audio", "video"]
-        return name in steps and name in ckpt.split(",")
+        parts = ckpt.split(",") if ckpt else []
+        return name in steps and name in parts
 
     def _mark(name: str):
         ckpt = get_job_queue().get_checkpoint(access_code)
-        parts = [s for s in ckpt.split(",") if s] + [name]
+        parts = ([s for s in ckpt.split(",") if s] if ckpt else []) + [name]
         get_job_queue().set_checkpoint(access_code, ",".join(parts))
         job_log(access_code, output_dir, f"  ✓ checkpoint {name}")
 
