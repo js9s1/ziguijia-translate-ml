@@ -106,15 +106,16 @@ def _run_video_ning_ocr_job(job_data: dict):
     log_file = os.path.join(output_dir, "job.log")
     proc_log = open(log_file, "a")
 
-    # ── Checkpoint helpers ──────────────────────────────────────
-    def _ckpt(name: str) -> str:
-        return os.path.join(output_dir, f".checkpoint_{name}")
-
+    # ── Checkpoint helpers (persisted in jobs.db) ──────────────
     def _done(name: str) -> bool:
-        return os.path.exists(_ckpt(name))
+        ckpt = get_job_queue().get_checkpoint(access_code)
+        steps = ["download", "decompress", "trim", "ocr", "translate", "audio", "video"]
+        return name in steps and name in ckpt.split(",")
 
     def _mark(name: str):
-        open(_ckpt(name), "w").close()
+        ckpt = get_job_queue().get_checkpoint(access_code)
+        parts = [s for s in ckpt.split(",") if s] + [name]
+        get_job_queue().set_checkpoint(access_code, ",".join(parts))
         job_log(access_code, output_dir, f"  ✓ checkpoint {name}")
 
     # Step 1: Download the original video

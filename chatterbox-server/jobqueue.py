@@ -176,6 +176,10 @@ class JobQueue:
             conn.execute("ALTER TABLE jobs ADD COLUMN deleted_at TIMESTAMP")
         except Exception:
             pass
+        try:
+            conn.execute("ALTER TABLE jobs ADD COLUMN checkpoint TEXT DEFAULT ''")
+        except Exception:
+            pass
         conn.commit()
 
     def _generate_access_code(self) -> str:
@@ -375,6 +379,23 @@ class JobQueue:
             logger.error(f"Job {access_code} handler error: {e}")
 
         conn.commit()
+
+    def set_checkpoint(self, access_code: str, checkpoint: str):
+        """Record that a job has completed up to a certain step."""
+        conn = self._get_conn()
+        conn.execute(
+            "UPDATE jobs SET checkpoint = ? WHERE access_code = ?",
+            (checkpoint, access_code)
+        )
+        conn.commit()
+
+    def get_checkpoint(self, access_code: str) -> str:
+        """Return the highest completed checkpoint step for a job."""
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT checkpoint FROM jobs WHERE access_code = ?", (access_code,)
+        ).fetchone()
+        return row[0] if row and row[0] else ""
 
     def update_job_progress(self, access_code: str, progress: str):
         conn = self._get_conn()
