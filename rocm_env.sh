@@ -11,4 +11,4 @@
 #   - HSA_OVERRIDE_GFX_VERSION=9.0.0 makes ROCm treat gfx90c as gfx900
 export HSA_OVERRIDE_GFX_VERSION=9.0.0
 export HSA_XNACK=0
-export ROCBLAS_TENSILE_LIBPATH=/opt/rocm/lib/rocblas/library
+export ROCBLAS_USE_HIPBLASLT=0

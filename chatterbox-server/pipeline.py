@@ -72,6 +72,7 @@ def run_gen_audio_step(
             **os.environ,
             "HSA_OVERRIDE_GFX_VERSION": "9.0.0",
             "HSA_XNACK": "0",
+            "ROCBLAS_USE_HIPBLASLT": "0",
         },
     )
 

@@ -37,7 +37,7 @@ def _check_gpu_healthy() -> bool:
                 "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", "0"),
                 "HSA_OVERRIDE_GFX_VERSION": "9.0.0",
                 "HSA_XNACK": "0",
-                "ROCBLAS_TENSILE_LIBPATH": "/opt/rocm/lib/rocblas/library",
+                "ROCBLAS_USE_HIPBLASLT": "0",  # gfx90c doesn't support hipBLASLt
                 "PYTHONUNBUFFERED": "1",
             },
         )
