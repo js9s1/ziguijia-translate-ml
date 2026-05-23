@@ -2,21 +2,26 @@
 #
 # rapid_videocr_pipeline.sh — Full OCR pipeline for a video file.
 #
-# Extracts frames from the video, renames them to VideoSubFinder naming
-# convention, runs rapid_videocr, then merges adjacent duplicate segments.
+# Extracts frames from the video, optionally crops them, renames to
+# VideoSubFinder naming convention, runs rapid_videocr, then merges
+# adjacent duplicate segments.
 #
 # Usage:
 #   ./rapid_videocr_pipeline.sh -i input.mp4 [options]
 #
 # Options:
-#   -i, --input FILE     Input video file (required)
-#   -d, --dir DIR        Temp directory for frames (default: ./frames)
-#   -f, --fps N          Frames per second (default: 3)
-#   -o, --output FILE    Output SRT file (default: ./output.srt)
-#   -p, --prefix STR     Output filename prefix for intermediate SRT (default: result)
-#   -s, --save-dir DIR   Save raw OCR output to DIR (default: temp dir, auto-cleaned)
-#   --keep-frames        Don't delete the frames directory after processing
-#   -h, --help           Show this help
+#   -i, --input FILE       Input video file (required)
+#   -d, --dir DIR          Temp directory for frames (default: ./frames)
+#   -f, --fps N            Frames per second (default: 3)
+#   -o, --output FILE      Output SRT file (default: ./output.srt)
+#   -p, --prefix STR       Output filename prefix for intermediate SRT (default: result)
+#   -s, --save-dir DIR     Save raw OCR output to DIR (default: temp dir, auto-cleaned)
+#   -c, --crop SPEC        Crop frames before OCR. Options:
+#                            "bottom-half" — lower 50% of frame
+#                            "top-half"    — upper 50% of frame
+#                            ffmpeg crop filter string, e.g. "iw:ih/3:0:ih*2/3"
+#   --keep-frames          Don't delete the frames directory after processing
+#   -h, --help             Show this help
 #
 
 set -euo pipefail
@@ -29,6 +34,7 @@ PREFIX="result"
 SAVE_DIR=""
 KEEP_FRAMES=0
 RAPID_VIDEOCR_BIN="${RAPID_VIDEOCR_BIN:-rapid_videocr}"
+CROP=""
 
 # ---- parse args ----
 while [[ $# -gt 0 ]]; do
@@ -40,7 +46,8 @@ while [[ $# -gt 0 ]]; do
         -p|--prefix)    PREFIX="$2";      shift 2 ;;
         -s|--save-dir)  SAVE_DIR="$2";    shift 2 ;;
         --keep-frames)  KEEP_FRAMES=1;    shift   ;;
-        -h|--help)      head -20 "$0";    exit 0   ;;
+        -c|--crop)      CROP="$2";        shift 2 ;;
+        -h|--help)      head -28 "$0";    exit 0   ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -67,13 +74,26 @@ echo "Output:     $OUTPUT_SRT"
 if [[ -n "$SAVE_DIR" ]]; then
     echo "Raw save:  $SAVE_DIR"
 fi
+if [[ -n "$CROP" ]]; then
+    echo "Crop:      $CROP"
+fi
 echo ""
 
-# ---- 1. Extract frames at given FPS ----
+# ---- 1. Extract frames at given FPS (with optional crop) ----
+EXTRACT_FILTER="fps=${FPS}"
+if [[ -n "$CROP" ]]; then
+    case "$CROP" in
+        bottom-half) CROP_FILTER="crop=iw:ih/2:0:ih/2" ;;
+        top-half)    CROP_FILTER="crop=iw:ih/2:0:0"    ;;
+        *)           CROP_FILTER="crop=${CROP}"         ;;
+    esac
+    EXTRACT_FILTER="${EXTRACT_FILTER},${CROP_FILTER}"
+    echo "  Crop filter: ${CROP_FILTER}"
+fi
 echo "[1/4] Extracting frames at ${FPS}fps..."
 mkdir -p "$FRAMES_DIR"
 rm -f "$FRAMES_DIR"/*.png
-ffmpeg -y -i "$INPUT_VIDEO" -vf "fps=${FPS}" "$FRAMES_DIR/frame_%05d.png" 2>&1 | tail -1
+ffmpeg -y -i "$INPUT_VIDEO" -vf "${EXTRACT_FILTER}" "$FRAMES_DIR/frame_%05d.png" 2>&1 | tail -1
 
 # ---- 2. Rename frames to VSF naming convention ----
 echo "[2/4] Renaming frames to VSF convention..."

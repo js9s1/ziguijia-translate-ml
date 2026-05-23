@@ -101,6 +101,7 @@ def _run_video_ning_ocr_job(job_data: dict):
     cfg_weight = job_data.get("cfg_weight", 0.5)
     exaggeration = job_data.get("exaggeration", 0.5)
     blur = job_data.get("blur", "yes")
+    crop = job_data.get("crop", "")
 
     os.makedirs(output_dir, exist_ok=True)
     log_file = os.path.join(output_dir, "job.log")
@@ -163,7 +164,8 @@ def _run_video_ning_ocr_job(job_data: dict):
     frames_dir = os.path.join(output_dir, "frames")
     subprocess.run(
         ["/usr/bin/bash", RAPID_VIDEOCR_PIPELINE_SCRIPT, "-i", decompressed_path,
-         "-o", ocr_srt, "-d", frames_dir],
+         "-o", ocr_srt, "-d", frames_dir]
+        + (["-c", crop] if crop else []),
         stdout=proc_log, stderr=proc_log, timeout=14400,
         env={**os.environ, "RAPID_VIDEOCR_BIN": RAPID_VIDEOCR_BIN},
     )
@@ -255,7 +257,7 @@ def _run_video_ning_ocr_job(job_data: dict):
     job_log(access_code, output_dir, "Done!")
 
 
-def process_video_ning_ocr(number: str, temperature: float, user_id: int = None, blur: str = "yes", target_language: str = "en", cfg_weight: float = 0.5, exaggeration: float = 0.5) -> dict:
+def process_video_ning_ocr(number: str, temperature: float, user_id: int = None, blur: str = "yes", target_language: str = "en", cfg_weight: float = 0.5, exaggeration: float = 0.5, crop: str = "") -> dict:
     access_code = str(uuid.uuid4())[:8].upper()
     output_dir = os.path.join(VIDEO_DIR, f"{number}-{access_code}")
     os.makedirs(output_dir, exist_ok=True)
@@ -269,6 +271,7 @@ def process_video_ning_ocr(number: str, temperature: float, user_id: int = None,
         "target_language": target_language,
         "cfg_weight": cfg_weight,
         "exaggeration": exaggeration,
+        "crop": crop,
     }
 
     job_access_code = get_job_queue().add_job(job_data, _run_video_ning_ocr_job, user_id)
