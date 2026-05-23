@@ -48,17 +48,34 @@ source "${HOME}/子归家/code_ml/rocm_env.sh"
 #    echo "NingInferenceServer already running"
 #fi
 
+# Kill any existing gunicorn on our port to avoid bind conflicts
+PID_FILE=/tmp/gunicorn.pid
+if [ -f "$PID_FILE" ]; then
+    OLD_PID=$(cat "$PID_FILE")
+    if kill -0 "$OLD_PID" 2>/dev/null; then
+        echo "Stopping old gunicorn (PID $OLD_PID)..."
+        kill "$OLD_PID" 2>/dev/null
+        sleep 1
+    fi
+fi
+# Also kill any stray gunicorn bound to our port
+for OLD_PID in $(lsof -ti :5600 2>/dev/null || true); do
+    echo "Killing process $OLD_PID on port 5600..."
+    kill "$OLD_PID" 2>/dev/null
+done
+sleep 1
+
 echo "Starting chatterbox server..."
 
 ${HOME}/.pyenv/versions/3.11.14/bin/gunicorn \
     --access-logfile ${HOME}/logs/chatterbox-server/access.log \
     --error-logfile ${HOME}/logs/chatterbox-server/error.log \
     --log-level info \
-    -w 1 -k gthread --threads 8 --timeout 300 -b 0.0.0.0:5600 'chatterbox_server:app' --daemon --pid /tmp/gunicorn.pid
+    -w 1 -k gthread --threads 8 --timeout 300 -b 0.0.0.0:5600 'chatterbox_server:app' --daemon --pid "$PID_FILE"
 
 sleep 2
 
-if pgrep -f gunicorn > /dev/null; then
+if pgrep -f "gunicorn.*chatterbox_server" > /dev/null; then
     echo "Server started on port 5600"
     echo "Logs:"
     echo "  - ${HOME}/logs/chatterbox-server/ning_server.log"
