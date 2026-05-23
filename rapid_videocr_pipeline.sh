@@ -28,6 +28,7 @@ OUTPUT_SRT="./output.srt"
 PREFIX="result"
 SAVE_DIR=""
 KEEP_FRAMES=0
+RAPID_VIDEOCR_BIN="${RAPID_VIDEOCR_BIN:-rapid_videocr}"
 
 # ---- parse args ----
 while [[ $# -gt 0 ]]; do
@@ -141,7 +142,7 @@ for ((chunk=0; chunk<CHUNK_COUNT; chunk++)); do
 
     CHUNK_PREFIX="${PREFIX}_chunk${chunk}"
     echo "  Chunk $((chunk+1))/${CHUNK_COUNT}: ${CHUNK_PREFIX} (frames $((start+1))-${end})"
-    rapid_videocr -i "$CHUNK_DIR" -s "$CHUNK_DIR" -f "$CHUNK_PREFIX" -o srt || true
+    "$RAPID_VIDEOCR_BIN" -i "$CHUNK_DIR" -s "$CHUNK_DIR" -f "$CHUNK_PREFIX" -o srt || true
 
     CHUNK_SRT="${CHUNK_DIR}/${CHUNK_PREFIX}.srt"
     [[ ! -f "$CHUNK_SRT" ]] && CHUNK_SRT="${CHUNK_DIR}/outputs/${CHUNK_PREFIX}.srt"

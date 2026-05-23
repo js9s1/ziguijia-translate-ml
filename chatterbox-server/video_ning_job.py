@@ -10,7 +10,7 @@ import uuid
 
 from jobqueue import get_job_queue
 from log_utils import job_log
-from config import VIDEO_DIR, GEN_VIDEO_ORIG_SCRIPT, RAPID_VIDEOCR_PIPELINE_SCRIPT, HY_MT_DIR, PROJECT_ROOT
+from config import VIDEO_DIR, GEN_VIDEO_ORIG_SCRIPT, RAPID_VIDEOCR_PIPELINE_SCRIPT, HY_MT_DIR, PROJECT_ROOT, RAPID_VIDEOCR_BIN
 from pipeline import validate_files
 
 _LANG_MAP = {
@@ -165,6 +165,7 @@ def _run_video_ning_ocr_job(job_data: dict):
         ["/usr/bin/bash", RAPID_VIDEOCR_PIPELINE_SCRIPT, "-i", decompressed_path,
          "-o", ocr_srt, "-d", frames_dir],
         stdout=proc_log, stderr=proc_log, timeout=14400,
+        env={**os.environ, "RAPID_VIDEOCR_BIN": RAPID_VIDEOCR_BIN},
     )
     if not os.path.exists(ocr_srt):
         raise RuntimeError("RapidVideOCR pipeline failed to generate SRT")

@@ -54,6 +54,10 @@ RAPID_VIDEOCR_PIPELINE_SCRIPT = os.environ.get(
     "RAPID_VIDEOCR_PIPELINE_SCRIPT",
     os.path.join(PROJECT_ROOT, "rapid_videocr_pipeline.sh"),
 )
+RAPID_VIDEOCR_BIN = os.environ.get(
+    "RAPID_VIDEOCR_BIN",
+    "/home/js9s/.local/bin/rapid_videocr",
+)
 
 # ── Default ports ──────────────────────────────────────────
 PORT = 18789
