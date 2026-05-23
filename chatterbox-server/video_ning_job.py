@@ -8,7 +8,7 @@ import sys
 import time
 import uuid
 
-from jobqueue import get_job_queue
+from jobqueue import get_job_queue, JobStatus
 from log_utils import job_log
 from config import VIDEO_DIR, GEN_VIDEO_ORIG_SCRIPT, RAPID_VIDEOCR_PIPELINE_SCRIPT, HY_MT_DIR, PROJECT_ROOT, RAPID_VIDEOCR_BIN
 from pipeline import validate_files
@@ -302,9 +302,16 @@ def _run_video_ning_ocr_job(job_data: dict):
 
 
 def process_video_ning_ocr(number: str, temperature: float, user_id: int = None, blur: str = "yes", target_language: str = "en", cfg_weight: float = 0.5, exaggeration: float = 0.5) -> dict:
-    access_code = str(uuid.uuid4())[:8].upper()
-    output_dir = os.path.join(VIDEO_DIR, f"{number}-{access_code}")
-    os.makedirs(output_dir, exist_ok=True)
+    # Reuse an existing failed job for the same video+user so checkpoints carry over
+    jq = get_job_queue()
+    existing = jq._find_failed_ocr_job(number, user_id)
+    if existing:
+        access_code, output_dir = existing
+        job_log_lines(access_code, output_dir, [f"--- resubmit (temperature={temperature}, lang={target_language}) ---"])
+    else:
+        access_code = str(uuid.uuid4())[:8].upper()
+        output_dir = os.path.join(VIDEO_DIR, f"{number}-{access_code}")
+        os.makedirs(output_dir, exist_ok=True)
 
     job_data = {
         "video_number": number,
@@ -317,5 +324,5 @@ def process_video_ning_ocr(number: str, temperature: float, user_id: int = None,
         "exaggeration": exaggeration,
     }
 
-    job_access_code = get_job_queue().add_job(job_data, _run_video_ning_ocr_job, user_id)
+    job_access_code = jq.add_job(job_data, _run_video_ning_ocr_job, user_id)
     return {"access_code": job_access_code, "message": "OCR translation job queued"}
