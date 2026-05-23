@@ -77,15 +77,6 @@
             </div>
 
             <div class="form-row">
-                <label for="crop">画面裁剪 (OCR模式)</label>
-                <select id="crop" name="crop">
-                    <option value="">不裁剪</option>
-                    <option value="bottom-half">下半部分 (字幕区域)</option>
-                    <option value="top-half">上半部分</option>
-                </select>
-            </div>
-
-            <div class="form-row">
                 <label for="temperature">温度</label>
                 <span class="temp-value" id="tempValue">0.6</span>
                 <input type="range" id="temperature" name="temperature" min="0.5" max="1.5" step="0.01" value="0.6">
@@ -145,7 +136,6 @@
             formData.append('target_language', document.getElementById('target_language').value);
             formData.append('cfg_weight', document.getElementById('cfg_weight').value);
             formData.append('exaggeration', document.getElementById('exaggeration').value);
-            formData.append('crop', document.getElementById('crop').value);
 
             var mode = document.getElementById('mode').value;
             var url;

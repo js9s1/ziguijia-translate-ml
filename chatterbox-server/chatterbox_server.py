@@ -410,10 +410,8 @@ def video_ning_ocr_process():
 
         from video_ning_job import process_video_ning_ocr
         blur = request.form.get("blur", "yes")
-        crop = request.form.get("crop", "")
         result = process_video_ning_ocr(number, temperature, session["user_id"], blur,
-                                        target_language=target_language, cfg_weight=cfg_weight,
-                                        exaggeration=exaggeration, crop=crop)
+                                        target_language=target_language, cfg_weight=cfg_weight, exaggeration=exaggeration)
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error OCR processing ning video: {str(e)}")

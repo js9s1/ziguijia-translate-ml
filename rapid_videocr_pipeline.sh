@@ -16,10 +16,8 @@
 #   -o, --output FILE      Output SRT file (default: ./output.srt)
 #   -p, --prefix STR       Output filename prefix for intermediate SRT (default: result)
 #   -s, --save-dir DIR     Save raw OCR output to DIR (default: temp dir, auto-cleaned)
-#   -c, --crop SPEC        Crop frames before OCR. Options:
-#                            "bottom-half" — lower 50% of frame
-#                            "top-half"    — upper 50% of frame
-#                            ffmpeg crop filter string, e.g. "iw:ih/3:0:ih*2/3"
+#   -c, --crop PCT       Crop lower N% of frame before OCR. E.g. 50 = lower half,
+#                          30 = lower 30%. Default: disabled (no crop).
 #   --keep-frames          Don't delete the frames directory after processing
 #   -h, --help             Show this help
 #
@@ -82,13 +80,12 @@ echo ""
 # ---- 1. Extract frames at given FPS (with optional crop) ----
 EXTRACT_FILTER="fps=${FPS}"
 if [[ -n "$CROP" ]]; then
-    case "$CROP" in
-        bottom-half) CROP_FILTER="crop=iw:ih/2:0:ih/2" ;;
-        top-half)    CROP_FILTER="crop=iw:ih/2:0:0"    ;;
-        *)           CROP_FILTER="crop=${CROP}"         ;;
-    esac
+    # CROP is a percentage (e.g. 50 = lower 50%, 30 = lower 30%)
+    # ffmpeg crop filter: crop=width:height:x:y
+    # Keep full width, crop N% from bottom: iw:ih*N/100:0:ih*(100-N)/100
+    CROP_FILTER="crop=iw:ih*${CROP}/100:0:ih*(100-${CROP})/100"
     EXTRACT_FILTER="${EXTRACT_FILTER},${CROP_FILTER}"
-    echo "  Crop filter: ${CROP_FILTER}"
+    echo "  Crop: lower ${CROP}% (filter: ${CROP_FILTER})"
 fi
 echo "[1/4] Extracting frames at ${FPS}fps..."
 mkdir -p "$FRAMES_DIR"
