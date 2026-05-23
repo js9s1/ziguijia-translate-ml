@@ -72,9 +72,7 @@ echo "Output:     $OUTPUT_SRT"
 if [[ -n "$SAVE_DIR" ]]; then
     echo "Raw save:  $SAVE_DIR"
 fi
-if [[ -n "$CROP" ]]; then
-    echo "Crop:      $CROP"
-fi
+echo "Crop:      lower ${CROP_PCT}%"
 echo ""
 
 # ---- 1. Extract frames at given FPS (cropped to lower portion) ----
