@@ -14,12 +14,11 @@ export SMTP_FROM="your-email@example.com"
 export FLASK_SECRET_KEY="chatterbox-fixed-secret-key-2024"
 export HF_TOKEN="$(cat ${HOME}/src/chatterbox/hf_t)"
 
-# ROCm 7.x doesn't ship gfx900 kernels needed for this iGPU (gfx90c).
-# Force CPU fallback — `_choose_device` in audio_utils handles this.
-export HIP_VISIBLE_DEVICES=""
-
 # PyTorch memory management — enable expandable segments to reduce fragmentation
 export PYTORCH_ALLOC_CONF=expandable_segments:True
+
+# ROCm: override gfx version for AMD Renoir iGPU (gfx90c → gfx900)
+source "${HOME}/子归家/code_ml/rocm_env.sh"
 
 #if ! docker ps --format '{{.Names}}' | grep -q qdrant; then
 #    echo "Starting qdrant..."
