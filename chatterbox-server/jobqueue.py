@@ -106,11 +106,17 @@ class JobQueue:
 
     def _load_pending_jobs(self):
         conn = self._get_conn()
+
+        # Find any jobs that were still PROCESSING when the server died —
+        # reset them to PENDING so they can be retried.
         conn.execute(
             "UPDATE jobs SET status = ? WHERE status = ?",
             (JobStatus.PENDING.value, JobStatus.PROCESSING.value)
         )
         conn.commit()
+
+        # Kill orphan subprocesses left behind by the dead server instance.
+        self._cleanup_orphan_processes()
 
         rows = conn.execute(
             "SELECT access_code FROM jobs WHERE status = ?",
@@ -119,6 +125,74 @@ class JobQueue:
         for row in rows:
             self._queue.put(row[0])
         logger.info(f"Loaded {len(rows)} pending jobs from database")
+
+    def _cleanup_orphan_processes(self):
+        """Kill subprocesses orphaned by a server crash / restart.
+
+        Iterates all running processes and terminates any whose command-line
+        references the output directory of a now-pending job.  This prevents
+        resource leaks where ``gen_audio.py``, ``gen_video.py``, ffmpeg, etc.
+        keep consuming CPU / GPU / memory after their parent died.
+        """
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT DISTINCT output_dir FROM jobs WHERE status IN (?, ?) AND output_dir IS NOT NULL",
+            (JobStatus.PENDING.value, JobStatus.FAILED.value)
+        ).fetchall()
+        dirs = {r["output_dir"] for r in rows}
+        if not dirs:
+            return
+
+        # Also match common subpaths that subprocesses write to
+        extra_paths = set()
+        for d in dirs:
+            extra_paths.add(os.path.join(d, "audio_tracks"))
+            extra_paths.add(os.path.join(d, "frames"))
+        dirs |= extra_paths
+
+        killed_pids = []
+        for proc in psutil.process_iter(["pid", "cmdline"]):
+            try:
+                cmdline = " ".join(proc.info["cmdline"] or [])
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+            for od in dirs:
+                if od in cmdline:
+                    try:
+                        proc.terminate()
+                        killed_pids.append(proc)
+                        logger.info(
+                            "Orphan %d (%s) terminated (matches %s)",
+                            proc.info["pid"],
+                            os.path.basename(cmdline.split()[0] if cmdline else "?"),
+                            od,
+                        )
+                    except psutil.NoSuchProcess:
+                        pass
+                    except Exception:
+                        try:
+                            proc.kill()
+                            killed_pids.append(proc)
+                        except Exception:
+                            pass
+                    break
+
+        if killed_pids:
+            # Give survivors 3 s, then SIGKILL the rest
+            _, alive = psutil.wait_procs(
+                killed_pids,
+                timeout=3,
+                callback=lambda p: logger.info("Orphan %d gracefully exited", p.pid),
+            )
+            for p in alive:
+                try:
+                    p.kill()
+                    logger.warning("Orphan %d force-killed", p.pid)
+                except Exception:
+                    pass
+            logger.info(
+                "Cleaned up %d orphan subprocess(es) from previous server instance", len(killed_pids)
+            )
 
     def _init_db(self):
         conn = self._get_conn()
