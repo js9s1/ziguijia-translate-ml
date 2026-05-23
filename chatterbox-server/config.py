@@ -2,6 +2,11 @@
 
 import os
 
+# ── ROCm environment for AMD Renoir APU (gfx90c) ────────────
+# Must be set before any PyTorch/ROCm import.
+os.environ.setdefault("HSA_OVERRIDE_GFX_VERSION", "9.0.0")
+os.environ.setdefault("HSA_XNACK", "0")
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BASE_DIR)  # /home/js9s/子归家/code_ml
 

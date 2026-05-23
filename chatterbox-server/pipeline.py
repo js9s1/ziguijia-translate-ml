@@ -68,6 +68,11 @@ def run_gen_audio_step(
         stdout=proc_log,
         stderr=proc_log,
         text=True,
+        env={
+            **os.environ,
+            "HSA_OVERRIDE_GFX_VERSION": "9.0.0",
+            "HSA_XNACK": "0",
+        },
     )
 
     # Poll subprocess with periodic progress updates

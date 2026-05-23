@@ -218,9 +218,16 @@ class JobQueue:
         elif run_func.__name__ == "_run_video_ning_ocr_job":
             run_func_name = "_run_video_ning_ocr_job"
 
+        # Preserve existing checkpoint on resubmit — OR REPLACE would otherwise
+        # wipe it since the INSERT column list omits the checkpoint column.
+        existing_checkpoint = conn.execute(
+            "SELECT checkpoint FROM jobs WHERE access_code = ?", (access_code,)
+        ).fetchone()
+        prev_ckpt = existing_checkpoint[0] if existing_checkpoint else ""
+
         conn.execute("""
-            INSERT OR REPLACE INTO jobs (access_code, srt_path, output_dir, temperature, status, error, run_func_name, video_number, video_file, user_id, text, blur, target_language, cfg_weight, exaggeration)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO jobs (access_code, srt_path, output_dir, temperature, status, error, run_func_name, video_number, video_file, user_id, text, blur, target_language, cfg_weight, exaggeration, checkpoint)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             access_code,
             job_data.get("srt_path"),
@@ -237,6 +244,7 @@ class JobQueue:
             job_data.get("target_language", "en"),
             job_data.get("cfg_weight", 0.5),
             job_data.get("exaggeration", 0.5),
+            prev_ckpt,
         ))
         conn.commit()
 
@@ -399,6 +407,45 @@ class JobQueue:
             (checkpoint, access_code)
         )
         conn.commit()
+
+    def clear_checkpoint_for_file(self, access_code: str, file_path: str):
+        """Remove checkpoint steps whose output file was deleted.
+
+        When a user deletes a file from the result page, the corresponding
+        checkpoint step is cleared so the step will re-run on resubmit.
+        """
+        ckpt = self.get_checkpoint(access_code)
+        if not ckpt:
+            return
+        parts = [s for s in ckpt.split(",") if s]
+        if not parts:
+            return
+
+        basename = os.path.basename(file_path)
+        steps_to_clear = set()
+
+        # Map deleted filenames back to checkpoint steps for ning OCR jobs
+        if basename == "ocr_screen.srt":
+            steps_to_clear.add("ocr")
+        elif basename == "translated.srt":
+            steps_to_clear.add("translate")
+        elif basename == "output_modified.mp4":
+            steps_to_clear.add("video")
+        elif "_decompressed.mov" in basename:
+            steps_to_clear.add("decompress")
+        elif basename.endswith("_trimmed.mp4"):
+            steps_to_clear.add("trim")
+        elif basename.endswith(".mp4") and basename not in ("output_modified.mp4",):
+            steps_to_clear.add("download")
+        elif "audio" in file_path.replace("\\", "/").split("/"):
+            steps_to_clear.add("audio")
+
+        if not steps_to_clear:
+            return
+
+        new_parts = [p for p in parts if p not in steps_to_clear]
+        if new_parts != parts:
+            self.set_checkpoint(access_code, ",".join(new_parts))
 
     def get_checkpoint(self, access_code: str) -> str:
         """Return the highest completed checkpoint step for a job."""

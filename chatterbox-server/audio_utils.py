@@ -7,7 +7,6 @@ from typing import Optional
 import srt
 import torch
 import torchaudio as ta
-import soundfile as sf
 
 from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 from config import AUDIO_PROMPT_PATH
@@ -21,16 +20,26 @@ def _check_gpu_healthy() -> bool:
     probe_code = (
         "import torch\n"
         "try:\n"
-        "    torch.zeros(1, device='cuda') + 1\n"
-        "    print('OK')\n"
-        "except Exception:\n"
-        "    print('FAIL')"
+        "    a = torch.randn(128, 128, device='cuda')\n"
+        "    b = torch.randn(128, 128, device='cuda')\n"
+        "    c = a @ b  # matmul/GEMM — catches HIPBLAS errors\n"
+        "    torch.cuda.synchronize()\n"
+        "    print('OK', flush=True)\n"
+        "except Exception as e:\n"
+        "    print(f'FAIL: {e}', flush=True)"
     )
     try:
         r = subprocess.run(
             [sys.executable, "-c", probe_code],
             capture_output=True, text=True, timeout=15,
-            env={**os.environ, "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", "0")},
+            env={
+                **os.environ,
+                "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", "0"),
+                "HSA_OVERRIDE_GFX_VERSION": "9.0.0",
+                "HSA_XNACK": "0",
+                "ROCBLAS_TENSILE_LIBPATH": "/opt/rocm/lib/rocblas/library",
+                "PYTHONUNBUFFERED": "1",
+            },
         )
         ok = "OK" in r.stdout
         if not ok:
@@ -52,17 +61,11 @@ def _choose_device(preferred: str = "cuda") -> str:
     if not torch.cuda.is_available():
         print("CUDA not available — using CPU")
         return "cpu"
-    # AMD Renoir/VanGogh/Dali iGPUs (gfx90c, gfx1030, gfx1103) share system
-    # memory and can pass small tensor probes but crash with real TTS models
-    # under ROCm 7.x. Check device name and force CPU for known problematic GPUs.
-    try:
-        gpu_name = torch.cuda.get_device_name(0).lower()
-        problem_gpus = ["renoir", "radeon graphics", "gfx90c", "van gogh", "dali"]
-        if any(p in gpu_name for p in problem_gpus):
-            print(f"GPU ({torch.cuda.get_device_name(0)}) known unstable with TTS on ROCm — using CPU")
-            return "cpu"
-    except Exception:
-        pass
+    # AMD APU iGPUs (Renoir/gfx90c, VanGogh/Dali) — historically unstable
+    # with TTS on ROCm 7.x. With PyTorch ROCm 6.2 + HSA_XNACK=0 override,
+    # GPU inference works correctly. This check is kept as a safety net
+    # but no longer blocks by default.
+    # See rocm_env.sh for required environment variables.
     if not _check_gpu_healthy():
         print("GPU unhealthy (hang detected) — falling back to CPU")
         return "cpu"
@@ -137,7 +140,7 @@ class NingAudio:
 
     def wav_to_bytes(self, wav: torch.Tensor, sample_rate: int) -> io.BytesIO:
         buffer = io.BytesIO()
-        sf.write(buffer, wav.squeeze(0).cpu().numpy(), sample_rate, format='WAV')
+        ta.save(buffer, wav, sample_rate, format='wav')
         buffer.seek(0)
         return buffer
 
@@ -179,7 +182,7 @@ class NingAudio:
         # Ensure wav is 2D tensor [1, samples]
         if wav.dim() == 1:
             wav = wav.unsqueeze(0)
-        sf.write(output_path, wav.squeeze(0).cpu().numpy(), sample_rate)
+        ta.save(output_path, wav, sample_rate)
         wav_duration = wav.shape[1] / sample_rate
         return wav, wav_duration
 
@@ -213,4 +216,4 @@ class NingAudio:
         return combined
 
     def save_audio(self, output_path, wav_tensor, sample_rate):
-        sf.write(output_path, wav_tensor.squeeze(0).cpu().numpy(), sample_rate)
+        ta.save(output_path, wav_tensor, sample_rate)

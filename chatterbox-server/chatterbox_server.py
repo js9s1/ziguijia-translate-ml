@@ -295,7 +295,7 @@ def files_download():
 @app.route("/files/delete", methods=["POST"])
 @login_required
 def files_delete():
-    """Delete a file (only within allowed directories)"""
+    """Delete a file (only within allowed directories)."""
     try:
         data = request.get_json()
         file_path = data.get("path")
@@ -307,6 +307,12 @@ def files_delete():
             return jsonify({"success": False, "error": "File not allowed or not found"}), 404
 
         os.remove(safe_path)
+
+        # If the job uses checkpoints, clear the relevant checkpoint step
+        access_code = data.get("access_code")
+        if access_code:
+            get_job_queue().clear_checkpoint_for_file(access_code, file_path)
+
         return jsonify({"success": True})
     except Exception as e:
         logger.error(f"Error deleting file: {e}")

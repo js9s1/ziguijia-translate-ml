@@ -492,7 +492,7 @@
             fetch('/files/delete', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: outputDir + '/' + filename })
+                body: JSON.stringify({ path: outputDir + '/' + filename, access_code: accessCode })
             })
             .then(response => response.json())
             .then(data => {
