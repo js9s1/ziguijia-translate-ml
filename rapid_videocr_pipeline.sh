@@ -16,8 +16,6 @@
 #   -o, --output FILE      Output SRT file (default: ./output.srt)
 #   -p, --prefix STR       Output filename prefix for intermediate SRT (default: result)
 #   -s, --save-dir DIR     Save raw OCR output to DIR (default: temp dir, auto-cleaned)
-#   -c, --crop PCT       Crop lower N% of frame before OCR. E.g. 50 = lower half,
-#                          30 = lower 30%. Default: disabled (no crop).
 #   --keep-frames          Don't delete the frames directory after processing
 #   -h, --help             Show this help
 #
@@ -32,7 +30,10 @@ PREFIX="result"
 SAVE_DIR=""
 KEEP_FRAMES=0
 RAPID_VIDEOCR_BIN="${RAPID_VIDEOCR_BIN:-rapid_videocr}"
-CROP=""
+
+# Always crop lower portion of frame before OCR (removes watermark/logo/borders)
+# Percentage of frame height to keep from the bottom. 40 = lower 40%.
+CROP_PCT=40
 
 # ---- parse args ----
 while [[ $# -gt 0 ]]; do
@@ -44,8 +45,7 @@ while [[ $# -gt 0 ]]; do
         -p|--prefix)    PREFIX="$2";      shift 2 ;;
         -s|--save-dir)  SAVE_DIR="$2";    shift 2 ;;
         --keep-frames)  KEEP_FRAMES=1;    shift   ;;
-        -c|--crop)      CROP="$2";        shift 2 ;;
-        -h|--help)      head -28 "$0";    exit 0   ;;
+        -h|--help)      head -22 "$0";    exit 0   ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -77,17 +77,10 @@ if [[ -n "$CROP" ]]; then
 fi
 echo ""
 
-# ---- 1. Extract frames at given FPS (with optional crop) ----
-EXTRACT_FILTER="fps=${FPS}"
-if [[ -n "$CROP" ]]; then
-    # CROP is a percentage (e.g. 50 = lower 50%, 30 = lower 30%)
-    # ffmpeg crop filter: crop=width:height:x:y
-    # Keep full width, crop N% from bottom: iw:ih*N/100:0:ih*(100-N)/100
-    CROP_FILTER="crop=iw:ih*${CROP}/100:0:ih*(100-${CROP})/100"
-    EXTRACT_FILTER="${EXTRACT_FILTER},${CROP_FILTER}"
-    echo "  Crop: lower ${CROP}% (filter: ${CROP_FILTER})"
-fi
-echo "[1/4] Extracting frames at ${FPS}fps..."
+# ---- 1. Extract frames at given FPS (cropped to lower portion) ----
+CROP_FILTER="crop=iw:ih*${CROP_PCT}/100:0:ih*(100-${CROP_PCT})/100"
+EXTRACT_FILTER="fps=${FPS},${CROP_FILTER}"
+echo "[1/4] Extracting frames at ${FPS}fps (lower ${CROP_PCT}%)..."
 mkdir -p "$FRAMES_DIR"
 rm -f "$FRAMES_DIR"/*.png
 ffmpeg -y -i "$INPUT_VIDEO" -vf "${EXTRACT_FILTER}" "$FRAMES_DIR/frame_%05d.png" 2>&1 | tail -1

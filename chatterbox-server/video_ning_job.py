@@ -163,7 +163,7 @@ def _run_video_ning_ocr_job(job_data: dict):
     frames_dir = os.path.join(output_dir, "frames")
     subprocess.run(
         ["/usr/bin/bash", RAPID_VIDEOCR_PIPELINE_SCRIPT, "-i", decompressed_path,
-         "-o", ocr_srt, "-d", frames_dir, "-c", "50"],
+         "-o", ocr_srt, "-d", frames_dir],
         stdout=proc_log, stderr=proc_log, timeout=14400,
         env={**os.environ, "RAPID_VIDEOCR_BIN": RAPID_VIDEOCR_BIN},
     )
