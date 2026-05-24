@@ -109,9 +109,10 @@ class JobQueue:
 
         # Find any jobs that were still PROCESSING when the server died —
         # reset them to PENDING so they can be retried.
+        now = time.strftime('%Y-%m-%d %H:%M:%S')
         conn.execute(
-            "UPDATE jobs SET status = ? WHERE status = ?",
-            (JobStatus.PENDING.value, JobStatus.PROCESSING.value)
+            "UPDATE jobs SET status = ?, status_changed_at = ? WHERE status = ?",
+            (JobStatus.PENDING.value, now, JobStatus.PROCESSING.value)
         )
         conn.commit()
 
@@ -247,11 +248,23 @@ class JobQueue:
         except Exception:
             pass
         try:
+            conn.execute("ALTER TABLE jobs ADD COLUMN status_changed_at TIMESTAMP")
+        except Exception:
+            pass
+        try:
             conn.execute("ALTER TABLE jobs ADD COLUMN deleted_at TIMESTAMP")
         except Exception:
             pass
         try:
             conn.execute("ALTER TABLE jobs ADD COLUMN checkpoint TEXT DEFAULT ''")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE jobs ADD COLUMN checkpoint_edited INTEGER DEFAULT 0")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE jobs ADD COLUMN edited_srt_files TEXT DEFAULT ''")
         except Exception:
             pass
         conn.commit()
@@ -300,8 +313,8 @@ class JobQueue:
         prev_ckpt = existing_checkpoint[0] if existing_checkpoint else ""
 
         conn.execute("""
-            INSERT OR REPLACE INTO jobs (access_code, srt_path, output_dir, temperature, status, error, run_func_name, video_number, video_file, user_id, text, blur, target_language, cfg_weight, exaggeration, checkpoint)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO jobs (access_code, srt_path, output_dir, temperature, status, error, run_func_name, video_number, video_file, user_id, text, blur, target_language, cfg_weight, exaggeration, checkpoint, status_changed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             access_code,
             job_data.get("srt_path"),
@@ -319,6 +332,7 @@ class JobQueue:
             job_data.get("cfg_weight", 0.5),
             job_data.get("exaggeration", 0.5),
             prev_ckpt,
+            time.strftime('%Y-%m-%d %H:%M:%S'),
         ))
         conn.commit()
 
@@ -374,16 +388,18 @@ class JobQueue:
 
         if not run_func:
             logger.error(f"Job {access_code} has no run_func")
+            now = time.strftime('%Y-%m-%d %H:%M:%S')
             conn.execute(
-                "UPDATE jobs SET status = ?, error = ? WHERE access_code = ?",
-                (JobStatus.FAILED.value, "Job handler not found", access_code)
+                "UPDATE jobs SET status = ?, error = ?, status_changed_at = ? WHERE access_code = ?",
+                (JobStatus.FAILED.value, "Job handler not found", now, access_code)
             )
             conn.commit()
             return
 
+        now = time.strftime('%Y-%m-%d %H:%M:%S')
         cursor = conn.execute(
-            "UPDATE jobs SET status = ? WHERE access_code = ? AND status = ?",
-            (JobStatus.PROCESSING.value, access_code, JobStatus.PENDING.value)
+            "UPDATE jobs SET status = ?, status_changed_at = ? WHERE access_code = ? AND status = ?",
+            (JobStatus.PROCESSING.value, now, access_code, JobStatus.PENDING.value)
         )
         conn.commit()
 
@@ -433,27 +449,23 @@ class JobQueue:
             if cancelled:
                 now = time.strftime('%Y-%m-%d %H:%M:%S')
                 conn.execute(
-                    "UPDATE jobs SET status = ?, error = ?, cancelled_at = ? WHERE access_code = ?",
-                    (JobStatus.FAILED.value, "Cancelled by user", now, access_code)
+                    "UPDATE jobs SET status = ?, error = ?, cancelled_at = ?, status_changed_at = ? WHERE access_code = ?",
+                    (JobStatus.FAILED.value, "Cancelled by user", now, now, access_code)
                 )
                 logger.info(f"Job {access_code} was cancelled")
             elif proc.exitcode == 0:
-                conn.execute(
-                    "UPDATE jobs SET status = ? WHERE access_code = ?",
-                    (JobStatus.COMPLETED.value, access_code)
-                )
                 now = time.strftime('%Y-%m-%d %H:%M:%S')
                 conn.execute(
-                    "UPDATE jobs SET completed_at = ? WHERE access_code = ?",
-                    (now, access_code)
+                    "UPDATE jobs SET status = ?, status_changed_at = ?, completed_at = ? WHERE access_code = ?",
+                    (JobStatus.COMPLETED.value, now, now, access_code)
                 )
                 logger.info(f"Job {access_code} completed successfully")
             else:
                 now = time.strftime('%Y-%m-%d %H:%M:%S')
                 sig = f" (exit {proc.exitcode})" if proc.exitcode is not None else ""
                 conn.execute(
-                    "UPDATE jobs SET status = ?, error = ?, failed_at = ? WHERE access_code = ?",
-                    (JobStatus.FAILED.value, f"Job process failed{sig}", now, access_code)
+                    "UPDATE jobs SET status = ?, error = ?, failed_at = ?, status_changed_at = ? WHERE access_code = ?",
+                    (JobStatus.FAILED.value, f"Job process failed{sig}", now, now, access_code)
                 )
                 logger.warning(f"Job {access_code} failed with exit code {proc.exitcode}")
         except Exception as e:
@@ -466,8 +478,8 @@ class JobQueue:
                     proc.join(timeout=2)
             now = time.strftime('%Y-%m-%d %H:%M:%S')
             conn.execute(
-                "UPDATE jobs SET status = ?, error = ?, failed_at = ? WHERE access_code = ?",
-                (JobStatus.FAILED.value, str(e)[:500], now, access_code)
+                "UPDATE jobs SET status = ?, error = ?, failed_at = ?, status_changed_at = ? WHERE access_code = ?",
+                (JobStatus.FAILED.value, str(e)[:500], now, now, access_code)
             )
             logger.error(f"Job {access_code} handler error: {e}")
 
@@ -521,6 +533,89 @@ class JobQueue:
         if new_parts != parts:
             self.set_checkpoint(access_code, ",".join(new_parts))
 
+    def invalidate_checkpoints_after(self, access_code: str, step: str):
+        """Remove checkpoint *step* and all subsequent steps after a user edit.
+
+        The checkpoint order depends on the job type.  Built-in ordering:
+
+            download < decompress < trim < extract_audio < whisper < ocr < translate < audio < video
+
+        If *step* is not found, nothing changes.  This is called when a user
+        edits a file belonging to *step* and saves it — everything after that
+        step must be re-run.
+        """
+        ORDER = ["download", "decompress", "trim", "extract_audio", "whisper", "ocr", "translate", "audio", "video"]
+        ckpt = self.get_checkpoint(access_code)
+        if not ckpt:
+            return
+        parts = [s for s in ckpt.split(",") if s]
+        if not parts:
+            return
+
+        # If step isn't in our built-in order, fall back to removing step only
+        try:
+            idx = ORDER.index(step)
+        except ValueError:
+            # Not a standard step — remove just this one
+            new_parts = [p for p in parts if p != step]
+        else:
+            new_parts = [p for p in parts if p not in ORDER[idx:]]
+
+        if new_parts != parts:
+            self.set_checkpoint(access_code, ",".join(new_parts))
+
+    def set_checkpoint_edited(self, access_code: str, edited: bool = True):
+        """Mark that the checkpoint has been edited (user edited an SRT)."""
+        conn = self._get_conn()
+        conn.execute(
+            "UPDATE jobs SET checkpoint_edited = ? WHERE access_code = ?",
+            (1 if edited else 0, access_code)
+        )
+        conn.commit()
+
+    def get_checkpoint_edited(self, access_code: str) -> bool:
+        """Return True if the user has edited a checkpoint-level file."""
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT checkpoint_edited FROM jobs WHERE access_code = ?", (access_code,)
+        ).fetchone()
+        return bool(row and row[0])
+
+    def set_edited_srt_file(self, access_code: str, filename: str):
+        """Record that a specific SRT file has been edited by the user."""
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT edited_srt_files FROM jobs WHERE access_code = ?", (access_code,)
+        ).fetchone()
+        existing = row[0] if row and row[0] else ""
+        files = set(f for f in existing.split(",") if f)
+        files.add(filename)
+        new_val = ",".join(sorted(files))
+        conn.execute(
+            "UPDATE jobs SET edited_srt_files = ? WHERE access_code = ?",
+            (new_val, access_code)
+        )
+        conn.commit()
+
+    def clear_edited_srt_files(self, access_code: str):
+        """Clear all recorded edited SRT files (called on resubmit)."""
+        conn = self._get_conn()
+        conn.execute(
+            "UPDATE jobs SET edited_srt_files = '' WHERE access_code = ?",
+            (access_code,)
+        )
+        conn.commit()
+
+    def get_edited_srt_files(self, access_code: str) -> list[str]:
+        """Return the list of edited SRT filenames for a job."""
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT edited_srt_files FROM jobs WHERE access_code = ?", (access_code,)
+        ).fetchone()
+        if row and row[0]:
+            return [f for f in row[0].split(",") if f]
+        return []
+
     def get_checkpoint(self, access_code: str) -> str:
         """Return the highest completed checkpoint step for a job."""
         conn = self._get_conn()
@@ -540,7 +635,7 @@ class JobQueue:
     def get_status(self, access_code: str) -> Optional[dict]:
         conn = self._get_conn()
         row = conn.execute(
-            "SELECT access_code, status, error, output_dir, progress, target_language, created_at, temperature, cfg_weight, exaggeration FROM jobs WHERE access_code = ?",
+            "SELECT access_code, status, error, output_dir, progress, target_language, created_at, temperature, cfg_weight, exaggeration, checkpoint, checkpoint_edited, edited_srt_files FROM jobs WHERE access_code = ?",
             (access_code,)
         ).fetchone()
 
@@ -567,15 +662,20 @@ class JobQueue:
             "temperature": row[7] if len(row) > 7 else None,
             "cfg_weight": row[8] if len(row) > 8 else None,
             "exaggeration": row[9] if len(row) > 9 else None,
+            "checkpoint": row[10] if len(row) > 10 else "",
+            "checkpoint_edited": bool(row[11]) if len(row) > 11 else False,
+            "edited_srt_files": row[12].split(",") if len(row) > 12 and row[12] else [],
         }
 
     def get_user_jobs(self, user_id: int) -> list:
         conn = self._get_conn()
         rows = conn.execute("""
-            SELECT access_code, run_func_name, status, error, output_dir, created_at
+            SELECT access_code, run_func_name, status, error, output_dir, created_at, status_changed_at
             FROM jobs WHERE user_id = ? AND status != ?
-            ORDER BY created_at DESC
-        """, (user_id, JobStatus.DELETED.value)).fetchall()
+            ORDER BY
+                CASE WHEN status = ? THEN 0 ELSE 1 END,
+                COALESCE(status_changed_at, created_at) DESC
+        """, (user_id, JobStatus.DELETED.value, JobStatus.PROCESSING.value)).fetchall()
         type_map = {
             "_run_gen_audio": "音频生成",
             "_run_video_job": "宁视频翻译",
@@ -623,8 +723,8 @@ class JobQueue:
 
         now = time.strftime('%Y-%m-%d %H:%M:%S')
         conn.execute(
-            "UPDATE jobs SET status = ?, error = ?, cancelled_at = ? WHERE access_code = ? AND (status = ? OR status = ?)",
-            (JobStatus.FAILED.value, "Cancelled by user", now, access_code, JobStatus.PENDING.value, JobStatus.PROCESSING.value)
+            "UPDATE jobs SET status = ?, error = ?, cancelled_at = ?, status_changed_at = ? WHERE access_code = ? AND (status = ? OR status = ?)",
+            (JobStatus.FAILED.value, "Cancelled by user", now, now, access_code, JobStatus.PENDING.value, JobStatus.PROCESSING.value)
         )
         conn.commit()
 
@@ -642,12 +742,22 @@ class JobQueue:
         if row[0] == JobStatus.DELETED.value:
             return {"success": False, "error": "Job has been deleted"}
 
-        if row[0] != JobStatus.FAILED.value:
-            return {"success": False, "error": f"Job is {row[0]}, only failed jobs can be resubmitted"}
+        # Allow resubmit for failed jobs, or completed jobs that have been
+        # checkpoint-edited (user edited an SRT after completion).
+        if row[0] == JobStatus.COMPLETED.value:
+            # Must have checkpoint_edited flag set
+            ckpt_row = conn.execute(
+                "SELECT checkpoint_edited FROM jobs WHERE access_code = ?", (access_code,)
+            ).fetchone()
+            if not ckpt_row or not ckpt_row[0]:
+                return {"success": False, "error": f"Job is completed, only failed or checkpoint-edited jobs can be resubmitted"}
+        elif row[0] != JobStatus.FAILED.value:
+            return {"success": False, "error": f"Job is {row[0]}, only failed or checkpoint-edited jobs can be resubmitted"}
 
+        now = time.strftime('%Y-%m-%d %H:%M:%S')
         conn.execute(
-            "UPDATE jobs SET status = ?, error = NULL WHERE access_code = ?",
-            (JobStatus.PENDING.value, access_code)
+            "UPDATE jobs SET status = ?, error = NULL, status_changed_at = ? WHERE access_code = ?",
+            (JobStatus.PENDING.value, now, access_code)
         )
         conn.commit()
 
@@ -665,9 +775,10 @@ class JobQueue:
             return {"success": False, "error": "Job not found"}
 
         # Mark as deleted without removing files or DB row
+        now = time.strftime('%Y-%m-%d %H:%M:%S')
         conn.execute(
-            "UPDATE jobs SET status = ?, error = ? WHERE access_code = ?",
-            (JobStatus.DELETED.value, "Deleted by user", access_code)
+            "UPDATE jobs SET status = ?, error = ?, status_changed_at = ? WHERE access_code = ?",
+            (JobStatus.DELETED.value, "Deleted by user", now, access_code)
         )
         conn.commit()
 
