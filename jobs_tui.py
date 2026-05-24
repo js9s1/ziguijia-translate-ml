@@ -82,6 +82,7 @@ class Job:
     output_dir: str | None
     srt_path: str | None
     created_at: str | None
+    status_changed_at: str | None = None
     user_id: int | None
     username: str = ""
     target_language: str | None = None
@@ -136,21 +137,26 @@ def _batch_load_usernames(user_ids: list[int | None]) -> dict[int, str]:
 def load_jobs(limit: int = MAX_LOAD_JOBS, offset: int = 0, search: str = "") -> tuple[list[Job], int]:
     """Return (jobs_page, total_count). If search is given, filter by access_code LIKE."""
     conn = get_conn()
+    order_clause = """
+        ORDER BY
+            CASE WHEN status = 'processing' THEN 0 ELSE 1 END,
+            COALESCE(status_changed_at, created_at) DESC
+    """
     if search:
         pattern = f"%{search}%"
         total = conn.execute(
             "SELECT COUNT(*) FROM jobs WHERE access_code LIKE ?", (pattern,)
         ).fetchone()[0]
         rows = conn.execute(
-            "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id "
-            "FROM jobs WHERE access_code LIKE ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at "
+            "FROM jobs WHERE access_code LIKE ? " + order_clause + " LIMIT ? OFFSET ?",
             (pattern, limit, offset),
         ).fetchall()
     else:
         total = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
         rows = conn.execute(
-            "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id "
-            "FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at "
+            "FROM jobs " + order_clause + " LIMIT ? OFFSET ?",
             (limit, offset),
         ).fetchall()
     conn.close()
@@ -202,8 +208,8 @@ def cancel_job(code: str) -> str:
         except Exception:
             pass
     conn.execute(
-        "UPDATE jobs SET status = ?, error = ? WHERE access_code = ?",
-        ("failed", "用户取消", code),
+        "UPDATE jobs SET status = ?, error = ?, status_changed_at = ? WHERE access_code = ?",
+        ("failed", "用户取消", time.strftime('%Y-%m-%d %H:%M:%S'), code),
     )
     conn.commit()
     conn.close()
@@ -544,7 +550,7 @@ def render_table(s: State) -> Table:
             Text(j.access_code, style="bold"),
             Text(j.status_label, style=j.status_style),
             (j.error or "")[:60],
-            j.created_at or "",
+            (j.status_changed_at or j.created_at or "")[:16],
             style=row_style,
         )
     return t
@@ -590,6 +596,7 @@ def render_detail(job: Job, mode: str) -> Panel:
             f"类型: {job.display_type}",
             f"状态: {job.status_label}",
             f"创建时间: {job.created_at or 'N/A'}",
+            f"状态变更: {job.status_changed_at or 'N/A'}",
             f"输出目录: {job.output_dir or 'N/A'}",
             f"SRT路径: {job.srt_path or 'N/A'}",
             f"用户: {job.username or 'N/A'}",
@@ -615,8 +622,11 @@ def load_user_jobs(user_id: int) -> list[Job]:
     """Load all jobs for a given user_id."""
     conn = get_conn()
     rows = conn.execute(
-        "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id "
-        "FROM jobs WHERE user_id = ? ORDER BY created_at DESC",
+        "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at "
+        "FROM jobs WHERE user_id = ?"
+        " ORDER BY"
+        "   CASE WHEN status = 'processing' THEN 0 ELSE 1 END,"
+        "   COALESCE(status_changed_at, created_at) DESC",
         (user_id,),
     ).fetchall()
     conn.close()
