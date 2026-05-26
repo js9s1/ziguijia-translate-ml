@@ -8,7 +8,7 @@ import uuid
 from contextlib import redirect_stdout, redirect_stderr
 
 from jobqueue import get_job_queue
-from log_utils import job_log
+from log_utils import job_log, redirect_logging_to_file
 from config import VIDEO_DIR, WHISPER_MODEL, HY_MT_DIR, RAPID_VIDEOCR_PIPELINE_SCRIPT
 from pipeline import run_gen_audio_step, run_gen_video_step
 
@@ -166,7 +166,7 @@ def _run_video_auto_job(job_data: dict):
                     return result
             return result
 
-        with redirect_stdout(proc_log), redirect_stderr(proc_log):
+        with redirect_stdout(proc_log), redirect_stderr(proc_log), redirect_logging_to_file(log_file):
             with open(whisper_srt, "r", encoding="utf-8") as f:
                 content = f.read()
             blocks = re.split(r"\n\n", content.strip())
@@ -315,7 +315,7 @@ def _run_video_ocr_job(job_data: dict):
                     return result
             return result
 
-        with redirect_stdout(proc_log), redirect_stderr(proc_log):
+        with redirect_stdout(proc_log), redirect_stderr(proc_log), redirect_logging_to_file(log_file):
             with open(ocr_srt, "r", encoding="utf-8") as f:
                 content = f.read()
             blocks = re.split(r"\n\n", content.strip())

@@ -9,7 +9,7 @@ import time
 from contextlib import redirect_stdout, redirect_stderr
 
 from jobqueue import get_job_queue, JobStatus
-from log_utils import job_log
+from log_utils import job_log, redirect_logging_to_file
 from config import VIDEO_DIR, GEN_VIDEO_ORIG_SCRIPT, RAPID_VIDEOCR_PIPELINE_SCRIPT, HY_MT_DIR, PROJECT_ROOT, RAPID_VIDEOCR_BIN
 from pipeline import validate_files
 
@@ -233,7 +233,7 @@ def _run_video_ning_ocr_job(job_data: dict):
                     return result
             return result
 
-        with redirect_stdout(proc_log), redirect_stderr(proc_log):
+        with redirect_stdout(proc_log), redirect_stderr(proc_log), redirect_logging_to_file(log_file):
             with open(ocr_srt, "r", encoding="utf-8") as f:
                 content = f.read()
             blocks = re.split(r"\n\n", content.strip())
