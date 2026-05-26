@@ -56,8 +56,15 @@ def _job_process_wrapper(job_data: dict, run_func_name: str):
 
     Cleans up state inherited from the parent via fork (DB connection),
     then runs the job handler. Exits with 0 on success, non-zero on failure.
+
+    Creates its own process group so that all subprocesses spawned by the
+    job handler can be killed as a group on cancellation.
     """
+    import os
     import sys
+
+    # Create a new process group so the parent can kill the whole tree.
+    os.setpgid(os.getpid(), os.getpid())
 
     # Close any DB connection inherited from the parent process.
     # The child opens its own connection when it needs one.
@@ -439,10 +446,21 @@ class JobQueue:
                         pass
 
                 if cancelled:
-                    proc.terminate()
+                    # Kill the entire process group so subprocesses
+                    # (ffmpeg, rapid_videocr, whisper-cli, etc.) don't linger.
+                    import signal
+                    try:
+                        pgid = os.getpgid(proc.pid)
+                        os.killpg(pgid, signal.SIGTERM)
+                    except (ProcessLookupError, PermissionError, AttributeError):
+                        pass
                     proc.join(timeout=3)
                     if proc.is_alive():
-                        proc.kill()
+                        try:
+                            pgid = os.getpgid(proc.pid)
+                            os.killpg(pgid, signal.SIGKILL)
+                        except (ProcessLookupError, PermissionError, AttributeError):
+                            pass
                         proc.join(timeout=2)
                     break
 
@@ -710,12 +728,35 @@ class JobQueue:
             return {"success": False, "error": f"Job is already {status}, cannot cancel"}
 
         if output_dir:
+            # Kill any process whose cmdline references this output dir,
+            # including subprocesses spawned by the job handler.
+            killed_pids = []
             for proc in psutil.process_iter(['pid', 'cmdline']):
                 try:
                     if output_dir in ' '.join(proc.info['cmdline'] or []):
-                        proc.send_signal(signal.SIGTERM)
+                        # Kill the entire process group so children don't orphan
+                        try:
+                            pgid = os.getpgid(proc.info['pid'])
+                            os.killpg(pgid, signal.SIGTERM)
+                        except (ProcessLookupError, PermissionError, AttributeError):
+                            proc.send_signal(signal.SIGTERM)
+                        killed_pids.append(proc.info['pid'])
                 except Exception:
                     pass
+            if killed_pids:
+                _, alive = psutil.wait_procs(
+                    [p for p in psutil.process_iter(['pid']) if p.info['pid'] in killed_pids],
+                    timeout=3,
+                )
+                for p in alive:
+                    try:
+                        pgid = os.getpgid(p.pid)
+                        os.killpg(pgid, signal.SIGKILL)
+                    except Exception:
+                        try:
+                            p.kill()
+                        except Exception:
+                            pass
 
         # Signal the worker thread to skip completion logic
         if access_code == self._current_access_code:

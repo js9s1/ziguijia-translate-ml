@@ -1,10 +1,8 @@
 import argparse
-import io
 import json
 import os
 import re
 import sys
-import time
 from datetime import timedelta
 
 import srt
@@ -17,8 +15,6 @@ from config import ASSETS_DIR as CFG_ASSETS_DIR, AUDIO_PROMPT_PATH as CFG_AUDIO_
 
 CHANGED_THRESHOLD = 0.05
 
-ASSETS_DIR = CFG_ASSETS_DIR
-
 
 def extract_speaker(content):
     m = re.match(r"^\s*(\w+)\s*:\s*(.*)", content, re.DOTALL)
@@ -27,7 +23,7 @@ def extract_speaker(content):
     return None, content
 
 
-def get_speaker_prompt(speaker, default_prompt=None, assets_dir=ASSETS_DIR):
+def get_speaker_prompt(speaker, default_prompt=None, assets_dir=CFG_ASSETS_DIR):
     """Look up {speaker}_voice.wav in assets_dir. Returns path if found, else default_prompt."""
     if speaker:
         prompt_path = os.path.join(assets_dir, f"{speaker}_voice.wav")
@@ -37,7 +33,7 @@ def get_speaker_prompt(speaker, default_prompt=None, assets_dir=ASSETS_DIR):
     return default_prompt
 
 
-def split_text(text, max_len=500):
+def split_text(text, max_len=120):
     if len(text) <= max_len:
         return [text]
 
@@ -75,14 +71,14 @@ def load_subs(srt_path):
 
 
 def generate_silence(duration_sec, sample_rate):
-    num_frames = int(duration_sec * sample_rate)
+    num_frames = round(duration_sec * sample_rate)
     return torch.zeros(1, num_frames)
 
 
 def combine_audio_segments(segments_info, total_duration, sample_rate):
     max_end = 0
     for seg in segments_info:
-        end_sample = int((seg["new_start"] + seg["wav_duration"]) * sample_rate)
+        end_sample = round((seg["new_start"] + seg["wav_duration"]) * sample_rate)
         if end_sample > max_end:
             max_end = end_sample
 
@@ -94,10 +90,9 @@ def combine_audio_segments(segments_info, total_duration, sample_rate):
 
     combined = generate_silence(actual_duration, sample_rate)
     for seg in segments_info:
-        wav_data = seg["wav_data"]
-        if wav_data.dim() == 1:
-            wav_data = wav_data.unsqueeze(0)
-        start_sample = int(seg["new_start"] * sample_rate)
+        wav_data_np, _ = sf.read(seg["wav_path"], dtype="float32")
+        wav_data = torch.from_numpy(wav_data_np).unsqueeze(0)
+        start_sample = round(seg["new_start"] * sample_rate)
         end_sample = start_sample + wav_data.shape[1]
         if end_sample > combined.shape[1]:
             new_combined = torch.zeros(1, end_sample)
@@ -111,7 +106,7 @@ def save_audio(output_path, wav_tensor, sample_rate):
     sf.write(output_path, wav_tensor.squeeze(0).cpu().numpy(), sample_rate)
 
 
-def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_dir=ASSETS_DIR, target_language="en", cfg_weight=0.5, exaggeration=0.5):
+def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_dir=CFG_ASSETS_DIR, target_language="en", cfg_weight=0.5, exaggeration=0.5):
     from audio_utils import NingAudio
 
     audio = NingAudio(audio_prompt=audio_prompt)
@@ -142,7 +137,7 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
 
         chunk_wavs = []
         total_wav_duration = 0.0
-        for j, chunk in enumerate(chunks):
+        for chunk in chunks:
             wav_path = os.path.join(output_dir, "tmp", f"segment_{seg_counter}.wav")
             wav_data, wav_duration = audio.generate_audio(
                 chunk, wav_path, sample_rate, temperature, prompt_file=prompt,
@@ -155,6 +150,13 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
             seg_counter += 1
 
         combined_wav = torch.cat(chunk_wavs, dim=1) if len(chunk_wavs) > 1 else chunk_wavs[0]
+
+        # Pad with silence if generated audio is shorter than original duration
+        if total_wav_duration < orig_duration:
+            silence_duration = orig_duration - total_wav_duration
+            silence = generate_silence(silence_duration, sample_rate)
+            combined_wav = torch.cat([combined_wav, silence], dim=1)
+            total_wav_duration = orig_duration
 
         new_start = orig_start + accumulated_offset
         duration_diff = total_wav_duration - orig_duration
@@ -177,15 +179,21 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
             )
         )
 
+        seg_wav_path = os.path.join(output_dir, "tmp", f"combined_segment_{i}.wav")
+        save_audio(seg_wav_path, combined_wav, sample_rate)
+
+        seg_wav_path = os.path.join(output_dir, "tmp", f"combined_segment_{i}.wav")
+        save_audio(seg_wav_path, combined_wav, sample_rate)
+
         segments_info.append(
             {
-                "wav_data": combined_wav,
+                "wav_path": seg_wav_path,
                 "wav_duration": total_wav_duration,
                 "new_start": new_start,
             }
         )
 
-        if total_wav_duration > orig_duration :
+        if total_wav_duration > orig_duration:
             accumulated_offset += total_wav_duration - orig_duration
 
     original_total = (subs[-1].end - subs[0].start).total_seconds()
@@ -214,7 +222,7 @@ def main():
     )
     parser.add_argument(
         "--assets_dir",
-        default=ASSETS_DIR,
+        default=CFG_ASSETS_DIR,
         help="Directory containing {speaker}_voice.wav files for speaker-specific prompts",
     )
     parser.add_argument("--temperature", type=float, default=0.8,

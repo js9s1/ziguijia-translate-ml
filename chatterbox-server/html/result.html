@@ -23,12 +23,17 @@
             grid-template-columns: repeat(3, 1fr);
             gap: 8px;
             min-width: 280px;
+            align-items: center;
         }
         .file-actions a,
         .file-actions button {
             box-sizing: border-box;
             width: 100%;
             text-align: center;
+            line-height: 1.4;
+        }
+        .file-actions.editable {
+            grid-template-columns: repeat(4, 1fr);
         }
         .btn-download {
             padding: 5px 15px;
@@ -94,6 +99,20 @@
             text-align: center;
         }
         .btn-resubmit:hover { background: #F57C00; }
+        .btn-edit {
+            padding: 5px 15px;
+            background: #9C27B0;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+        .btn-edit:hover { background: #7B1FA2; }
+        .btn-edit.resubmit {
+            background: #FF9800;
+        }
+        .btn-edit.resubmit:hover { background: #F57C00; }
         .file-audio { margin-top: 8px; width: 100%; }
         .modal-overlay {
             display: none;
@@ -120,6 +139,93 @@
             cursor: pointer;
             background: none;
             border: none;
+        }
+        /* ── SRT Editor modal ── */
+        .editor-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 10000;
+            justify-content: center;
+            align-items: center;
+        }
+        .editor-overlay.active { display: flex; }
+        .editor-modal {
+            background: #1e1e1e;
+            border-radius: 8px;
+            width: 90vw;
+            height: 85vh;
+            display: flex;
+            flex-direction: column;
+            color: #ccc;
+        }
+        .editor-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            border-bottom: 1px solid #333;
+            flex-shrink: 0;
+        }
+        .editor-header h3 {
+            margin: 0;
+            color: #fff;
+            font-size: 1.1em;
+        }
+        .editor-actions {
+            display: flex;
+            gap: 8px;
+        }
+        .editor-actions button {
+            padding: 6px 18px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+        .btn-editor-save {
+            background: #4CAF50;
+            color: white;
+        }
+        .btn-editor-save:hover { background: #45a049; }
+        .btn-editor-cancel {
+            background: #666;
+            color: white;
+        }
+        .btn-editor-cancel:hover { background: #555; }
+        .editor-body {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 0;
+            min-height: 0;
+        }
+        .editor-body textarea {
+            flex: 1;
+            width: 100%;
+            border: none;
+            outline: none;
+            resize: none;
+            padding: 16px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            background: #252526;
+            color: #d4d4d4;
+            tab-size: 4;
+            box-sizing: border-box;
+        }
+        .editor-status {
+            padding: 8px 16px;
+            font-size: 0.85em;
+            border-top: 1px solid #333;
+            flex-shrink: 0;
+        }
+        .editor-status.success { color: #4CAF50; }
+        .editor-status.error { color: #f44336; }
+        .file-actions.editable {
+            grid-template-columns: repeat(4, 1fr);
         }
     </style>
 </head>
@@ -171,6 +277,23 @@
         </div>
     </div>
 
+    <!-- ── SRT Editor Modal ── -->
+    <div class="editor-overlay" id="srtEditorOverlay">
+        <div class="editor-modal">
+            <div class="editor-header">
+                <h3>编辑 SRT 文件: <span id="editorFileName"></span></h3>
+                <div class="editor-actions">
+                    <button class="btn-editor-cancel" onclick="closeSrtEditor()">取消</button>
+                    <button class="btn-editor-save" id="editorSaveBtn" onclick="saveSrtEdit()">保存</button>
+                </div>
+            </div>
+            <div class="editor-body">
+                <textarea id="editorTextarea" spellcheck="false"></textarea>
+                <div class="editor-status" id="editorStatus"></div>
+            </div>
+        </div>
+    </div>
+
     <script>
         const accessCode = new URLSearchParams(window.location.search).get('code');
 
@@ -191,6 +314,10 @@
             return 'status-' + (status || 'pending');
         }
 
+        let editedSrtFiles = [];
+
+        const SRT_FILES = new Set(['ocr_screen.srt', 'whisper.srt', 'translated.srt', 'output_adjusted.srt']);
+
         function loadJobStatus() {
             if (!accessCode) {
                 document.getElementById('fileList').innerHTML = '<li class="no-files">无效的访问码</li>';
@@ -200,6 +327,8 @@
             fetch('/srt/status/' + accessCode)
                 .then(response => response.json())
                 .then(data => {
+                    editedSrtFiles = data.edited_srt_files || [];
+
                     const langMap = { en: '🇬🇧 英文', zh: '🇨🇳 中文', ja: '🇯🇵 日语', ko: '🇰🇷 韩语', fr: '🇫🇷 法语', es: '🇪🇸 西班牙语', ru: '🇷🇺 俄语', ms: '🇲🇾 马来语', ar: '🇸🇦 阿拉伯语', da: '🇩🇰 丹麦语', de: '🇩🇪 德语', el: '🇬🇷 希腊语', fi: '🇫🇮 芬兰语', he: '🇮🇱 希伯来语', hi: '🇮🇳 印地语', it: '🇮🇹 意大利语', nl: '🇳🇱 荷兰语', no: '🇳🇴 挪威语', pl: '🇵🇱 波兰语', pt: '🇵🇹 葡萄牙语', sv: '🇸🇪 瑞典语', sw: '🇹🇿 斯瓦希里语', tr: '🇹🇷 土耳其语' };
                     const langEl = document.getElementById('targetLanguageBadge');
                     if (data.target_language && langMap[data.target_language]) {
@@ -284,6 +413,8 @@
             fetch('/srt/status/' + accessCode)
                 .then(response => response.json())
                 .then(data => {
+                    editedSrtFiles = data.edited_srt_files || [];
+
                     // ── Update language badge ──
                     const langMap = { en: '🇬🇧 英文', zh: '🇨🇳 中文', ja: '🇯🇵 日语', ko: '🇰🇷 韩语', fr: '🇫🇷 法语', es: '🇪🇸 西班牙语', ru: '🇷🇺 俄语', ms: '🇲🇾 马来语', ar: '🇸🇦 阿拉伯语', da: '🇩🇰 丹麦语', de: '🇩🇪 德语', el: '🇬🇷 希腊语', fi: '🇫🇮 芬兰语', he: '🇮🇱 希伯来语', hi: '🇮🇳 印地语', it: '🇮🇹 意大利语', nl: '🇳🇱 荷兰语', no: '🇳🇴 挪威语', pl: '🇵🇱 波兰语', pt: '🇵🇹 葡萄牙语', sv: '🇸🇪 瑞典语', sw: '🇹🇿 斯瓦希里语', tr: '🇹🇷 土耳其语' };
                     const langEl = document.getElementById('targetLanguageBadge');
@@ -370,19 +501,35 @@
                     const downloadPath = f => '/files/download?path=' + encodeURIComponent(outputDir + '/' + f.name);
                     const ext = f => f.name.split('.').pop().toLowerCase();
                     const playBtn = f => {
+                        if (SRT_FILES.has(f.name)) return '';
                         const e = ext(f);
                         if (e === 'wav') return `<button onclick="playAudio(this,'${downloadPath(f)}')" class="btn-play">播放</button>`;
                         if (e === 'mp4') return `<button onclick="playVideo('${downloadPath(f)}')" class="btn-play">播放</button>`;
                         return `<span class="btn-placeholder">播放</span>`;
                     };
+                    const editBtn = (f) => {
+                        if (!SRT_FILES.has(f.name)) return '';
+                        const isEdited = editedSrtFiles.includes(f.name);
+                        const label = isEdited ? '重新提交' : '编辑';
+                        const cls = isEdited ? 'btn-edit resubmit' : 'btn-edit';
+                        const onclick = isEdited
+                            ? `resubmitSrtEdit('${outputDir}', '${f.name}')`
+                            : `openSrtEditor('${outputDir}', '${f.name}')`;
+                        return `<button onclick="${onclick}" class="${cls}">${label}</button>`;
+                    };
+                    // Check if any SRT files exist — if so non-SRT files get 4-column grid
+                    const hasSrt = filteredFiles.some(f => SRT_FILES.has(f.name));
+                    // SRT files use the same 4-column grid so all buttons have matching widths
+                    const actionsClass = f => SRT_FILES.has(f.name) || hasSrt ? 'file-actions editable' : 'file-actions';
                     document.getElementById('fileList').innerHTML = filteredFiles.map(file => `
                         <li>
                             <div class="file-info">
                                 <span class="file-name">${file.name}</span>
                                 <span class="file-size">${formatBytes(file.size)}</span>
                             </div>
-                            <div class="file-actions">
+                            <div class="${actionsClass(file)}">
                                 ${playBtn(file)}
+                                ${editBtn(file)}
                                 <a href="${downloadPath(file)}" class="btn-download">下载</a>
                                 <button onclick="deleteFile('${outputDir}', '${file.name}')" class="btn-delete">删除</button>
                             </div>
@@ -414,6 +561,7 @@
             fetch('/srt/status/' + accessCode)
                 .then(response => response.json())
                 .then(data => {
+                    editedSrtFiles = data.edited_srt_files || [];
                     document.getElementById('status').textContent = statusLabels[data.status] || data.status;
                     document.getElementById('status').className = 'status-badge ' + getStatusClass(data.status);
                     document.getElementById('outputDir').textContent = (data.output_dir || 'N/A').replace('/home/js9s', '~');
@@ -504,6 +652,140 @@
             })
             .catch(err => alert('删除失败: ' + err.message));
         }
+
+        // ── SRT Editor functions ─────────────────────────
+
+        let _editingFilePath = null;
+
+        function openSrtEditor(outputDir, filename) {
+            const filePath = outputDir + '/' + filename;
+            _editingFilePath = filePath;
+
+            // Read file content
+            fetch('/files/read?path=' + encodeURIComponent(filePath))
+                .then(response => {
+                    if (!response.ok) return response.json().then(d => { throw new Error(d.error || '读取失败'); });
+                    return response.text();
+                })
+                .then(content => {
+                    document.getElementById('editorFileName').textContent = filename;
+                    document.getElementById('editorTextarea').value = content;
+                    document.getElementById('editorStatus').textContent = '';
+                    document.getElementById('editorStatus').className = 'editor-status';
+                    document.getElementById('srtEditorOverlay').classList.add('active');
+                    // Focus and move cursor to end
+                    const ta = document.getElementById('editorTextarea');
+                    ta.focus();
+                    ta.setSelectionRange(ta.value.length, ta.value.length);
+                })
+                .catch(err => {
+                    alert('读取文件失败: ' + err.message);
+                });
+        }
+
+        function closeSrtEditor() {
+            document.getElementById('srtEditorOverlay').classList.remove('active');
+            _editingFilePath = null;
+        }
+
+        function saveSrtEdit() {
+            const content = document.getElementById('editorTextarea').value;
+            const statusEl = document.getElementById('editorStatus');
+            const saveBtn = document.getElementById('editorSaveBtn');
+            saveBtn.disabled = true;
+            saveBtn.textContent = '保存中...';
+            statusEl.textContent = '';
+            statusEl.className = 'editor-status';
+
+            fetch('/files/save-srt', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    path: _editingFilePath,
+                    content: content,
+                    access_code: accessCode
+                })
+            })
+            .then(async response => {
+                const text = await response.text();
+                let data;
+                try { data = JSON.parse(text); } catch (e) { data = null; }
+                if (!response.ok || !data) {
+                    throw new Error(data?.error || `服务器返回错误 (${response.status})`);
+                }
+                return data;
+            })
+            .then(data => {
+                if (data.success) {
+                    statusEl.textContent = '✅ 保存成功！下游步骤已标记为重新运行。点击"重新提交"以继续。';
+                    statusEl.className = 'editor-status success';
+                    const filename = _editingFilePath.split('/').pop();
+                    editedSrtFiles.push(filename);
+                    // After save, close editor and reload files to show "重新提交" button
+                    setTimeout(() => {
+                        closeSrtEditor();
+                        if (accessCode) {
+                            fetch('/srt/status/' + accessCode)
+                                .then(r => r.json())
+                                .then(d => loadFiles(d.output_dir));
+                        }
+                    }, 1500);
+                } else {
+                    statusEl.textContent = '❌ 保存失败: ' + (data.error || '未知错误');
+                    statusEl.className = 'editor-status error';
+                }
+            })
+            .catch(err => {
+                statusEl.textContent = '❌ 保存失败: ' + err.message;
+                statusEl.className = 'editor-status error';
+            })
+            .finally(() => {
+                saveBtn.disabled = false;
+                saveBtn.textContent = '保存';
+            });
+        }
+
+        function resubmitSrtEdit(outputDir, filename) {
+            if (!accessCode) return;
+            if (!confirm('确定要使用编辑后的文件重新运行任务吗？后续步骤将会重新执行。')) return;
+
+            fetch('/files/srt-resubmit/' + accessCode, { method: 'POST' })
+                .then(async response => {
+                    const text = await response.text();
+                    let data;
+                    try { data = JSON.parse(text); } catch (e) { data = null; }
+                    if (!response.ok || !data) {
+                        throw new Error(data?.error || `服务器返回错误 (${response.status})`);
+                    }
+                    return data;
+                })
+                .then(data => {
+                    if (data.success) {
+                        location.reload();
+                    } else {
+                        alert('重新提交失败: ' + (data.error || '未知错误'));
+                    }
+                })
+                .catch(err => alert('重新提交失败: ' + err.message));
+        }
+
+        // ── Keyboard shortcut: Ctrl+Enter or Cmd+Enter to save ──
+        document.addEventListener('keydown', function(e) {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                const overlay = document.getElementById('srtEditorOverlay');
+                if (overlay.classList.contains('active')) {
+                    e.preventDefault();
+                    saveSrtEdit();
+                }
+            }
+            // Escape to close editor
+            if (e.key === 'Escape') {
+                const overlay = document.getElementById('srtEditorOverlay');
+                if (overlay.classList.contains('active')) {
+                    closeSrtEditor();
+                }
+            }
+        });
 
 
         loadJobStatus();

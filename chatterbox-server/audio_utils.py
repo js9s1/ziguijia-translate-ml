@@ -74,7 +74,7 @@ def _choose_device(preferred: str = "cuda") -> str:
         free_gb = free / (1024**3)
         total_gb = total / (1024**3)
         # Model needs roughly 6 GiB; leave some margin
-        if free_gb < 7.3:
+        if free_gb < 6.6:
             print(f"GPU free memory {free_gb:.1f} GiB / {total_gb:.1f} GiB — too low, using CPU")
             return "cpu"
         return "cuda"

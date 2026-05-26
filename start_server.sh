@@ -14,6 +14,9 @@ export SMTP_FROM="your-email@example.com"
 export FLASK_SECRET_KEY="chatterbox-fixed-secret-key-2024"
 export HF_TOKEN="$(cat ${HOME}/src/chatterbox/hf_t)"
 
+# ── RapidVideOCR ────────────────────────────────────────────
+export RAPID_VIDEOCR_BIN="${HOME}/.local/bin/rapid_videocr"
+
 # PyTorch memory management — enable expandable segments to reduce fragmentation
 export PYTORCH_ALLOC_CONF=expandable_segments:True
 

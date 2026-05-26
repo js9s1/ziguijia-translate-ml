@@ -20,6 +20,7 @@ import select
 import shutil
 import signal
 import sqlite3
+import subprocess
 import sys
 import termios
 import time
@@ -73,19 +74,19 @@ _STATUS_LABEL_MAP = {
 }
 
 
-@dataclass
+@dataclass(kw_only=True)
 class Job:
     access_code: str
-    run_func_name: str | None
-    status: str
+    created_at: str | None
     error: str | None
     output_dir: str | None
+    run_func_name: str | None
     srt_path: str | None
-    created_at: str | None
-    status_changed_at: str | None = None
+    status: str
     user_id: int | None
-    username: str = ""
+    status_changed_at: str | None = None
     target_language: str | None = None
+    username: str = ""
 
     @property
     def display_type(self) -> str:
@@ -171,7 +172,7 @@ def load_jobs(limit: int = MAX_LOAD_JOBS, offset: int = 0, search: str = "") -> 
 def get_job(code: str) -> Job | None:
     conn = get_conn()
     r = conn.execute(
-        "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id "
+        "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at "
         "FROM jobs WHERE access_code = ?",
         (code.upper(),),
     ).fetchone()
@@ -354,15 +355,13 @@ class State:
 
     def menu_options(self) -> list[tuple[str, str]]:
         """Return list of (action_id, label) for the popup menu."""
-        opts: list[tuple[str, str]] = [("detail", "\[D]详情"), ("log", "\[l]日志")]
-        if self.selected_job and self.selected_job.output_dir:
-            opts.append(("output", "\[o]输出"))
+        opts: list[tuple[str, str]] = [("detail", r"\[D]详情"), ("open_dir", r"\[o]打开目录")]
         if self.selected_job and self.selected_job.status in ("pending", "processing"):
-            opts.append(("cancel", "\[k]取消"))
+            opts.append(("cancel", r"\[k]取消"))
         if self.selected_job and self.selected_job.user_id is not None:
-            opts.append(("user_jobs", "\[u]该用户任务"))
-        opts.append(("delete", "\[r]删除"))
-        opts.append(("close", "\[c]关闭"))
+            opts.append(("user_jobs", r"\[u]该用户任务"))
+        opts.append(("delete", r"\[r]删除"))
+        opts.append(("close", r"\[c]关闭"))
         return opts
 
     def clamp_menu_cursor(self):
@@ -970,10 +969,8 @@ def run_menu_screen(s: State, console: Console):
         # ── Direct action keystrokes ──────────────────────
         if key in ("d", "D"):
             action = "detail"
-        elif key in ("l", "L"):
-            action = "log"
         elif key in ("o", "O"):
-            action = "output"
+            action = "open_dir"
         elif key in ("k", "K"):
             action = "cancel"
         elif key in ("u", "U"):
@@ -996,11 +993,11 @@ def run_menu_screen(s: State, console: Console):
                 console.print("\n[dim]按任意键返回...[/dim]")
                 os.read(sys.stdin.fileno(), 1)
 
-            elif action == "log":
-                console.clear()
-                console.print(render_detail(job, "log"))
-                console.print("\n[dim]按任意键返回...[/dim]")
-                os.read(sys.stdin.fileno(), 1)
+            elif action == "open_dir":
+                if job.output_dir:
+                    subprocess.Popen(["ghostty", "--working-directory=" + job.output_dir,
+                                     "-e", "bash", "-c", "echo Open: " + job.access_code + "; exec $SHELL"],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
             elif action == "output":
                 run_output_browser(job, console)
@@ -1094,11 +1091,11 @@ def run_menu_screen(s: State, console: Console):
                 console.print("\n[dim]按任意键返回...[/dim]")
                 os.read(sys.stdin.fileno(), 1)
 
-            elif action == "log":
-                console.clear()
-                console.print(render_detail(job, "log"))
-                console.print("\n[dim]按任意键返回...[/dim]")
-                os.read(sys.stdin.fileno(), 1)
+            elif action == "open_dir":
+                if job.output_dir:
+                    subprocess.Popen(["ghostty", "--working-directory=" + job.output_dir,
+                                     "-e", "bash", "-c", "echo Open: " + job.access_code + "; exec $SHELL"],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
             elif action == "output":
                 run_output_browser(job, console)

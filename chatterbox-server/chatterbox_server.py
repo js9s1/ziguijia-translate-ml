@@ -319,6 +319,95 @@ def files_delete():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+# ── SRT save/edit endpoint ────────────────────────────────
+
+_FILENAME_TO_CHECKPOINT_STEP = {
+    "ocr_screen.srt": "ocr",
+    "translated.srt": "translate",
+    "whisper.srt": "whisper",
+    "output_adjusted.srt": "audio",
+}
+
+
+@app.route("/files/save-srt", methods=["POST"])
+@login_required
+def files_save_srt():
+    """Save edited SRT content and invalidate downstream checkpoints.
+
+    Expected JSON: { "path": "<full-path>", "content": "<new-srt-text>", "access_code": "<code>" }
+
+    The step mapped from the filename determines which checkpoints are
+    invalidated:
+      - ocr_screen.srt   → invalidate from "ocr" onward → re-run translate+audio+video
+      - whisper.srt       → invalidate from "whisper" onward → re-run translate+audio+video
+      - translated.srt    → invalidate from "translate" onward → re-run audio+video
+      - output_adjusted.srt → invalidate from "audio" onward → re-run audio+video
+
+    After saving, the job is flagged as checkpoint_edited so the UI can show
+    a "resubmit" button instead of "edit".
+    """
+    try:
+        data = request.get_json()
+        file_path = data.get("path")
+        content = data.get("content")
+        access_code = data.get("access_code")
+
+        if not file_path or content is None:
+            return jsonify({"success": False, "error": "Missing path or content"}), 400
+
+        safe_path = _safe_file_path(file_path)
+        if not safe_path:
+            return jsonify({"success": False, "error": "File not allowed or not found"}), 404
+
+        # Validate that the file has an .srt extension
+        if not safe_path.lower().endswith(".srt"):
+            return jsonify({"success": False, "error": "Only .srt files can be saved via this endpoint"}), 400
+
+        # Write the new content
+        with open(safe_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+
+        # Invalidate downstream checkpoints
+        jq = get_job_queue()
+        basename = os.path.basename(safe_path)
+        step = _FILENAME_TO_CHECKPOINT_STEP.get(basename)
+        if step:
+            jq.invalidate_checkpoints_after(access_code, step)
+
+        # Mark as edited so UI switches from "edit" → "resubmit" for this specific file
+        if access_code:
+            jq.set_checkpoint_edited(access_code, True)
+            jq.set_edited_srt_file(access_code, basename)
+
+        return jsonify({"success": True, "message": "File saved, downstream steps marked for re-run"})
+    except Exception as e:
+        logger.error(f"Error saving SRT: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/files/srt-resubmit/<access_code>", methods=["POST"])
+@login_required
+def files_srt_resubmit(access_code):
+    """Resubmit a job after editing a checkpoint-level SRT file.
+
+    The job status is set back to pending so the worker picks it up.
+    Because downstream checkpoints were already invalidated by the save,
+    the job will resume from the right step.
+    """
+    try:
+        jq = get_job_queue()
+        result = jq.resubmit_job(access_code)
+        if result["success"]:
+            # Clear the edited flag and per-file edit tracking
+            jq.set_checkpoint_edited(access_code, False)
+            jq.clear_edited_srt_files(access_code)
+            return jsonify(result)
+        return jsonify(result), 400
+    except Exception as e:
+        logger.error(f"Error resubmitting SRT-edited job {access_code}: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
 # ═══════════════════════════════════════════
 # SRT page and processing
 # ═══════════════════════════════════════════

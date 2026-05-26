@@ -29,11 +29,11 @@ OUTPUT_SRT="./output.srt"
 PREFIX="result"
 SAVE_DIR=""
 KEEP_FRAMES=0
-RAPID_VIDEOCR_BIN="${RAPID_VIDEOCR_BIN:-rapid_videocr}"
+RAPID_VIDEOCR_BIN="${RAPID_VIDEOCR_BIN:-${HOME}/.local/bin/rapid_videocr}"
 
 # Always crop lower portion of frame before OCR (removes watermark/logo/borders)
 # Percentage of frame height to keep from the bottom. 40 = lower 40%.
-CROP_PCT=40
+CROP_PCT=25
 
 # ---- parse args ----
 while [[ $# -gt 0 ]]; do
@@ -81,7 +81,7 @@ EXTRACT_FILTER="fps=${FPS},${CROP_FILTER}"
 echo "[1/4] Extracting frames at ${FPS}fps (lower ${CROP_PCT}%)..."
 mkdir -p "$FRAMES_DIR"
 rm -f "$FRAMES_DIR"/*.png
-ffmpeg -y -i "$INPUT_VIDEO" -vf "${EXTRACT_FILTER}" "$FRAMES_DIR/frame_%05d.png" 2>&1 | tail -1
+ffmpeg -y -i "$INPUT_VIDEO" -vf "${EXTRACT_FILTER}" -c:v png "$FRAMES_DIR/frame_%05d.png" 2>&1 | tail -1
 
 # ---- 2. Rename frames to VSF naming convention ----
 echo "[2/4] Renaming frames to VSF convention..."
