@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import uuid
+from contextlib import redirect_stdout, redirect_stderr
 
 from jobqueue import get_job_queue
 from log_utils import job_log
@@ -56,7 +57,11 @@ def process_video_custom(video_file, srt_file, temperature: float, user_id: int 
     output_dir = os.path.join(VIDEO_DIR, access_code)
     os.makedirs(output_dir, exist_ok=True)
 
-    video_path = os.path.join(output_dir, video_file.filename)
+    # Save with a UUID prefix so the filename can never collide with
+    # gen_video.py's output filenames (output_modified.mp4 / output_final.mp4).
+    video_ext = os.path.splitext(video_file.filename)[1] or ".mp4"
+    safe_name = f"source_{uuid.uuid4().hex[:12]}{video_ext}"
+    video_path = os.path.join(output_dir, safe_name)
     video_file.save(video_path)
 
     srt_path = os.path.join(output_dir, srt_file.filename)
@@ -92,77 +97,120 @@ def _run_video_auto_job(job_data: dict):
     log_file = os.path.join(output_dir, "job.log")
     proc_log = open(log_file, "a")
 
-    job_log(access_code, output_dir, "Extracting audio from video...")
+    # ── Checkpoint helpers (persisted in jobs.db) ──────────────
+    def _done(name: str) -> bool:
+        ckpt = get_job_queue().get_checkpoint(access_code)
+        parts = ckpt.split(",") if ckpt else []
+        return name in parts
+
+    def _mark(name: str):
+        ckpt = get_job_queue().get_checkpoint(access_code)
+        parts = ([s for s in ckpt.split(",") if s] if ckpt else []) + [name]
+        get_job_queue().set_checkpoint(access_code, ",".join(parts))
+        job_log(access_code, output_dir, f"  ✓ checkpoint {name}")
+
+    # Step 1: Extract audio from video
     audio_path = os.path.join(output_dir, "audio.wav")
-    subprocess.run(
-        ["ffmpeg", "-i", video_file, "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", audio_path, "-y"],
-        stdout=proc_log, stderr=proc_log, timeout=3600,
-    )
+    if not _done("extract_audio"):
+        job_log(access_code, output_dir, "Extracting audio from video...")
+        subprocess.run(
+            ["ffmpeg", "-i", video_file, "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", audio_path, "-y"],
+            stdout=proc_log, stderr=proc_log, timeout=3600,
+        )
+        _mark("extract_audio")
+    else:
+        job_log(access_code, output_dir, "  ↪ extract_audio already done, skipping")
 
-    job_log(access_code, output_dir, "Running whisper speech recognition...")
+    # Step 2: Run whisper speech recognition
     whisper_srt = os.path.join(output_dir, "whisper.srt")
-    subprocess.run(
-        ["whisper-cli", "-m", WHISPER_MODEL, "-f", audio_path, "-osrt", "-of", whisper_srt.replace(".srt", ""), "-l", "zh"],
-        stdout=proc_log, stderr=proc_log, timeout=7200,
-    )
-    if not os.path.exists(whisper_srt):
-        raise RuntimeError("Whisper failed to generate SRT")
+    if not _done("whisper"):
+        job_log(access_code, output_dir, "Running whisper speech recognition...")
+        subprocess.run(
+            ["whisper-cli", "-m", WHISPER_MODEL, "-f", audio_path, "-osrt", "-of", whisper_srt.replace(".srt", ""), "-l", "zh"],
+            stdout=proc_log, stderr=proc_log, timeout=7200,
+        )
+        if not os.path.exists(whisper_srt):
+            raise RuntimeError("Whisper failed to generate SRT")
+        _mark("whisper")
+    else:
+        job_log(access_code, output_dir, "  ↪ whisper already done, skipping")
 
-    job_log(access_code, output_dir, "Translating subtitles...")
-    sys.path.insert(0, HY_MT_DIR)
-    import importlib
-    hy_mt = importlib.import_module("hy_mt")
-    target_language_name = _LANG_MAP.get(target_language, target_language)
-
-    def _translate_segment(text: str) -> str:
-        """Translate a segment with retry until output actually changes language."""
-        for attempt in range(3):
-            if attempt == 0:
-                result = hy_mt.translate_zh(text, target_language_name)
-            elif attempt == 1:
-                result = hy_mt.translate(text, target_language_name)
-            else:
-                model, tokenizer = hy_mt._get_model()
-                messages = [
-                    {"role": "user",
-                     "content": f"Translate the following Chinese sentence into {target_language_name}. Output ONLY the {target_language_name} translation, nothing else:\n\n{text}"},
-                ]
-                tokenized_chat = tokenizer.apply_chat_template(
-                    messages, tokenize=True, add_generation_prompt=False, return_tensors="pt"
-                )
-                outputs = model.generate(tokenized_chat.to(model.device), **hy_mt.GENERATION_KWARGS)
-                result = tokenizer.decode(outputs[0][len(tokenized_chat[0]):], skip_special_tokens=True)
-            if not _looks_untranslated(result):
-                return result
-        return result
-
-    with open(whisper_srt, "r", encoding="utf-8") as f:
-        content = f.read()
-    blocks = re.split(r"\n\n", content.strip())
-    translated_blocks = []
-    for block in blocks:
-        lines = block.split("\n")
-        if len(lines) >= 3:
-            idx = lines[0]
-            time_range = lines[1]
-            text = "\n".join(lines[2:])
-            translated = _translate_segment(text)
-            translated_blocks.append(f"{idx}\n{time_range}\n{translated}")
+    # Step 3: Translate subtitles
     translated_srt = os.path.join(output_dir, "translated.srt")
-    with open(translated_srt, "w", encoding="utf-8") as f:
-        f.write("\n\n".join(translated_blocks) + "\n")
-    hy_mt.unload_model()
+    if not _done("translate"):
+        job_log(access_code, output_dir, "Translating subtitles...")
+        sys.path.insert(0, HY_MT_DIR)
+        import importlib
+        hy_mt = importlib.import_module("hy_mt")
+        target_language_name = _LANG_MAP.get(target_language, target_language)
 
-    job_log(access_code, output_dir, "Step 1: Generating audio from translated SRT")
+        def _translate_segment(text: str) -> str:
+            """Translate a segment with retry until output actually changes language."""
+            for attempt in range(3):
+                if attempt == 0:
+                    result = hy_mt.translate_zh(text, target_language_name)
+                elif attempt == 1:
+                    result = hy_mt.translate(text, target_language_name)
+                else:
+                    model, tokenizer = hy_mt._get_model()
+                    messages = [
+                        {"role": "user",
+                         "content": f"Translate the following Chinese sentence into {target_language_name}. Output ONLY the {target_language_name} translation, nothing else:\n\n{text}"},
+                    ]
+                    tokenized_chat = tokenizer.apply_chat_template(
+                        messages, tokenize=True, add_generation_prompt=False, return_tensors="pt"
+                    )
+                    outputs = model.generate(tokenized_chat.to(model.device), **hy_mt.GENERATION_KWARGS)
+                    result = tokenizer.decode(outputs[0][len(tokenized_chat[0]):], skip_special_tokens=True)
+                if not _looks_untranslated(result):
+                    return result
+            return result
+
+        with redirect_stdout(proc_log), redirect_stderr(proc_log):
+            with open(whisper_srt, "r", encoding="utf-8") as f:
+                content = f.read()
+            blocks = re.split(r"\n\n", content.strip())
+            translated_blocks = []
+            for block in blocks:
+                lines = block.split("\n")
+                if len(lines) >= 3:
+                    idx = lines[0]
+                    time_range = lines[1]
+                    text = "\n".join(lines[2:])
+                    translated = _translate_segment(text)
+                    translated_blocks.append(f"{idx}\n{time_range}\n{translated}")
+            with open(translated_srt, "w", encoding="utf-8") as f:
+                f.write("\n\n".join(translated_blocks) + "\n")
+            hy_mt.unload_model()
+        _mark("translate")
+    else:
+        job_log(access_code, output_dir, "  ↪ translation already done, skipping")
+
+    # Step 4: Generate audio from translated SRT
     gen_audio_dir = os.path.join(output_dir, "audio_tracks")
-    audio_out = run_gen_audio_step(translated_srt, gen_audio_dir, temperature, access_code,
-                                   target_language=target_language,
-                                   cfg_weight=cfg_weight,
-                                   exaggeration=exaggeration)
+    if not _done("audio"):
+        job_log(access_code, output_dir, "Step 1: Generating audio from translated SRT")
+        audio_out = run_gen_audio_step(translated_srt, gen_audio_dir, temperature, access_code,
+                                       target_language=target_language,
+                                       cfg_weight=cfg_weight,
+                                       exaggeration=exaggeration)
+        _mark("audio")
+    else:
+        audio_out = {
+            "output_srt_path": os.path.join(gen_audio_dir, "output_adjusted.srt"),
+            "changed_json_path": os.path.join(gen_audio_dir, "changed_segments.json"),
+        }
+        job_log(access_code, output_dir, "  ↪ audio already done, skipping")
 
-    job_log(access_code, output_dir, "Step 2: Processing video")
-    video_output = os.path.join(output_dir, "output_modified.mp4")
-    run_gen_video_step(video_file, translated_srt, audio_out["output_srt_path"], audio_out["changed_json_path"], video_output, access_code)
+    # Step 5: Process video
+    if not _done("video"):
+        job_log(access_code, output_dir, "Step 2: Processing video")
+        video_output = os.path.join(output_dir, "output_modified.mp4")
+        run_gen_video_step(video_file, translated_srt, audio_out["output_srt_path"], audio_out["changed_json_path"], video_output, access_code)
+        _mark("video")
+    else:
+        job_log(access_code, output_dir, "  ↪ video already done, skipping")
+
     proc_log.close()
     job_log(access_code, output_dir, "Done!")
 
@@ -172,7 +220,11 @@ def process_video_auto(video_file, temperature: float, user_id: int = None, targ
     output_dir = os.path.join(VIDEO_DIR, access_code)
     os.makedirs(output_dir, exist_ok=True)
 
-    video_path = os.path.join(output_dir, video_file.filename)
+    # Save with a UUID prefix so the filename can never collide with
+    # gen_video.py's output filenames (output_modified.mp4 / output_final.mp4).
+    video_ext = os.path.splitext(video_file.filename)[1] or ".mp4"
+    safe_name = f"source_{uuid.uuid4().hex[:12]}{video_ext}"
+    video_path = os.path.join(output_dir, safe_name)
     video_file.save(video_path)
 
     job_data = {
@@ -263,21 +315,22 @@ def _run_video_ocr_job(job_data: dict):
                     return result
             return result
 
-        with open(ocr_srt, "r", encoding="utf-8") as f:
-            content = f.read()
-        blocks = re.split(r"\n\n", content.strip())
-        translated_blocks = []
-        for block in blocks:
-            lines = block.split("\n")
-            if len(lines) >= 3:
-                idx = lines[0]
-                time_range = lines[1]
-                text = "\n".join(lines[2:])
-                translated = _translate_segment(text)
-                translated_blocks.append(f"{idx}\n{time_range}\n{translated}")
-        with open(translated_srt, "w", encoding="utf-8") as f:
-            f.write("\n\n".join(translated_blocks) + "\n")
-        hy_mt.unload_model()
+        with redirect_stdout(proc_log), redirect_stderr(proc_log):
+            with open(ocr_srt, "r", encoding="utf-8") as f:
+                content = f.read()
+            blocks = re.split(r"\n\n", content.strip())
+            translated_blocks = []
+            for block in blocks:
+                lines = block.split("\n")
+                if len(lines) >= 3:
+                    idx = lines[0]
+                    time_range = lines[1]
+                    text = "\n".join(lines[2:])
+                    translated = _translate_segment(text)
+                    translated_blocks.append(f"{idx}\n{time_range}\n{translated}")
+            with open(translated_srt, "w", encoding="utf-8") as f:
+                f.write("\n\n".join(translated_blocks) + "\n")
+            hy_mt.unload_model()
         _mark("translate")
     else:
         job_log(access_code, output_dir, "  ↪ translation already done, skipping")
@@ -317,7 +370,11 @@ def process_video_ocr(video_file, temperature: float, user_id: int = None, targe
     output_dir = os.path.join(VIDEO_DIR, access_code)
     os.makedirs(output_dir, exist_ok=True)
 
-    video_path = os.path.join(output_dir, video_file.filename)
+    # Save with a UUID prefix so the filename can never collide with
+    # gen_video.py's output filenames (output_modified.mp4 / output_final.mp4).
+    video_ext = os.path.splitext(video_file.filename)[1] or ".mp4"
+    safe_name = f"source_{uuid.uuid4().hex[:12]}{video_ext}"
+    video_path = os.path.join(output_dir, safe_name)
     video_file.save(video_path)
 
     job_data = {

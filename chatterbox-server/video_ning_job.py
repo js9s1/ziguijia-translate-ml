@@ -6,7 +6,7 @@ import re
 import subprocess
 import sys
 import time
-import uuid
+from contextlib import redirect_stdout, redirect_stderr
 
 from jobqueue import get_job_queue, JobStatus
 from log_utils import job_log
@@ -233,21 +233,22 @@ def _run_video_ning_ocr_job(job_data: dict):
                     return result
             return result
 
-        with open(ocr_srt, "r", encoding="utf-8") as f:
-            content = f.read()
-        blocks = re.split(r"\n\n", content.strip())
-        translated_blocks = []
-        for block in blocks:
-            lines = block.split("\n")
-            if len(lines) >= 3:
-                idx = lines[0]
-                time_range = lines[1]
-                text = "\n".join(lines[2:])
-                translated = _translate_segment(text)
-                translated_blocks.append(f"{idx}\n{time_range}\n{translated}")
-        with open(translated_srt, "w", encoding="utf-8") as f:
-            f.write("\n\n".join(translated_blocks) + "\n")
-        hy_mt.unload_model()
+        with redirect_stdout(proc_log), redirect_stderr(proc_log):
+            with open(ocr_srt, "r", encoding="utf-8") as f:
+                content = f.read()
+            blocks = re.split(r"\n\n", content.strip())
+            translated_blocks = []
+            for block in blocks:
+                lines = block.split("\n")
+                if len(lines) >= 3:
+                    idx = lines[0]
+                    time_range = lines[1]
+                    text = "\n".join(lines[2:])
+                    translated = _translate_segment(text)
+                    translated_blocks.append(f"{idx}\n{time_range}\n{translated}")
+            with open(translated_srt, "w", encoding="utf-8") as f:
+                f.write("\n\n".join(translated_blocks) + "\n")
+            hy_mt.unload_model()
         _mark("translate")
     else:
         job_log(access_code, output_dir, "  ↪ translation already done, skipping")
