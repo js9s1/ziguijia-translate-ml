@@ -24,6 +24,8 @@ fetch('/auth/me').then(r => r.json()).then(data => {
             '<span style="color:#ddd;margin:0 6px;">|</span>' +
             '<a href="/my-jobs" style="color:#2196F3;text-decoration:none;">我的任务</a>' +
             '<span style="color:#ddd;margin:0 6px;">|</span>' +
+            '<a href="/auth/change-password" style="color:#FF9800;text-decoration:none;">修改密码</a>' +
+            '<span style="color:#ddd;margin:0 6px;">|</span>' +
             '<a href="#" id="logoutLink" style="color:#f44336;text-decoration:none;">退出</a>';
         document.getElementById('logoutLink').addEventListener('click', function(e) {
             e.preventDefault();

@@ -18,37 +18,62 @@ DB_FILE = os.path.join(BASE_DIR, "jobs.db")
 
 logger = logging.getLogger(__name__)
 
+_now_str = lambda: time.strftime('%Y-%m-%d %H:%M:%S')
+
+
+_JOB_HANDLERS: dict[str, Callable] = {}
+
 
 class JobStatus(Enum):
     PENDING = "pending"
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
     DELETED = "deleted"
 
 
-def _get_run_func(name: str) -> Optional[Callable]:
+def _register_handlers():
+    """Lazily populate the job handler registry on first import."""
     from audio_job import _run_gen_audio, _run_audio_segmentation_job
     from tts_job import _run_tts_job
     from video_ning_job import _run_video_job, _run_video_ning_ocr_job
     from video_custom_job import _run_video_custom_job, _run_video_auto_job, _run_video_ocr_job
-    if name == "_run_gen_audio":
-        return _run_gen_audio
-    if name == "_run_video_job":
-        return _run_video_job
-    if name == "_run_video_custom_job":
-        return _run_video_custom_job
-    if name == "_run_tts_job":
-        return _run_tts_job
-    if name == "_run_video_auto_job":
-        return _run_video_auto_job
-    if name == "_run_audio_segmentation_job":
-        return _run_audio_segmentation_job
-    if name == "_run_video_ocr_job":
-        return _run_video_ocr_job
-    if name == "_run_video_ning_ocr_job":
-        return _run_video_ning_ocr_job
-    return None
+    from video_ocr_job import _run_ocr_only_job
+    _JOB_HANDLERS.update({
+        "_run_gen_audio": _run_gen_audio,
+        "_run_video_job": _run_video_job,
+        "_run_video_custom_job": _run_video_custom_job,
+        "_run_tts_job": _run_tts_job,
+        "_run_video_auto_job": _run_video_auto_job,
+        "_run_audio_segmentation_job": _run_audio_segmentation_job,
+        "_run_video_ocr_job": _run_video_ocr_job,
+        "_run_video_ning_ocr_job": _run_video_ning_ocr_job,
+        "_run_ocr_only_job": _run_ocr_only_job,
+    })
+
+
+_JOB_TYPE_LABELS: dict[str, str] = {
+    "_run_gen_audio": "音频生成",
+    "_run_video_job": "宁视频翻译",
+    "_run_video_custom_job": "自定义视频",
+    "_run_tts_job": "语音合成",
+    "_run_video_auto_job": "自动翻译视频",
+    "_run_audio_segmentation_job": "音频分段合成",
+    "_run_video_ocr_job": "OCR翻译视频",
+    "_run_video_ning_ocr_job": "宁视频OCR翻译",
+    "_run_ocr_only_job": "视频OCR提取字幕",
+}
+
+
+def _get_run_func(name: str) -> Optional[Callable]:
+    if not _JOB_HANDLERS:
+        _register_handlers()
+    return _JOB_HANDLERS.get(name)
+
+
+def _get_job_type_label(run_func_name: str) -> str:
+    return _JOB_TYPE_LABELS.get(run_func_name, run_func_name or "未知")
 
 
 def _job_process_wrapper(job_data: dict, run_func_name: str):
@@ -116,7 +141,7 @@ class JobQueue:
 
         # Find any jobs that were still PROCESSING when the server died —
         # reset them to PENDING so they can be retried.
-        now = time.strftime('%Y-%m-%d %H:%M:%S')
+        now = _now_str()
         conn.execute(
             "UPDATE jobs SET status = ?, status_changed_at = ? WHERE status = ?",
             (JobStatus.PENDING.value, now, JobStatus.PROCESSING.value)
@@ -144,8 +169,8 @@ class JobQueue:
         """
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT DISTINCT output_dir FROM jobs WHERE status IN (?, ?) AND output_dir IS NOT NULL",
-            (JobStatus.PENDING.value, JobStatus.FAILED.value)
+            "SELECT DISTINCT output_dir FROM jobs WHERE status = ? AND output_dir IS NOT NULL",
+            (JobStatus.PENDING.value,)
         ).fetchall()
         dirs = {r["output_dir"] for r in rows}
         if not dirs:
@@ -294,23 +319,7 @@ class JobQueue:
         conn = self._get_conn()
         access_code = job_data.get("access_code") or self._generate_access_code()
 
-        run_func_name = None
-        if run_func.__name__ == "_run_gen_audio":
-            run_func_name = "_run_gen_audio"
-        elif run_func.__name__ == "_run_video_job":
-            run_func_name = "_run_video_job"
-        elif run_func.__name__ == "_run_video_custom_job":
-            run_func_name = "_run_video_custom_job"
-        elif run_func.__name__ == "_run_tts_job":
-            run_func_name = "_run_tts_job"
-        elif run_func.__name__ == "_run_video_auto_job":
-            run_func_name = "_run_video_auto_job"
-        elif run_func.__name__ == "_run_audio_segmentation_job":
-            run_func_name = "_run_audio_segmentation_job"
-        elif run_func.__name__ == "_run_video_ocr_job":
-            run_func_name = "_run_video_ocr_job"
-        elif run_func.__name__ == "_run_video_ning_ocr_job":
-            run_func_name = "_run_video_ning_ocr_job"
+        run_func_name = run_func.__name__
 
         # Preserve existing checkpoint on resubmit — OR REPLACE would otherwise
         # wipe it since the INSERT column list omits the checkpoint column.
@@ -339,7 +348,7 @@ class JobQueue:
             job_data.get("cfg_weight", 0.5),
             job_data.get("exaggeration", 0.5),
             prev_ckpt,
-            time.strftime('%Y-%m-%d %H:%M:%S'),
+            _now_str(),
         ))
         conn.commit()
 
@@ -366,15 +375,20 @@ class JobQueue:
             self._worker_thread.start()
 
     def _process_queue(self):
+        import queue as std_queue
         while self._running:
             try:
                 access_code = self._queue.get(timeout=1)
-                self._current_access_code = access_code
-                self._cancel_event.clear()
-                self._process_job(access_code)
-                self._current_access_code = None
+            except std_queue.Empty:
+                continue  # timeout, just re-check self._running
             except Exception:
                 continue
+            self._current_access_code = access_code
+            self._cancel_event.clear()
+            try:
+                self._process_job(access_code)
+            finally:
+                self._current_access_code = None
 
     def _process_job(self, access_code: str):
         conn = self._get_conn()
@@ -395,7 +409,7 @@ class JobQueue:
 
         if not run_func:
             logger.error(f"Job {access_code} has no run_func")
-            now = time.strftime('%Y-%m-%d %H:%M:%S')
+            now = _now_str()
             conn.execute(
                 "UPDATE jobs SET status = ?, error = ?, status_changed_at = ? WHERE access_code = ?",
                 (JobStatus.FAILED.value, "Job handler not found", now, access_code)
@@ -403,7 +417,7 @@ class JobQueue:
             conn.commit()
             return
 
-        now = time.strftime('%Y-%m-%d %H:%M:%S')
+        now = _now_str()
         cursor = conn.execute(
             "UPDATE jobs SET status = ?, status_changed_at = ? WHERE access_code = ? AND status = ?",
             (JobStatus.PROCESSING.value, now, access_code, JobStatus.PENDING.value)
@@ -465,21 +479,21 @@ class JobQueue:
                     break
 
             if cancelled:
-                now = time.strftime('%Y-%m-%d %H:%M:%S')
+                now = _now_str()
                 conn.execute(
                     "UPDATE jobs SET status = ?, error = ?, cancelled_at = ?, status_changed_at = ? WHERE access_code = ?",
-                    (JobStatus.FAILED.value, "Cancelled by user", now, now, access_code)
+                    (JobStatus.CANCELLED.value, "Cancelled by user", now, now, access_code)
                 )
                 logger.info(f"Job {access_code} was cancelled")
             elif proc.exitcode == 0:
-                now = time.strftime('%Y-%m-%d %H:%M:%S')
+                now = _now_str()
                 conn.execute(
                     "UPDATE jobs SET status = ?, status_changed_at = ?, completed_at = ? WHERE access_code = ?",
                     (JobStatus.COMPLETED.value, now, now, access_code)
                 )
                 logger.info(f"Job {access_code} completed successfully")
             else:
-                now = time.strftime('%Y-%m-%d %H:%M:%S')
+                now = _now_str()
                 sig = f" (exit {proc.exitcode})" if proc.exitcode is not None else ""
                 conn.execute(
                     "UPDATE jobs SET status = ?, error = ?, failed_at = ?, status_changed_at = ? WHERE access_code = ?",
@@ -494,7 +508,7 @@ class JobQueue:
                 if proc.is_alive():
                     proc.kill()
                     proc.join(timeout=2)
-            now = time.strftime('%Y-%m-%d %H:%M:%S')
+            now = _now_str()
             conn.execute(
                 "UPDATE jobs SET status = ?, error = ?, failed_at = ?, status_changed_at = ? WHERE access_code = ?",
                 (JobStatus.FAILED.value, str(e)[:500], now, now, access_code)
@@ -650,6 +664,15 @@ class JobQueue:
         )
         conn.commit()
 
+    def update_target_language(self, access_code: str, lang: str):
+        """Update the target_language field for a job (e.g. after language detection)."""
+        conn = self._get_conn()
+        conn.execute(
+            "UPDATE jobs SET target_language = ? WHERE access_code = ?",
+            (lang, access_code)
+        )
+        conn.commit()
+
     def get_status(self, access_code: str) -> Optional[dict]:
         conn = self._get_conn()
         row = conn.execute(
@@ -662,27 +685,26 @@ class JobQueue:
 
         # Count how many pending jobs are ahead of this one in the queue
         queue_position = None
-        created_at = row[6] if len(row) > 6 else None
-        if row[1] == JobStatus.PENDING.value and created_at:
+        if row["status"] == JobStatus.PENDING.value and row["created_at"]:
             queue_position = conn.execute(
                 "SELECT COUNT(*) FROM jobs WHERE status = ? AND created_at < ?",
-                (JobStatus.PENDING.value, created_at)
+                (JobStatus.PENDING.value, row["created_at"])
             ).fetchone()[0]
 
         return {
-            "access_code": row[0],
-            "status": row[1],
-            "error": row[2],
-            "output_dir": row[3],
-            "progress": row[4],
-            "target_language": row[5] if len(row) > 5 else None,
+            "access_code": row["access_code"],
+            "status": row["status"],
+            "error": row["error"],
+            "output_dir": row["output_dir"],
+            "progress": row["progress"],
+            "target_language": row["target_language"],
             "queue_position": queue_position,
-            "temperature": row[7] if len(row) > 7 else None,
-            "cfg_weight": row[8] if len(row) > 8 else None,
-            "exaggeration": row[9] if len(row) > 9 else None,
-            "checkpoint": row[10] if len(row) > 10 else "",
-            "checkpoint_edited": bool(row[11]) if len(row) > 11 else False,
-            "edited_srt_files": row[12].split(",") if len(row) > 12 and row[12] else [],
+            "temperature": row["temperature"],
+            "cfg_weight": row["cfg_weight"],
+            "exaggeration": row["exaggeration"],
+            "checkpoint": row["checkpoint"] or "",
+            "checkpoint_edited": bool(row["checkpoint_edited"]),
+            "edited_srt_files": row["edited_srt_files"].split(",") if row["edited_srt_files"] else [],
         }
 
     def get_user_jobs(self, user_id: int) -> list:
@@ -690,20 +712,9 @@ class JobQueue:
         rows = conn.execute("""
             SELECT access_code, run_func_name, status, error, output_dir, created_at, status_changed_at
             FROM jobs WHERE user_id = ? AND status != ?
-            ORDER BY
-                CASE WHEN status = ? THEN 0 ELSE 1 END,
-                COALESCE(status_changed_at, created_at) DESC
-        """, (user_id, JobStatus.DELETED.value, JobStatus.PROCESSING.value)).fetchall()
-        type_map = {
-            "_run_gen_audio": "音频生成",
-            "_run_video_job": "宁视频翻译",
-            "_run_video_custom_job": "自定义视频",
-            "_run_tts_job": "语音合成",
-            "_run_video_auto_job": "自动翻译视频",
-            "_run_audio_segmentation_job": "音频分段合成",
-            "_run_video_ocr_job": "OCR翻译视频",
-            "_run_video_ning_ocr_job": "宁视频OCR翻译",
-        }
+            ORDER BY COALESCE(status_changed_at, created_at) DESC
+        """, (user_id, JobStatus.DELETED.value)).fetchall()
+        type_map = _JOB_TYPE_LABELS
         return [{
             "access_code": r[0],
             "type": type_map.get(r[1], r[1] or "未知"),
@@ -711,6 +722,7 @@ class JobQueue:
             "error": r[3],
             "output_dir": r[4],
             "created_at": r[5],
+            "status_changed_at": r[6],
         } for r in rows]
 
     def cancel_job(self, access_code: str) -> dict:
@@ -762,10 +774,10 @@ class JobQueue:
         if access_code == self._current_access_code:
             self._cancel_event.set()
 
-        now = time.strftime('%Y-%m-%d %H:%M:%S')
+        now = _now_str()
         conn.execute(
             "UPDATE jobs SET status = ?, error = ?, cancelled_at = ?, status_changed_at = ? WHERE access_code = ? AND (status = ? OR status = ?)",
-            (JobStatus.FAILED.value, "Cancelled by user", now, now, access_code, JobStatus.PENDING.value, JobStatus.PROCESSING.value)
+            (JobStatus.CANCELLED.value, "Cancelled by user", now, now, access_code, JobStatus.PENDING.value, JobStatus.PROCESSING.value)
         )
         conn.commit()
 
@@ -795,7 +807,7 @@ class JobQueue:
         elif row[0] != JobStatus.FAILED.value:
             return {"success": False, "error": f"Job is {row[0]}, only failed or checkpoint-edited jobs can be resubmitted"}
 
-        now = time.strftime('%Y-%m-%d %H:%M:%S')
+        now = _now_str()
         conn.execute(
             "UPDATE jobs SET status = ?, error = NULL, status_changed_at = ? WHERE access_code = ?",
             (JobStatus.PENDING.value, now, access_code)
@@ -816,7 +828,7 @@ class JobQueue:
             return {"success": False, "error": "Job not found"}
 
         # Mark as deleted without removing files or DB row
-        now = time.strftime('%Y-%m-%d %H:%M:%S')
+        now = _now_str()
         conn.execute(
             "UPDATE jobs SET status = ?, error = ?, status_changed_at = ? WHERE access_code = ?",
             (JobStatus.DELETED.value, "Deleted by user", now, access_code)

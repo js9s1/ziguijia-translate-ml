@@ -5,6 +5,7 @@ import smtplib
 import sqlite3
 import string
 import threading
+import time
 from email.mime.text import MIMEText
 
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -57,9 +58,22 @@ class UserManager:
                 password_hash TEXT NOT NULL,
                 verified INTEGER DEFAULT 0,
                 verification_code TEXT,
+                reset_code TEXT,
+                reset_code_expires REAL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # Add reset_code / reset_code_expires columns if missing on existing DB
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN reset_code TEXT")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e).lower():
+                raise
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN reset_code_expires REAL")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e).lower():
+                raise
         conn.commit()
 
     def register(self, email: str, password: str) -> dict:
@@ -126,6 +140,26 @@ class UserManager:
             "SELECT id, email, verified FROM users WHERE email = ?", (email,)
         ).fetchone()
 
+    def change_password(self, email: str, old_password: str, new_password: str) -> dict:
+        conn = self._get_conn()
+        user = conn.execute(
+            "SELECT * FROM users WHERE email = ?", (email,)
+        ).fetchone()
+        if not user:
+            return {"success": False, "error": "用户不存在"}
+        if not check_password_hash(user["password_hash"], old_password):
+            return {"success": False, "error": "原密码错误"}
+        if len(new_password) < 6:
+            return {"success": False, "error": "新密码至少6个字符"}
+        new_hash = generate_password_hash(new_password)
+        conn.execute(
+            "UPDATE users SET password_hash = ? WHERE email = ?",
+            (new_hash, email),
+        )
+        conn.commit()
+        logger.info(f"Password changed for {email}")
+        return {"success": True, "message": "密码修改成功"}
+
     def resend_code(self, email: str) -> dict:
         conn = self._get_conn()
         user = conn.execute(
@@ -148,6 +182,94 @@ class UserManager:
             result["code"] = code
         return result
 
+    def request_reset(self, email: str) -> dict:
+        """Generate a reset code and send it via email."""
+        conn = self._get_conn()
+        user = conn.execute(
+            "SELECT * FROM users WHERE email = ?", (email,)
+        ).fetchone()
+        if not user:
+            # Don't reveal whether the email exists
+            return {"success": True, "message": "如果该邮箱已注册，重置密码的邮件已发送"}
+        code = "".join(random.choices(string.digits, k=6))
+        expires = time.time() + 1800  # 30 minutes
+        conn.execute(
+            "UPDATE users SET reset_code = ?, reset_code_expires = ? WHERE email = ?",
+            (code, expires, email),
+        )
+        conn.commit()
+        sent = self._send_reset_email(email, code)
+        if sent:
+            return {"success": True, "message": "重置密码的邮件已发送，请查收"}
+        return {"success": True, "message": "重置密码的邮件已发送，请查收", "code": code}
+
+    def reset_password(self, email: str, code: str, new_password: str) -> dict:
+        """Verify reset code and update password."""
+        conn = self._get_conn()
+        user = conn.execute(
+            "SELECT * FROM users WHERE email = ?", (email,)
+        ).fetchone()
+        if not user:
+            return {"success": False, "error": "链接无效或已过期"}
+        if not user["reset_code"] or not user["reset_code_expires"]:
+            return {"success": False, "error": "未请求重置密码"}
+        if time.time() > user["reset_code_expires"]:
+            return {"success": False, "error": "验证码已过期，请重新请求"}
+        if user["reset_code"] != code:
+            return {"success": False, "error": "验证码错误"}
+        if len(new_password) < 6:
+            return {"success": False, "error": "密码至少6个字符"}
+        new_hash = generate_password_hash(new_password)
+        conn.execute(
+            "UPDATE users SET password_hash = ?, reset_code = NULL, reset_code_expires = NULL WHERE email = ?",
+            (new_hash, email),
+        )
+        conn.commit()
+        logger.info(f"Password reset for {email}")
+        return {"success": True, "message": "密码重置成功"}
+
+    def _send_email(self, email: str, subject: str, body: str) -> bool:
+        """Send an email via SMTP. Returns True on success, False otherwise."""
+        if not (SMTP_HOST and SMTP_USER):
+            return False
+        try:
+            msg = MIMEText(body, "plain", "utf-8")
+            msg["Subject"] = subject
+            msg["From"] = SMTP_FROM
+            msg["To"] = email
+            if SMTP_PORT == 465:
+                with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
+                    server.login(SMTP_USER, SMTP_PASS)
+                    server.send_message(msg)
+            else:
+                with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+                    server.starttls()
+                    server.login(SMTP_USER, SMTP_PASS)
+                    server.send_message(msg)
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to send email via SMTP: {e}")
+            return False
+
+    def _send_reset_email(self, email: str, code: str) -> bool:
+        subject = "重置密码 - 宁师的视频翻译工具"
+        body = f"""您好，
+
+您请求了重置密码。
+
+您的验证码是：{code}
+
+验证码有效期为30分钟。如果这不是您本人的操作，请忽略此邮件。
+
+宁师的视频翻译工具
+"""
+        sent = self._send_email(email, subject, body)
+        if sent:
+            logger.info(f"Reset email sent to {email}")
+        else:
+            logger.info(f"Reset code for {email}: {code}")
+        return sent
+
     def _send_verification_email(self, email: str, code: str) -> bool:
         subject = "验证您的邮箱 - 宁师的视频翻译工具"
         body = f"""您好，
@@ -162,27 +284,12 @@ class UserManager:
 
 宁师的视频翻译工具
 """
-        if SMTP_HOST and SMTP_USER:
-            try:
-                msg = MIMEText(body, "plain", "utf-8")
-                msg["Subject"] = subject
-                msg["From"] = SMTP_FROM
-                msg["To"] = email
-                if SMTP_PORT == 465:
-                    with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
-                        server.login(SMTP_USER, SMTP_PASS)
-                        server.send_message(msg)
-                else:
-                    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-                        server.starttls()
-                        server.login(SMTP_USER, SMTP_PASS)
-                        server.send_message(msg)
-                logger.info(f"Verification email sent to {email}")
-                return True
-            except Exception as e:
-                logger.warning(f"Failed to send email via SMTP: {e}")
-        logger.info(f"Verification code for {email}: {code}")
-        return False
+        sent = self._send_email(email, subject, body)
+        if sent:
+            logger.info(f"Verification email sent to {email}")
+        else:
+            logger.info(f"Verification code for {email}: {code}")
+        return sent
 
 
 def get_user_manager() -> UserManager:

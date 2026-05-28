@@ -6,11 +6,12 @@ import re
 import subprocess
 import sys
 import time
+import uuid
 from contextlib import redirect_stdout, redirect_stderr
 
 from jobqueue import get_job_queue, JobStatus
 from log_utils import job_log, redirect_logging_to_file
-from config import VIDEO_DIR, GEN_VIDEO_ORIG_SCRIPT, RAPID_VIDEOCR_PIPELINE_SCRIPT, HY_MT_DIR, PROJECT_ROOT, RAPID_VIDEOCR_BIN
+from config import VIDEO_DIR, GEN_VIDEO_ORIG_SCRIPT, RAPID_VIDEOCR_PIPELINE_SCRIPT, HY_MT_DIR, PROJECT_ROOT, RAPID_VIDEOCR_BIN, PYTHON_BIN
 from pipeline import validate_files
 
 _LANG_MAP = {
@@ -261,7 +262,7 @@ def _run_video_ning_ocr_job(job_data: dict):
         gen_audio_script = os.path.join(PROJECT_ROOT, "gen_audio.py")
         audio_prompt = os.path.join(PROJECT_ROOT, "..", "assets", "std_ning.wav")
         subprocess.run(
-            ["/home/js9s/.pyenv/versions/3.11.14/bin/python3.11", gen_audio_script, translated_srt,
+            [PYTHON_BIN, gen_audio_script, translated_srt,
              "--audio_prompt", audio_prompt,
              "--output_dir", audio_dir,
              "--output_srt", "output_adjusted.srt",

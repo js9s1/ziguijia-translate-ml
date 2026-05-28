@@ -6,10 +6,27 @@ import sys
 import time
 from collections import defaultdict
 
-from audio_job import process_srt_file
+import importlib
 from jobqueue import get_job_queue
 from auth import get_user_manager
 from config import AUDIO_TRACKS_DIR, VIDEO_DIR
+
+# ── Deferred imports ──────────────────────────────────────
+# All processing modules are imported lazily to avoid loading
+# heavy dependencies (PyTorch, etc.) until a request actually
+# needs them.  Import at the top of a handler with:
+#     process_audio_file = _lazy("audio_job", "process_audio_file")
+
+_MODULES: dict[str, object] = {}
+
+
+def _lazy(module_name: str, attr: str):
+    """Deferred import: load the module on first access and return the attribute."""
+    import_key = f"{module_name}.{attr}"
+    if import_key not in _MODULES:
+        mod = importlib.import_module(module_name)
+        _MODULES[import_key] = getattr(mod, attr)
+    return _MODULES[import_key]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,12 +52,16 @@ def rate_limit(f):
         now = time.time()
         window_start = now - RATE_LIMIT_WINDOW
         timestamps = _rate_limit_store[ip]
-        # Prune old entries
-        _rate_limit_store[ip] = [t for t in timestamps if t > window_start]
-        if len(_rate_limit_store[ip]) >= RATE_LIMIT_MAX:
+        # Prune old entries; delete the key entirely when empty to avoid unbounded growth
+        pruned = [t for t in timestamps if t > window_start]
+        if pruned:
+            _rate_limit_store[ip] = pruned
+        else:
+            del _rate_limit_store[ip]
+        if len(pruned) >= RATE_LIMIT_MAX:
             logger.warning(f"Rate limit exceeded for IP {ip}")
             return jsonify({"error": "请求过于频繁，请稍后再试"}), 429
-        _rate_limit_store[ip].append(now)
+        _rate_limit_store[ip] = pruned + [now]
         return f(*args, **kwargs)
     return decorated
 
@@ -71,6 +92,25 @@ app.config.update(
 
 
 HTML_DIR = os.path.join(BASE_DIR, "html")
+
+# ── Shared parameter parsing ──────────────────────────
+
+_DEFAULT_PARAMS = {
+    "temperature": 0.6,
+    "target_language": "en",
+    "cfg_weight": 0.5,
+    "exaggeration": 0.5,
+}
+
+
+def _parse_job_params(source: dict) -> dict:
+    """Parse common job parameters from request.form or JSON body."""
+    return {
+        "temperature": float(source.get("temperature", _DEFAULT_PARAMS["temperature"])),
+        "target_language": source.get("target_language", _DEFAULT_PARAMS["target_language"]),
+        "cfg_weight": float(source.get("cfg_weight", _DEFAULT_PARAMS["cfg_weight"])),
+        "exaggeration": float(source.get("exaggeration", _DEFAULT_PARAMS["exaggeration"])),
+    }
 
 
 def login_required(f):
@@ -107,25 +147,23 @@ def audio_process():
         if "file" in request.files:
             file = request.files["file"]
             content = file.read().decode("utf-8")
-            temperature = float(request.form.get("temperature", 0.8))
-            target_language = request.form.get("target_language", "en")
-            cfg_weight = float(request.form.get("cfg_weight", 0.5))
-            exaggeration = float(request.form.get("exaggeration", 0.5))
-            from audio_job import process_audio_file
-            result = process_audio_file(content, file.filename, temperature, session["user_id"],
-                                        target_language=target_language, cfg_weight=cfg_weight, exaggeration=exaggeration)
+            params = _parse_job_params(request.form)
+            process_audio_file = _lazy("audio_job", "process_audio_file")
+            result = process_audio_file(content, file.filename, params["temperature"], session["user_id"],
+                                        target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"])
             return jsonify(result)
         else:
             data = request.get_json()
             text = data.get("text", "")
             if not text:
                 return jsonify({"error": "Missing text"}), 400
-            from tts_job import process_tts
+            process_tts = _lazy("tts_job", "process_tts")
+            params = _parse_job_params(data)
             result = process_tts(text, data.get("filename", "output.wav"), session["user_id"],
-                                 temperature=float(data.get("temperature", 0.8)),
-                                 target_language=data.get("target_language", "en"),
-                                 cfg_weight=float(data.get("cfg_weight", 0.5)),
-                                 exaggeration=float(data.get("exaggeration", 0.5)))
+                                 temperature=params["temperature"],
+                                 target_language=params["target_language"],
+                                 cfg_weight=params["cfg_weight"],
+                                 exaggeration=params["exaggeration"])
             return jsonify(result)
     except Exception as e:
         logger.error(f"Audio process error: {e}")
@@ -140,12 +178,13 @@ def tts_process():
         text = data.get("text", "")
         if not text:
             return jsonify({"error": "Missing text"}), 400
-        from tts_job import process_tts
+        process_tts = _lazy("tts_job", "process_tts")
+        params = _parse_job_params(data)
         result = process_tts(text, data.get("filename", "output.wav"), session["user_id"],
-                             temperature=float(data.get("temperature", 0.8)),
-                             target_language=data.get("target_language", "en"),
-                             cfg_weight=float(data.get("cfg_weight", 0.5)),
-                             exaggeration=float(data.get("exaggeration", 0.5)))
+                             temperature=params["temperature"],
+                             target_language=params["target_language"],
+                             cfg_weight=params["cfg_weight"],
+                             exaggeration=params["exaggeration"])
         return jsonify(result)
     except Exception as e:
         logger.error(f"TTS process error: {e}")
@@ -426,13 +465,11 @@ def srt_process():
             return jsonify({"error": "No file uploaded"}), 400
 
         srt_file = request.files["srt_file"]
-        temperature = float(request.form.get("temperature", 0.6))
-        target_language = request.form.get("target_language", "en")
-        cfg_weight = float(request.form.get("cfg_weight", 0.5))
-        exaggeration = float(request.form.get("exaggeration", 0.5))
+        params = _parse_job_params(request.form)
 
-        result = process_srt_file(srt_file, temperature, session["user_id"],
-                                  target_language=target_language, cfg_weight=cfg_weight, exaggeration=exaggeration)
+        process_srt_file = _lazy("audio_job", "process_srt_file")
+        result = process_srt_file(srt_file, params["temperature"], session["user_id"],
+                                  target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"])
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error processing SRT: {str(e)}")
@@ -480,15 +517,12 @@ def video_ning_process():
             return jsonify({"error": "No video number provided"}), 400
 
         srt_file = request.files["srt_file"]
-        temperature = float(request.form.get("temperature", 0.6))
-        target_language = request.form.get("target_language", "en")
-        cfg_weight = float(request.form.get("cfg_weight", 0.5))
-        exaggeration = float(request.form.get("exaggeration", 0.5))
+        params = _parse_job_params(request.form)
 
-        from video_ning_job import process_video_ning
+        process_video_ning = _lazy("video_ning_job", "process_video_ning")
         blur = request.form.get("blur", "yes")
-        result = process_video_ning(number, srt_file, temperature, session["user_id"], blur,
-                                    target_language=target_language, cfg_weight=cfg_weight, exaggeration=exaggeration)
+        result = process_video_ning(number, srt_file, params["temperature"], session["user_id"], blur,
+                                    target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"])
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error processing video: {str(e)}")
@@ -503,15 +537,12 @@ def video_ning_ocr_process():
         if not number:
             return jsonify({"error": "No video number provided"}), 400
 
-        temperature = float(request.form.get("temperature", 0.6))
-        target_language = request.form.get("target_language", "en")
-        cfg_weight = float(request.form.get("cfg_weight", 0.5))
-        exaggeration = float(request.form.get("exaggeration", 0.5))
+        params = _parse_job_params(request.form)
 
-        from video_ning_job import process_video_ning_ocr
+        process_video_ning_ocr = _lazy("video_ning_job", "process_video_ning_ocr")
         blur = request.form.get("blur", "yes")
-        result = process_video_ning_ocr(number, temperature, session["user_id"], blur,
-                                        target_language=target_language, cfg_weight=cfg_weight, exaggeration=exaggeration)
+        result = process_video_ning_ocr(number, params["temperature"], session["user_id"], blur,
+                                        target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"])
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error OCR processing ning video: {str(e)}")
@@ -534,14 +565,11 @@ def video_custom_process():
 
         video_file = request.files["video_file"]
         srt_file = request.files["srt_file"]
-        temperature = float(request.form.get("temperature", 0.6))
-        target_language = request.form.get("target_language", "en")
-        cfg_weight = float(request.form.get("cfg_weight", 0.5))
-        exaggeration = float(request.form.get("exaggeration", 0.5))
+        params = _parse_job_params(request.form)
 
-        from video_custom_job import process_video_custom
-        result = process_video_custom(video_file, srt_file, temperature, session["user_id"],
-                                      target_language=target_language, cfg_weight=cfg_weight, exaggeration=exaggeration)
+        process_video_custom = _lazy("video_custom_job", "process_video_custom")
+        result = process_video_custom(video_file, srt_file, params["temperature"], session["user_id"],
+                                      target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"])
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error processing custom video: {str(e)}")
@@ -556,17 +584,40 @@ def video_custom_auto_process():
             return jsonify({"error": "No video file uploaded"}), 400
 
         video_file = request.files["video_file"]
-        temperature = float(request.form.get("temperature", 0.6))
-        target_language = request.form.get("target_language", "en")
-        cfg_weight = float(request.form.get("cfg_weight", 0.5))
-        exaggeration = float(request.form.get("exaggeration", 0.5))
+        params = _parse_job_params(request.form)
 
-        from video_custom_job import process_video_auto
-        result = process_video_auto(video_file, temperature, session["user_id"],
-                                    target_language=target_language, cfg_weight=cfg_weight, exaggeration=exaggeration)
+        process_video_auto = _lazy("video_custom_job", "process_video_auto")
+        result = process_video_auto(video_file, params["temperature"], session["user_id"],
+                                    target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"])
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error auto processing video: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+# ═══════════════════════════════════════════
+# OCR-only: extract subtitles from video
+# ═══════════════════════════════════════════
+
+@app.route("/video/ocr", methods=["GET"])
+def video_ocr_page():
+    """Serve the OCR-only page (extract subtitles from video)."""
+    return send_from_directory(HTML_DIR, "videoOCR.html")
+
+
+@app.route("/video/ocr/process", methods=["POST"])
+@login_required
+def video_ocr_process():
+    try:
+        if "video_file" not in request.files:
+            return jsonify({"error": "No video file uploaded"}), 400
+
+        video_file = request.files["video_file"]
+        process_ocr_only = _lazy("video_ocr_job", "process_ocr_only")
+        result = process_ocr_only(video_file, session["user_id"])
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error processing OCR-only job: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -578,14 +629,11 @@ def video_custom_ocr_process():
             return jsonify({"error": "No video file uploaded"}), 400
 
         video_file = request.files["video_file"]
-        temperature = float(request.form.get("temperature", 0.6))
-        target_language = request.form.get("target_language", "en")
-        cfg_weight = float(request.form.get("cfg_weight", 0.5))
-        exaggeration = float(request.form.get("exaggeration", 0.5))
+        params = _parse_job_params(request.form)
 
-        from video_custom_job import process_video_ocr
-        result = process_video_ocr(video_file, temperature, session["user_id"],
-                                   target_language=target_language, cfg_weight=cfg_weight, exaggeration=exaggeration)
+        process_video_ocr = _lazy("video_custom_job", "process_video_ocr")
+        result = process_video_ocr(video_file, params["temperature"], session["user_id"],
+                                   target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"])
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error OCR processing video: {str(e)}")
@@ -641,6 +689,19 @@ def auth_logout():
     return jsonify({"success": True})
 
 
+@app.route("/auth/change-password", methods=["GET", "POST"])
+@login_required
+def auth_change_password():
+    if request.method == "GET":
+        return send_from_directory(HTML_DIR, "change-password.html")
+    data = request.get_json()
+    old_password = data.get("old_password", "")
+    new_password = data.get("new_password", "")
+    email = session.get("user_email", "")
+    result = get_user_manager().change_password(email, old_password, new_password)
+    return jsonify(result)
+
+
 @app.route("/auth/resend", methods=["POST"])
 @rate_limit
 def auth_resend():
@@ -658,6 +719,35 @@ def auth_me():
         "authenticated": True,
         "user": {"id": session["user_id"], "email": session["user_email"]},
     })
+
+
+@app.route("/auth/reset-password", methods=["GET", "POST"])
+@rate_limit
+def auth_reset_password():
+    """GET → serve the reset-password request page (enter email)
+    POST → send reset code to email"""
+    if request.method == "GET":
+        return send_from_directory(HTML_DIR, "reset-password.html")
+    data = request.get_json()
+    email = data.get("email", "").strip().lower()
+    if not email:
+        return jsonify({"success": False, "error": "请输入邮箱"})
+    result = get_user_manager().request_reset(email)
+    return jsonify(result)
+
+
+@app.route("/auth/reset-password/confirm", methods=["POST"])
+@rate_limit
+def auth_reset_password_confirm():
+    """Verify reset code and set new password."""
+    data = request.get_json()
+    email = data.get("email", "").strip().lower()
+    code = data.get("code", "").strip()
+    new_password = data.get("new_password", "")
+    if not email or not code or not new_password:
+        return jsonify({"success": False, "error": "请填写所有字段"})
+    result = get_user_manager().reset_password(email, code, new_password)
+    return jsonify(result)
 
 
 # ═══════════════════════════════════════════

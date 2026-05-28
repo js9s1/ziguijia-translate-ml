@@ -24,10 +24,12 @@
         processing: '处理中',
         completed: '已完成',
         failed: '已失败',
+        cancelled: '已取消',
+        deleted: '已删除',
       };
 
       var html =
-        '<table class="jobs-table"><thead><tr><th>类型</th><th>访问码</th><th>状态</th><th>时间(UTC)</th><th>操作</th></tr></thead><tbody>';
+        '<table class="jobs-table"><thead><tr><th>类型</th><th>访问码</th><th>状态</th><th>更新时间(UTC)</th><th>操作</th></tr></thead><tbody>';
 
       data.jobs.forEach(function (job) {
         var statusLabel = labels[job.status] || job.status;
@@ -37,7 +39,7 @@
           job.access_code +
           '" class="btn-view">查看</a> ';
 
-        if (job.status === 'failed' || job.status === 'completed') {
+        if (job.status === 'failed' || job.status === 'completed' || job.status === 'cancelled' || job.status === 'deleted') {
           actions +=
             '<button class="btn-delete" data-code="' +
             job.access_code +
@@ -59,7 +61,7 @@
           '">' +
           statusLabel +
           '</span></td><td style="font-size:0.9em;color:#666;">' +
-          (job.created_at || '') +
+          (job.status_changed_at || job.created_at || '') +
           '</td><td style="white-space:nowrap;">' +
           actions +
           '</td></tr>';

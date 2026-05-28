@@ -57,19 +57,24 @@ _TYPE_MAP = {
     "_run_video_auto_job": "自动翻译视频",
     "_run_audio_file_job": "音频文件合成",
     "_run_audio_segmentation_job": "音频文件合成",
+    "_run_video_ocr_job": "OCR翻译视频",
+    "_run_video_ning_ocr_job": "宁视频OCR翻译",
+    "_run_ocr_only_job": "视频OCR提取字幕",
 }
 _STATUS_STYLE_MAP = {
     "pending": "yellow",
     "processing": "cyan bold",
     "completed": "green",
     "failed": "red bold",
+    "cancelled": "red bold",
     "deleted": "white dim",
 }
-_STATUS_LABEL_MAP = {
+_STS_LABEL_MAP = {
     "pending": "等待中",
     "processing": "处理中",
     "completed": "已完成",
     "failed": "已失败",
+    "cancelled": "已取消",
     "deleted": "已删除",
 }
 
@@ -98,7 +103,7 @@ class Job:
 
     @property
     def status_label(self) -> str:
-        return _STATUS_LABEL_MAP.get(self.status, self.status)
+        return _STS_LABEL_MAP.get(self.status, self.status)
 
 
 # ── DB helpers ────────────────────────────────────────────
@@ -210,7 +215,7 @@ def cancel_job(code: str) -> str:
             pass
     conn.execute(
         "UPDATE jobs SET status = ?, error = ?, status_changed_at = ? WHERE access_code = ?",
-        ("failed", "用户取消", time.strftime('%Y-%m-%d %H:%M:%S'), code),
+        ("cancelled", "用户取消", time.strftime('%Y-%m-%d %H:%M:%S'), code),
     )
     conn.commit()
     conn.close()
@@ -221,18 +226,20 @@ def delete_job(code: str) -> str:
     code = code.upper()
     conn = get_conn()
     job = conn.execute(
-        "SELECT output_dir FROM jobs WHERE access_code = ?", (code,)
+        "SELECT status FROM jobs WHERE access_code = ?", (code,)
     ).fetchone()
     if not job:
         conn.close()
         return f"任务 {code} 不存在"
-    output_dir = job["output_dir"]
-    conn.execute("DELETE FROM jobs WHERE access_code = ?", (code,))
+    # Soft delete: mark as deleted, consistent with the web server
+    now = time.strftime('%Y-%m-%d %H:%M:%S')
+    conn.execute(
+        "UPDATE jobs SET status = ?, error = ?, status_changed_at = ? WHERE access_code = ?",
+        ("deleted", "用户删除", now, code),
+    )
     conn.commit()
     conn.close()
-    if output_dir and os.path.isdir(output_dir):
-        shutil.rmtree(output_dir, ignore_errors=True)
-    return f"✅ 任务 {code} 已删除"
+    return f"✅ 任务 {code} 已删除（软删除）"
 
 
 LOG_CANDIDATES = ["job.log", "process.log", "output.log"]
@@ -310,11 +317,14 @@ class State:
         self._message_time: float = 0.0
         self.search_query: str = ""
 
-    def reload(self):
+    def reload(self, reset_page=True):
         self.all, self.total = load_jobs(search=self.search_query)
         self.pages = max(1, (self.total + PAGE_SIZE - 1) // PAGE_SIZE)
+        if reset_page:
+            self.page = 0
+        elif self.page >= self.pages:
+            self.page = self.pages - 1
         self.clamp_cursor()
-        self.page = 0
 
     @property
     def start(self) -> int:
@@ -1010,7 +1020,7 @@ def run_menu_screen(s: State, console: Console):
                 cancel_job(job.access_code)
                 s._message = f"✅ 任务 {job.access_code} 已取消"
                 s.menu_open = False
-                s.reload()
+                s.reload(reset_page=False)
                 return
 
             elif action == "delete":
@@ -1035,7 +1045,7 @@ def run_menu_screen(s: State, console: Console):
                         delete_job(job.access_code)
                         s._message = f"✅ 任务 {job.access_code} 已删除"
                         s.menu_open = False
-                        s.reload()
+                        s.reload(reset_page=False)
                         return
                     elif ch in ("n", "\x1b", "q"):
                         break
@@ -1108,7 +1118,7 @@ def run_menu_screen(s: State, console: Console):
                 cancel_job(job.access_code)
                 s._message = f"✅ 任务 {job.access_code} 已取消"
                 s.menu_open = False
-                s.reload()
+                s.reload(reset_page=False)
                 return
 
             elif action == "delete":
@@ -1134,7 +1144,7 @@ def run_menu_screen(s: State, console: Console):
                         delete_job(job.access_code)
                         s._message = f"✅ 任务 {job.access_code} 已删除"
                         s.menu_open = False
-                        s.reload()
+                        s.reload(reset_page=False)
                         return
                     elif ch in ("n", "\x1b", "q"):
                         break
@@ -1215,7 +1225,7 @@ def interactive(console: Console):
             if s.auto_refresh:
                 now = time.monotonic()
                 if now - last_auto_refresh >= AUTO_REFRESH_SEC:
-                    s.reload()
+                    s.reload(reset_page=False)
                     last_auto_refresh = now
                     console.clear()
                     console.print(Group(*render_all(s)))

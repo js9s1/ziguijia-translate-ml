@@ -50,47 +50,48 @@ def run_gen_audio_step(
     proc_log = open(log_path, "a")
     proc_pos = proc_log.tell()
 
-    process = subprocess.Popen(
-        [
-            PYTHON_BIN,
-            GEN_AUDIO_SCRIPT,
-            srt_path,
-            "--audio_prompt", audio_prompt,
-            "--output_dir", output_dir,
-            "--output_srt", output_srt,
-            "--output_wav", output_wav,
-            "--changed_json", changed_json,
-            "--temperature", str(temperature),
-            "--target_language", target_language,
-            "--cfg_weight", str(cfg_weight),
-            "--exaggeration", str(exaggeration),
-        ],
-        stdout=proc_log,
-        stderr=proc_log,
-        text=True,
-        env={
-            **os.environ,
-            "HSA_OVERRIDE_GFX_VERSION": "9.0.0",
-            "HSA_XNACK": "0",
-            "ROCBLAS_USE_HIPBLASLT": "0",
-        },
-    )
+    try:
+        process = subprocess.Popen(
+            [
+                PYTHON_BIN,
+                GEN_AUDIO_SCRIPT,
+                srt_path,
+                "--audio_prompt", audio_prompt,
+                "--output_dir", output_dir,
+                "--output_srt", output_srt,
+                "--output_wav", output_wav,
+                "--changed_json", changed_json,
+                "--temperature", str(temperature),
+                "--target_language", target_language,
+                "--cfg_weight", str(cfg_weight),
+                "--exaggeration", str(exaggeration),
+            ],
+            stdout=proc_log,
+            stderr=proc_log,
+            text=True,
+            env={
+                **os.environ,
+                "HSA_OVERRIDE_GFX_VERSION": "9.0.0",
+                "HSA_XNACK": "0",
+                "ROCBLAS_USE_HIPBLASLT": "0",
+            },
+        )
 
-    # Poll subprocess with periodic progress updates
-    from jobqueue import get_job_queue
-    start = time.monotonic()
-    while True:
-        try:
-            process.wait(timeout=30)
-            break
-        except subprocess.TimeoutExpired:
-            elapsed = int(time.monotonic() - start)
-            get_job_queue().update_job_progress(
-                access_code,
-                f"正在合成音频... ({elapsed // 60}分{elapsed % 60}秒)"
-            )
-
-    proc_log.close()
+        # Poll subprocess with periodic progress updates
+        from jobqueue import get_job_queue
+        start = time.monotonic()
+        while True:
+            try:
+                process.wait(timeout=30)
+                break
+            except subprocess.TimeoutExpired:
+                elapsed = int(time.monotonic() - start)
+                get_job_queue().update_job_progress(
+                    access_code,
+                    f"正在合成音频... ({elapsed // 60}分{elapsed % 60}秒)"
+                )
+    finally:
+        proc_log.close()
 
     # Read back only the output written by this subprocess invocation
     with open(log_path, "r") as f:
@@ -135,36 +136,37 @@ def run_gen_video_step(
     proc_log = open(log_path, "a")
     proc_pos = proc_log.tell()
 
-    process = subprocess.Popen(
-        [
-            PYTHON_BIN,
-            GEN_VIDEO_SCRIPT,
-            video_file,
-            srt_path,
-            adjusted_srt,
-            changed_json,
-            "--output", output_path,
-        ],
-        stdout=proc_log,
-        stderr=proc_log,
-        text=True,
-    )
+    try:
+        process = subprocess.Popen(
+            [
+                PYTHON_BIN,
+                GEN_VIDEO_SCRIPT,
+                video_file,
+                srt_path,
+                adjusted_srt,
+                changed_json,
+                "--output", output_path,
+            ],
+            stdout=proc_log,
+            stderr=proc_log,
+            text=True,
+        )
 
-    # Poll subprocess with periodic progress updates
-    from jobqueue import get_job_queue
-    start = time.monotonic()
-    while True:
-        try:
-            process.wait(timeout=30)
-            break
-        except subprocess.TimeoutExpired:
-            elapsed = int(time.monotonic() - start)
-            get_job_queue().update_job_progress(
-                access_code,
-                f"正在合成视频... ({elapsed // 60}分{elapsed % 60}秒)"
-            )
-
-    proc_log.close()
+        # Poll subprocess with periodic progress updates
+        from jobqueue import get_job_queue
+        start = time.monotonic()
+        while True:
+            try:
+                process.wait(timeout=30)
+                break
+            except subprocess.TimeoutExpired:
+                elapsed = int(time.monotonic() - start)
+                get_job_queue().update_job_progress(
+                    access_code,
+                    f"正在合成视频... ({elapsed // 60}分{elapsed % 60}秒)"
+                )
+    finally:
+        proc_log.close()
 
     # Read back only the output written by this subprocess invocation
     with open(log_path, "r") as f:

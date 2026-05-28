@@ -329,7 +329,7 @@
                 .then(data => {
                     editedSrtFiles = data.edited_srt_files || [];
 
-                    const langMap = { en: '🇬🇧 英文', zh: '🇨🇳 中文', ja: '🇯🇵 日语', ko: '🇰🇷 韩语', fr: '🇫🇷 法语', es: '🇪🇸 西班牙语', ru: '🇷🇺 俄语', ms: '🇲🇾 马来语', ar: '🇸🇦 阿拉伯语', da: '🇩🇰 丹麦语', de: '🇩🇪 德语', el: '🇬🇷 希腊语', fi: '🇫🇮 芬兰语', he: '🇮🇱 希伯来语', hi: '🇮🇳 印地语', it: '🇮🇹 意大利语', nl: '🇳🇱 荷兰语', no: '🇳🇴 挪威语', pl: '🇵🇱 波兰语', pt: '🇵🇹 葡萄牙语', sv: '🇸🇪 瑞典语', sw: '🇹🇿 斯瓦希里语', tr: '🇹🇷 土耳其语' };
+                    const langMap = { en: '🇬🇧 英文', zh: '🇨🇳 中文', ja: '🇯🇵 日语', ko: '🇰🇷 韩语', fr: '🇫🇷 法语', es: '🇪🇸 西班牙语', ru: '🇷🇺 俄语', ms: '🇲🇾 马来语', ar: '🇸🇦 阿拉伯语', da: '🇩🇰 丹麦语', de: '🇩🇪 德语', el: '🇬🇷 希腊语', fi: '🇫🇮 芬兰语', he: '🇮🇱 希伯来语', hi: '🇮🇳 印地语', it: '🇮🇹 意大利语', nl: '🇳🇱 荷兰语', no: '🇳🇴 挪威语', pl: '🇵🇱 波兰语', pt: '🇵🇹 葡萄牙语', sv: '🇸🇪 瑞典语', sw: '🇹🇿 斯瓦希里语', tr: '🇹🇷 土耳其语', th: '🇹🇭 泰语' };
                     const langEl = document.getElementById('targetLanguageBadge');
                     if (data.target_language && langMap[data.target_language]) {
                         langEl.textContent = langMap[data.target_language];
@@ -416,7 +416,7 @@
                     editedSrtFiles = data.edited_srt_files || [];
 
                     // ── Update language badge ──
-                    const langMap = { en: '🇬🇧 英文', zh: '🇨🇳 中文', ja: '🇯🇵 日语', ko: '🇰🇷 韩语', fr: '🇫🇷 法语', es: '🇪🇸 西班牙语', ru: '🇷🇺 俄语', ms: '🇲🇾 马来语', ar: '🇸🇦 阿拉伯语', da: '🇩🇰 丹麦语', de: '🇩🇪 德语', el: '🇬🇷 希腊语', fi: '🇫🇮 芬兰语', he: '🇮🇱 希伯来语', hi: '🇮🇳 印地语', it: '🇮🇹 意大利语', nl: '🇳🇱 荷兰语', no: '🇳🇴 挪威语', pl: '🇵🇱 波兰语', pt: '🇵🇹 葡萄牙语', sv: '🇸🇪 瑞典语', sw: '🇹🇿 斯瓦希里语', tr: '🇹🇷 土耳其语' };
+                    const langMap = { en: '🇬🇧 英文', zh: '🇨🇳 中文', ja: '🇯🇵 日语', ko: '🇰🇷 韩语', fr: '🇫🇷 法语', es: '🇪🇸 西班牙语', ru: '🇷🇺 俄语', ms: '🇲🇾 马来语', ar: '🇸🇦 阿拉伯语', da: '🇩🇰 丹麦语', de: '🇩🇪 德语', el: '🇬🇷 希腊语', fi: '🇫🇮 芬兰语', he: '🇮🇱 希伯来语', hi: '🇮🇳 印地语', it: '🇮🇹 意大利语', nl: '🇳🇱 荷兰语', no: '🇳🇴 挪威语', pl: '🇵🇱 波兰语', pt: '🇵🇹 葡萄牙语', sv: '🇸🇪 瑞典语', sw: '🇹🇿 斯瓦希里语', tr: '🇹🇷 土耳其语', th: '🇹🇭 泰语' };
                     const langEl = document.getElementById('targetLanguageBadge');
                     if (data.target_language && langMap[data.target_language]) {
                         langEl.textContent = langMap[data.target_language];
