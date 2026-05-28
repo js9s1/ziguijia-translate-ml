@@ -57,11 +57,8 @@ def process_video_custom(video_file, srt_file, temperature: float, user_id: int 
     output_dir = os.path.join(VIDEO_DIR, access_code)
     os.makedirs(output_dir, exist_ok=True)
 
-    # Save with a UUID prefix so the filename can never collide with
-    # gen_video.py's output filenames (output_modified.mp4 / output_final.mp4).
-    video_ext = os.path.splitext(video_file.filename)[1] or ".mp4"
-    safe_name = f"source_{uuid.uuid4().hex[:12]}{video_ext}"
-    video_path = os.path.join(output_dir, safe_name)
+    # Save under original filename (unique per access_code output_dir)
+    video_path = os.path.join(output_dir, video_file.filename)
     video_file.save(video_path)
 
     srt_path = os.path.join(output_dir, srt_file.filename)
@@ -220,11 +217,8 @@ def process_video_auto(video_file, temperature: float, user_id: int = None, targ
     output_dir = os.path.join(VIDEO_DIR, access_code)
     os.makedirs(output_dir, exist_ok=True)
 
-    # Save with a UUID prefix so the filename can never collide with
-    # gen_video.py's output filenames (output_modified.mp4 / output_final.mp4).
-    video_ext = os.path.splitext(video_file.filename)[1] or ".mp4"
-    safe_name = f"source_{uuid.uuid4().hex[:12]}{video_ext}"
-    video_path = os.path.join(output_dir, safe_name)
+    # Save under original filename (unique per access_code output_dir)
+    video_path = os.path.join(output_dir, video_file.filename)
     video_file.save(video_path)
 
     job_data = {
@@ -370,11 +364,8 @@ def process_video_ocr(video_file, temperature: float, user_id: int = None, targe
     output_dir = os.path.join(VIDEO_DIR, access_code)
     os.makedirs(output_dir, exist_ok=True)
 
-    # Save with a UUID prefix so the filename can never collide with
-    # gen_video.py's output filenames (output_modified.mp4 / output_final.mp4).
-    video_ext = os.path.splitext(video_file.filename)[1] or ".mp4"
-    safe_name = f"source_{uuid.uuid4().hex[:12]}{video_ext}"
-    video_path = os.path.join(output_dir, safe_name)
+    # Save under original filename (unique per access_code output_dir)
+    video_path = os.path.join(output_dir, video_file.filename)
     video_file.save(video_path)
 
     job_data = {
