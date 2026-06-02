@@ -23,11 +23,6 @@
         <h1>从SRT生成音轨</h1>
     <form action="/srt/process" method="POST" id="srtForm" enctype="multipart/form-data">
         <div class="form-row">
-            <label for="srt_file">上传SRT字幕文件</label>
-            <input type="file" id="srt_file" name="srt_file" accept=".srt" required>
-        </div>
-
-        <div class="form-row">
             <label for="target_language">目标语言</label>
             <select id="target_language" name="target_language">
                 <option value="ar">🇸🇦 阿拉伯语 (ar)</option>
@@ -55,6 +50,11 @@
                 <option value="zh">🇨🇳 中文 (zh)</option>
             </select>
         </div>
+        <div class="form-row">
+            <label for="srt_file">上传SRT字幕文件</label>
+            <input type="file" id="srt_file" name="srt_file" accept=".srt" required>
+        </div>
+
 
         <div class="form-row">
             <label for="temperature">温度</label>

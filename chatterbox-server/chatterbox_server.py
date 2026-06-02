@@ -1,15 +1,22 @@
-from flask import Flask, request, send_file, jsonify, send_from_directory, session, abort
+from flask import Flask, request, send_file, jsonify, send_from_directory, session, abort, Response, g
 from functools import wraps
+import json
 import logging
 import os
+import secrets
 import sys
 import time
+import uuid
 from collections import defaultdict
 
 import importlib
 from jobqueue import get_job_queue
 from auth import get_user_manager
 from config import AUDIO_TRACKS_DIR, VIDEO_DIR
+from redis_util import (
+    check_rate_limit, InMemoryRateLimiter, is_available as redis_available,
+    cache_get, cache_set, JOB_STATUS_CHANNEL, get_redis, get_session_redis,
+)
 
 # ── Deferred imports ──────────────────────────────────────
 # All processing modules are imported lazily to avoid loading
@@ -28,42 +35,55 @@ def _lazy(module_name: str, attr: str):
         _MODULES[import_key] = getattr(mod, attr)
     return _MODULES[import_key]
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stderr)]
-)
-logger = logging.getLogger(__name__)
+# ── Structured logging ─────────────────────────────────────
+# Handler/filter setup and JSONFormatter live in gunicorn_config.py post_fork.
+
+logger = logging.getLogger("chatterbox_server")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 # ── Rate limiter ──────────────────────────────────────────
-_rate_limit_store: dict[str, list[float]] = defaultdict(list)
 RATE_LIMIT_WINDOW = 60  # seconds
 RATE_LIMIT_MAX = 10     # max requests per window per IP
+EMAIL_RATE_LIMIT_WINDOW = 3600  # 1 hour
+EMAIL_RATE_LIMIT_MAX = 3        # max 3 reset requests per email per hour
+
+# In-memory fallback when Redis is unavailable
+_ip_limiter = InMemoryRateLimiter(RATE_LIMIT_MAX, RATE_LIMIT_WINDOW)
+_email_limiter = InMemoryRateLimiter(EMAIL_RATE_LIMIT_MAX, EMAIL_RATE_LIMIT_WINDOW)
 
 
 def rate_limit(f):
-    """Simple in-memory rate limiter: max RATE_LIMIT_MAX requests per RATE_LIMIT_WINDOW per IP."""
+    """Rate limiter: uses Redis when available, in-memory fallback otherwise."""
     @wraps(f)
     def decorated(*args, **kwargs):
         ip = request.remote_addr or "unknown"
-        now = time.time()
-        window_start = now - RATE_LIMIT_WINDOW
-        timestamps = _rate_limit_store[ip]
-        # Prune old entries; delete the key entirely when empty to avoid unbounded growth
-        pruned = [t for t in timestamps if t > window_start]
-        if pruned:
-            _rate_limit_store[ip] = pruned
-        else:
-            del _rate_limit_store[ip]
-        if len(pruned) >= RATE_LIMIT_MAX:
+        key = f"rl:ip:{ip}"
+        if not check_rate_limit(key, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW):
+            # Redis allowed it — but if Redis is down, check in-memory
+            if redis_available():
+                logger.warning(f"Rate limit exceeded for IP {ip}")
+                return jsonify({"error": "请求过于频繁，请稍后再试"}), 429
+        if not redis_available() and not _ip_limiter.check(ip):
             logger.warning(f"Rate limit exceeded for IP {ip}")
             return jsonify({"error": "请求过于频繁，请稍后再试"}), 429
-        _rate_limit_store[ip] = pruned + [now]
         return f(*args, **kwargs)
     return decorated
+
+
+def email_rate_limit(email: str) -> tuple[bool, str]:
+    """Check per-email rate limit for password reset. Returns (allowed, error_message)."""
+    key = f"rl:email:{email}"
+    if check_rate_limit(key, EMAIL_RATE_LIMIT_MAX, EMAIL_RATE_LIMIT_WINDOW):
+        return True, ""
+    if redis_available():
+        logger.warning(f"Email rate limit exceeded for {email}")
+        return False, "该邮箱的密码重置请求过于频繁，请稍后再试"
+    if not _email_limiter.check(email):
+        logger.warning(f"Email rate limit exceeded for {email}")
+        return False, "该邮箱的密码重置请求过于频繁，请稍后再试"
+    return True, ""
 
 
 def _get_secret_key() -> str:
@@ -87,11 +107,107 @@ app.secret_key = _get_secret_key()
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.environ.get("FLASK_ENV") == "production",
     PERMANENT_SESSION_LIFETIME=86400 * 7,
 )
 
+# Use Redis for server-side sessions when available; otherwise Flask's
+# default signed-cookie session (no extra config needed).
+if redis_available():
+    from flask_session import Session
+    app.config["SESSION_TYPE"] = "redis"
+    app.config["SESSION_REDIS"] = get_session_redis()
+    app.config["SESSION_KEY_PREFIX"] = "session:"
+    Session(app)
+
+
+# ── Request lifecycle logging ──────────────────────────────
+
+@app.before_request
+def _assign_request_id():
+    g.request_id = uuid.uuid4().hex[:12]
+    g.request_start = time.monotonic()
+    g.user_id = session.get("user_id")
+    logger.info(
+        "→ %s %s",
+        request.method,
+        request.path,
+        extra={"method": request.method, "endpoint": request.path, "ip": request.remote_addr},
+    )
+
+
+@app.after_request
+def _log_response(response):
+    duration_ms = round((time.monotonic() - getattr(g, "request_start", 0)) * 1000)
+    # Skip logging for 500s — the errorhandler already logged with full traceback
+    if response.status_code >= 500:
+        response.headers["X-Request-Id"] = getattr(g, "request_id", "-")
+        return response
+    logger.info(
+        "← %s %s %d (%dms)",
+        request.method,
+        request.path,
+        response.status_code,
+        duration_ms,
+        extra={
+            "method": request.method,
+            "endpoint": request.path,
+            "status": response.status_code,
+            "duration_ms": duration_ms,
+            "ip": request.remote_addr,
+        },
+    )
+    response.headers["X-Request-Id"] = getattr(g, "request_id", "-")
+    return response
+
+
+@app.errorhandler(500)
+def _log_internal_error(e):
+    logger.error(
+        "Unhandled 500 on %s %s",
+        request.method,
+        request.path,
+        exc_info=True,
+        extra={
+            "method": request.method,
+            "endpoint": request.path,
+            "status": 500,
+            "ip": request.remote_addr,
+            "error": str(e),
+        },
+    )
+    return jsonify({"error": "Internal server error"}), 500
+
 
 HTML_DIR = os.path.join(BASE_DIR, "html")
+
+
+# ── CSRF protection ───────────────────────────────────────
+
+def _generate_csrf_token() -> str:
+    """Return a random CSRF token, creating one if the session has none."""
+    if "_csrf_token" not in session:
+        session["_csrf_token"] = secrets.token_hex(32)
+    return session["_csrf_token"]
+
+
+def csrf_required(f):
+    """Decorator: require a valid CSRF token on state-changing POST requests.
+
+    The token must be supplied via the ``X-CSRF-Token`` header.
+    Auth-related endpoints (/auth/*) are exempt because they establish
+    the session in the first place.
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get("X-CSRF-Token", "")
+        expected = session.get("_csrf_token", "")
+        if not expected or not token or not secrets.compare_digest(token, expected):
+            logger.warning(f"CSRF token mismatch from {request.remote_addr}")
+            return jsonify({"error": "CSRF token missing or invalid"}), 403
+        return f(*args, **kwargs)
+    return decorated
+
 
 # ── Shared parameter parsing ──────────────────────────
 
@@ -102,15 +218,29 @@ _DEFAULT_PARAMS = {
     "exaggeration": 0.5,
 }
 
+MAX_TEXT_LENGTH = 500
+
+
+def _parse_float(source: dict, key: str, default: float) -> float:
+    """Parse a float parameter from *source*, raising 400 on invalid input."""
+    raw = source.get(key, default)
+    try:
+        return float(raw)
+    except (ValueError, TypeError):
+        raise ValueError(f"Invalid {key}: {raw!r}")
+
 
 def _parse_job_params(source: dict) -> dict:
     """Parse common job parameters from request.form or JSON body."""
-    return {
-        "temperature": float(source.get("temperature", _DEFAULT_PARAMS["temperature"])),
-        "target_language": source.get("target_language", _DEFAULT_PARAMS["target_language"]),
-        "cfg_weight": float(source.get("cfg_weight", _DEFAULT_PARAMS["cfg_weight"])),
-        "exaggeration": float(source.get("exaggeration", _DEFAULT_PARAMS["exaggeration"])),
-    }
+    try:
+        return {
+            "temperature": _parse_float(source, "temperature", _DEFAULT_PARAMS["temperature"]),
+            "target_language": source.get("target_language", _DEFAULT_PARAMS["target_language"]),
+            "cfg_weight": _parse_float(source, "cfg_weight", _DEFAULT_PARAMS["cfg_weight"]),
+            "exaggeration": _parse_float(source, "exaggeration", _DEFAULT_PARAMS["exaggeration"]),
+        }
+    except ValueError as e:
+        abort(400, description=str(e))
 
 
 def login_required(f):
@@ -157,6 +287,8 @@ def audio_process():
             text = data.get("text", "")
             if not text:
                 return jsonify({"error": "Missing text"}), 400
+            if len(text) > MAX_TEXT_LENGTH:
+                return jsonify({"error": f"文字长度超过限制（最多{MAX_TEXT_LENGTH}字符）"}), 400
             process_tts = _lazy("tts_job", "process_tts")
             params = _parse_job_params(data)
             result = process_tts(text, data.get("filename", "output.wav"), session["user_id"],
@@ -178,6 +310,8 @@ def tts_process():
         text = data.get("text", "")
         if not text:
             return jsonify({"error": "Missing text"}), 400
+        if len(text) > MAX_TEXT_LENGTH:
+            return jsonify({"error": f"文字长度超过限制（最多{MAX_TEXT_LENGTH}字符）"}), 400
         process_tts = _lazy("tts_job", "process_tts")
         params = _parse_job_params(data)
         result = process_tts(text, data.get("filename", "output.wav"), session["user_id"],
@@ -199,28 +333,59 @@ def tts_status(access_code):
     return jsonify(status)
 
 
-@app.route("/tts/stream/<access_code>", methods=["GET"])
-def tts_stream(access_code):
-    import glob
-    status = get_job_queue().get_status(access_code)
-    if not status:
-        return jsonify({"error": "Job not found"}), 404
-    output_dir = status.get("output_dir")
-    if not output_dir:
-        return jsonify({"error": "No output directory"}), 404
-    wav_files = glob.glob(os.path.join(output_dir, "*.wav"))
-    if not wav_files:
-        return jsonify({"error": "No audio file found"}), 404
-    return send_file(wav_files[0], mimetype="audio/wav")
+@app.route("/tts/status-stream/<access_code>", methods=["GET"])
+def tts_status_stream(access_code):
+    """SSE endpoint: pushes job status updates until the job finishes."""
+    def generate():
+        r = get_redis()
+        if r is None:
+            # No Redis — fall back to single-poll
+            status = get_job_queue().get_status(access_code)
+            yield f"data: {json.dumps(status or {'error': 'Job not found'})}\n\n"
+            return
+
+        pubsub = r.pubsub()
+        pubsub.subscribe(f"job:{access_code}")
+        terminal = {"completed", "failed", "cancelled", "deleted"}
+
+        # Send current status immediately
+        status = get_job_queue().get_status(access_code)
+        if status:
+            yield f"data: {json.dumps(status)}\n\n"
+            if status.get("status") in terminal:
+                pubsub.unsubscribe()
+                return
+
+        # Listen for updates
+        for message in pubsub.listen():
+            if message["type"] != "message":
+                continue
+            try:
+                data = json.loads(message["data"])
+                yield f"data: {json.dumps(data)}\n\n"
+                if data.get("status") in terminal:
+                    break
+            except (json.JSONDecodeError, TypeError):
+                pass
+        pubsub.unsubscribe()
+
+    return Response(generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.route("/health", methods=["GET"])
 def health_check():
-    """Health check endpoint"""
-    import torch, os
+    """Health check endpoint (GPU status cached for 60s in Redis)."""
+    import torch
+    cached = cache_get("health:gpu")
+    if cached:
+        cuda_ok = cached == "1"
+    else:
+        cuda_ok = torch.cuda.is_available()
+        cache_set("health:gpu", "1" if cuda_ok else "0", ttl=60)
     return jsonify({
         "status": "healthy", "message": "Server is running",
-        "cuda": torch.cuda.is_available(),
+        "cuda": cuda_ok,
         "hsa_override": os.environ.get("HSA_OVERRIDE_GFX_VERSION", "not set"),
     })
 
@@ -333,6 +498,7 @@ def files_download():
 
 @app.route("/files/delete", methods=["POST"])
 @login_required
+@csrf_required
 def files_delete():
     """Delete a file (only within allowed directories)."""
     try:
@@ -370,6 +536,7 @@ _FILENAME_TO_CHECKPOINT_STEP = {
 
 @app.route("/files/save-srt", methods=["POST"])
 @login_required
+@csrf_required
 def files_save_srt():
     """Save edited SRT content and invalidate downstream checkpoints.
 
@@ -426,6 +593,7 @@ def files_save_srt():
 
 @app.route("/files/srt-resubmit/<access_code>", methods=["POST"])
 @login_required
+@csrf_required
 def files_srt_resubmit(access_code):
     """Resubmit a job after editing a checkpoint-level SRT file.
 
@@ -721,6 +889,12 @@ def auth_me():
     })
 
 
+@app.route("/auth/csrf-token", methods=["GET"])
+def auth_csrf_token():
+    """Return a CSRF token for the current session."""
+    return jsonify({"csrf_token": _generate_csrf_token()})
+
+
 @app.route("/auth/reset-password", methods=["GET", "POST"])
 @rate_limit
 def auth_reset_password():
@@ -732,6 +906,11 @@ def auth_reset_password():
     email = data.get("email", "").strip().lower()
     if not email:
         return jsonify({"success": False, "error": "请输入邮箱"})
+    
+    allowed, error_msg = email_rate_limit(email)
+    if not allowed:
+        return jsonify({"success": False, "error": error_msg})
+    
     result = get_user_manager().request_reset(email)
     return jsonify(result)
 
@@ -769,6 +948,7 @@ def api_my_jobs():
 
 @app.route("/api/jobs/<access_code>/cancel", methods=["POST"])
 @login_required
+@csrf_required
 def api_job_cancel(access_code):
     result = get_job_queue().cancel_job(access_code)
     return jsonify(result)
@@ -776,6 +956,7 @@ def api_job_cancel(access_code):
 
 @app.route("/api/jobs/<access_code>/delete", methods=["POST"])
 @login_required
+@csrf_required
 def api_job_delete(access_code):
     result = get_job_queue().delete_job(access_code)
     return jsonify(result)

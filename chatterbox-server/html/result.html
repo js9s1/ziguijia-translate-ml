@@ -637,7 +637,7 @@
         function deleteFile(outputDir, filename) {
             if (!confirm('确定要删除文件 ' + filename + ' 吗？')) return;
 
-            fetch('/files/delete', {
+            fetchWithCsrf('/files/delete', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ path: outputDir + '/' + filename, access_code: accessCode })
@@ -697,7 +697,7 @@
             statusEl.textContent = '';
             statusEl.className = 'editor-status';
 
-            fetch('/files/save-srt', {
+            fetchWithCsrf('/files/save-srt', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -749,7 +749,7 @@
             if (!accessCode) return;
             if (!confirm('确定要使用编辑后的文件重新运行任务吗？后续步骤将会重新执行。')) return;
 
-            fetch('/files/srt-resubmit/' + accessCode, { method: 'POST' })
+            fetchWithCsrf('/files/srt-resubmit/' + accessCode, { method: 'POST' })
                 .then(async response => {
                     const text = await response.text();
                     let data;

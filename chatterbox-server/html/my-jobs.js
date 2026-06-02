@@ -78,7 +78,7 @@
           var self = this;
           self.disabled = true;
           self.textContent = '取消中...';
-          fetch('/api/jobs/' + code + '/cancel', { method: 'POST' })
+          fetchWithCsrf('/api/jobs/' + code + '/cancel', { method: 'POST' })
             .then(function (r) {
               return r.json();
             })
@@ -107,7 +107,7 @@
           var self = this;
           self.disabled = true;
           self.textContent = '删除中...';
-          fetch('/api/jobs/' + code + '/delete', { method: 'POST' })
+          fetchWithCsrf('/api/jobs/' + code + '/delete', { method: 'POST' })
             .then(function (r) {
               return r.json();
             })

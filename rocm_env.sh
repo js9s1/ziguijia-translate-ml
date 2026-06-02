@@ -12,3 +12,7 @@
 export HSA_OVERRIDE_GFX_VERSION=9.0.0
 export HSA_XNACK=0
 export ROCBLAS_USE_HIPBLASLT=0
+
+# libhipblaslt.so.1 was missing from /opt/rocm/lib (package files removed).
+# Restored from pacman cache: /var/cache/pacman/pkg/hipblaslt-7.2.2-1-x86_64.pkg.tar.zst
+export LD_LIBRARY_PATH="${HOME}/.local/lib/rocm:/opt/rocm/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

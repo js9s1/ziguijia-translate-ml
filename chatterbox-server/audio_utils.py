@@ -10,6 +10,7 @@ import torchaudio as ta
 
 from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 from config import AUDIO_PROMPT_PATH
+from singleton import singleton
 
 
 def _check_gpu_healthy() -> bool:
@@ -86,52 +87,45 @@ def _choose_device(preferred: str = "cuda") -> str:
 # Example: export HF_TOKEN="your_token_here"
 
 
+# Shared model state — lives at module level so it persists across
+# singleton instances and works with the @singleton decorator.
+_model = None
+_default_audio_prompt_path = AUDIO_PROMPT_PATH
+
+
+@singleton
 class NingAudio:
-    _instance = None
-    _lock = threading.Lock()
-    _model = None
-    _default_audio_prompt_path = AUDIO_PROMPT_PATH
-
-    def __new__(cls, audio_prompt: Optional[str] = None):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
-        return cls._instance
-
     def __init__(self, audio_prompt: Optional[str] = None):
-        if self._initialized:
-            return
-        self._initialized = True
-        self.audio_prompt_path = audio_prompt if audio_prompt else NingAudio._default_audio_prompt_path
+        global _default_audio_prompt_path
+        self.audio_prompt_path = audio_prompt if audio_prompt else _default_audio_prompt_path
         self.model = None
         self.sample_rate = None
 
     def get_model(self, device: str = "cuda") -> ChatterboxMultilingualTTS:
-        if NingAudio._model is not None:
+        global _model
+        if _model is not None:
             # Already loaded; if on CPU but GPU has freed up, reload to GPU
             if self.model and self.model.device == "cpu" and _choose_device("cuda") == "cuda":
                 print("GPU memory available, reloading model to GPU")
-                NingAudio._model = None
+                _model = None
                 torch.cuda.empty_cache()
-        if NingAudio._model is None:
+        if _model is None:
             import warnings
             warnings.filterwarnings("ignore")
             # Use _choose_device for all cases — it checks GPU health, model
             # compatibility (known-problem iGPUs), and free memory.
             actual_device = _choose_device(device)
             try:
-                NingAudio._model = ChatterboxMultilingualTTS.from_pretrained(device=actual_device)
+                _model = ChatterboxMultilingualTTS.from_pretrained(device=actual_device)
             except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
                 if actual_device == "cuda":
                     print(f"CUDA OOM ({e}), falling back to CPU")
                     torch.cuda.empty_cache()
-                    NingAudio._model = ChatterboxMultilingualTTS.from_pretrained(device="cpu")
+                    _model = ChatterboxMultilingualTTS.from_pretrained(device="cpu")
                 else:
                     raise
-            NingAudio._model.prepare_conditionals(self.audio_prompt_path)
-        self.model = NingAudio._model
+            _model.prepare_conditionals(self.audio_prompt_path)
+        self.model = _model
         self.sample_rate = self.model.sr
         return self.model
 

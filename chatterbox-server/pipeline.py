@@ -47,10 +47,9 @@ def run_gen_audio_step(
     log_path = os.path.join(output_dir, "job.log")
     job_log(access_code, output_dir, f"--- gen_audio ---")
 
-    proc_log = open(log_path, "a")
-    proc_pos = proc_log.tell()
+    with open(log_path, "a") as proc_log:
+        proc_pos = proc_log.tell()
 
-    try:
         process = subprocess.Popen(
             [
                 PYTHON_BIN,
@@ -90,8 +89,6 @@ def run_gen_audio_step(
                     access_code,
                     f"正在合成音频... ({elapsed // 60}分{elapsed % 60}秒)"
                 )
-    finally:
-        proc_log.close()
 
     # Read back only the output written by this subprocess invocation
     with open(log_path, "r") as f:
@@ -133,10 +130,9 @@ def run_gen_video_step(
     log_path = os.path.join(output_dir, "job.log")
     job_log(access_code, output_dir, f"--- gen_video {os.path.basename(output_path)} ---")
 
-    proc_log = open(log_path, "a")
-    proc_pos = proc_log.tell()
+    with open(log_path, "a") as proc_log:
+        proc_pos = proc_log.tell()
 
-    try:
         process = subprocess.Popen(
             [
                 PYTHON_BIN,
@@ -165,8 +161,6 @@ def run_gen_video_step(
                     access_code,
                     f"正在合成视频... ({elapsed // 60}分{elapsed % 60}秒)"
                 )
-    finally:
-        proc_log.close()
 
     # Read back only the output written by this subprocess invocation
     with open(log_path, "r") as f:

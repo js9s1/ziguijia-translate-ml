@@ -1,13 +1,15 @@
 import logging
 import os
-import random
+import secrets
 import smtplib
-import sqlite3
 import string
 import threading
 import time
 from email.mime.text import MIMEText
 
+from config import SMTP_FROM, SMTP_HOST, SMTP_PASS, SMTP_PORT, SMTP_USER
+from db_schema import init_users_schema, ConnectionManager
+from singleton import singleton
 from werkzeug.security import check_password_hash, generate_password_hash
 
 logger = logging.getLogger(__name__)
@@ -15,66 +17,19 @@ logger = logging.getLogger(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(BASE_DIR, "users.db")
 
-SMTP_HOST = os.environ.get("SMTP_HOST", "")
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
-SMTP_USER = os.environ.get("SMTP_USER", "")
-SMTP_PASS = os.environ.get("SMTP_PASS", "")
-SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USER)
 
-
+@singleton
 class UserManager:
-    _instance = None
-    _lock = threading.Lock()
-
-    def __new__(cls):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
-        return cls._instance
-
     def __init__(self):
-        if self._initialized:
-            return
-        self._initialized = True
-        self._local = threading.local()
+        self._conn = ConnectionManager(DB_FILE)
         self._init_db()
 
     def _get_conn(self):
-        if not hasattr(self._local, "conn") or self._local.conn is None:
-            self._local.conn = sqlite3.connect(DB_FILE)
-            self._local.conn.execute("PRAGMA journal_mode=WAL")
-            self._local.conn.execute("PRAGMA busy_timeout=5000")
-            self._local.conn.row_factory = sqlite3.Row
-        return self._local.conn
+        return self._conn.get()
 
     def _init_db(self):
         conn = self._get_conn()
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                email TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                verified INTEGER DEFAULT 0,
-                verification_code TEXT,
-                reset_code TEXT,
-                reset_code_expires REAL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        # Add reset_code / reset_code_expires columns if missing on existing DB
-        try:
-            conn.execute("ALTER TABLE users ADD COLUMN reset_code TEXT")
-        except sqlite3.OperationalError as e:
-            if "duplicate column name" not in str(e).lower():
-                raise
-        try:
-            conn.execute("ALTER TABLE users ADD COLUMN reset_code_expires REAL")
-        except sqlite3.OperationalError as e:
-            if "duplicate column name" not in str(e).lower():
-                raise
-        conn.commit()
+        init_users_schema(conn)
 
     def register(self, email: str, password: str) -> dict:
         conn = self._get_conn()
@@ -85,7 +40,7 @@ class UserManager:
             return {"success": False, "error": "该邮箱已被注册"}
 
         password_hash = generate_password_hash(password)
-        code = "".join(random.choices(string.digits, k=6))
+        code = "".join(secrets.choice(string.digits) for _ in range(6))
         conn.execute(
             "INSERT INTO users (email, password_hash, verification_code) VALUES (?, ?, ?)",
             (email, password_hash, code),
@@ -95,8 +50,7 @@ class UserManager:
         sent = self._send_verification_email(email, code)
         result = {"success": True, "message": "注册成功，请查收验证邮件"}
         if not sent:
-            result["message"] = "注册成功（邮件发送失败）"
-            result["code"] = code
+            result["message"] = "注册成功（邮件发送失败，请联系管理员）"
         return result
 
     def verify(self, email: str, code: str) -> dict:
@@ -123,6 +77,8 @@ class UserManager:
             "SELECT * FROM users WHERE email = ?", (email,)
         ).fetchone()
         if not user:
+            # Hash against a dummy string to equalize timing with valid users
+            check_password_hash("pbkdf2:sha256:600000$dummy$dummy", password)
             return {"success": False, "error": "邮箱或密码错误"}
         if not check_password_hash(user["password_hash"], password):
             return {"success": False, "error": "邮箱或密码错误"}
@@ -169,7 +125,7 @@ class UserManager:
             return {"success": False, "error": "用户不存在"}
         if user["verified"]:
             return {"success": True, "message": "邮箱已验证"}
-        code = "".join(random.choices(string.digits, k=6))
+        code = "".join(secrets.choice(string.digits) for _ in range(6))
         conn.execute(
             "UPDATE users SET verification_code = ? WHERE email = ?",
             (code, email),
@@ -178,8 +134,7 @@ class UserManager:
         sent = self._send_verification_email(email, code)
         result = {"success": True, "message": "验证码已重新发送"}
         if not sent:
-            result["message"] = "邮件发送失败"
-            result["code"] = code
+            result["message"] = "邮件发送失败，请联系管理员"
         return result
 
     def request_reset(self, email: str) -> dict:
@@ -191,7 +146,7 @@ class UserManager:
         if not user:
             # Don't reveal whether the email exists
             return {"success": True, "message": "如果该邮箱已注册，重置密码的邮件已发送"}
-        code = "".join(random.choices(string.digits, k=6))
+        code = "".join(secrets.choice(string.digits) for _ in range(6))
         expires = time.time() + 1800  # 30 minutes
         conn.execute(
             "UPDATE users SET reset_code = ?, reset_code_expires = ? WHERE email = ?",
@@ -199,9 +154,9 @@ class UserManager:
         )
         conn.commit()
         sent = self._send_reset_email(email, code)
-        if sent:
-            return {"success": True, "message": "重置密码的邮件已发送，请查收"}
-        return {"success": True, "message": "重置密码的邮件已发送，请查收", "code": code}
+        if not sent:
+            logger.warning(f"Failed to send reset email to {email}")
+        return {"success": True, "message": "重置密码的邮件已发送，请查收"}
 
     def reset_password(self, email: str, code: str, new_password: str) -> dict:
         """Verify reset code and update password."""
@@ -213,7 +168,7 @@ class UserManager:
             return {"success": False, "error": "链接无效或已过期"}
         if not user["reset_code"] or not user["reset_code_expires"]:
             return {"success": False, "error": "未请求重置密码"}
-        if time.time() > user["reset_code_expires"]:
+        if time.time() > float(user["reset_code_expires"]):
             return {"success": False, "error": "验证码已过期，请重新请求"}
         if user["reset_code"] != code:
             return {"success": False, "error": "验证码错误"}
@@ -231,6 +186,7 @@ class UserManager:
     def _send_email(self, email: str, subject: str, body: str) -> bool:
         """Send an email via SMTP. Returns True on success, False otherwise."""
         if not (SMTP_HOST and SMTP_USER):
+            logger.warning(f"SMTP not configured (SMTP_HOST={SMTP_HOST!r}, SMTP_USER={SMTP_USER!r}), cannot send email to {email}")
             return False
         try:
             msg = MIMEText(body, "plain", "utf-8")
@@ -267,7 +223,7 @@ class UserManager:
         if sent:
             logger.info(f"Reset email sent to {email}")
         else:
-            logger.info(f"Reset code for {email}: {code}")
+            logger.warning(f"Failed to send reset email to {email}")
         return sent
 
     def _send_verification_email(self, email: str, code: str) -> bool:
@@ -288,7 +244,7 @@ class UserManager:
         if sent:
             logger.info(f"Verification email sent to {email}")
         else:
-            logger.info(f"Verification code for {email}: {code}")
+            logger.warning(f"Failed to send verification email to {email}")
         return sent
 
 

@@ -8,6 +8,7 @@ import uuid
 from jobqueue import get_job_queue
 from log_utils import job_log
 from config import VIDEO_DIR, RAPID_VIDEOCR_PIPELINE_SCRIPT
+from video_util import open_proc_log
 
 
 def _detect_srt_language(srt_path: str) -> str:
@@ -95,20 +96,18 @@ def _run_ocr_only_job(job_data: dict):
 
     os.makedirs(output_dir, exist_ok=True)
     log_file = os.path.join(output_dir, "job.log")
-    proc_log = open(log_file, "a")
 
-    job_log(access_code, output_dir, "Running RapidVideOCR pipeline to extract subtitles...")
+    with open_proc_log(log_file) as (proc_log, _):
+        job_log(access_code, output_dir, "Running RapidVideOCR pipeline to extract subtitles...")
 
-    ocr_srt = os.path.join(output_dir, output_srt_name)
-    frames_dir = os.path.join(output_dir, "frames")
+        ocr_srt = os.path.join(output_dir, output_srt_name)
+        frames_dir = os.path.join(output_dir, "frames")
 
-    result = subprocess.run(
-        ["/usr/bin/bash", RAPID_VIDEOCR_PIPELINE_SCRIPT, "-i", video_file,
-         "-o", ocr_srt, "-d", frames_dir],
-        stdout=proc_log, stderr=proc_log, timeout=14400,
-    )
-
-    proc_log.close()
+        result = subprocess.run(
+            ["/usr/bin/bash", RAPID_VIDEOCR_PIPELINE_SCRIPT, "-i", video_file,
+             "-o", ocr_srt, "-d", frames_dir],
+            stdout=proc_log, stderr=proc_log, timeout=14400,
+        )
 
     if result.returncode != 0:
         raise RuntimeError(f"RapidVideOCR pipeline failed (exit {result.returncode})")

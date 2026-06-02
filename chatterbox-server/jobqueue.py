@@ -13,12 +13,20 @@ from typing import Callable, Optional
 
 import psutil
 
+from db_schema import init_jobs_schema, ConnectionManager
+from redis_util import publish_job_status
+from singleton import singleton
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(BASE_DIR, "jobs.db")
 
 logger = logging.getLogger(__name__)
 
-_now_str = lambda: time.strftime('%Y-%m-%d %H:%M:%S')
+def _now_str() -> str:
+    return time.strftime('%Y-%m-%d %H:%M:%S')
+
+# Worker thread heartbeat: if no pulse within this many seconds, consider it dead.
+_WORKER_HEARTBEAT_STALE = 30
 
 
 _JOB_HANDLERS: dict[str, Callable] = {}
@@ -102,39 +110,25 @@ def _job_process_wrapper(job_data: dict, run_func_name: str):
     run_func(job_data)
 
 
+@singleton
 class JobQueue:
-    _instance = None
-    _lock = threading.Lock()
-
-    def __new__(cls):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
-        return cls._instance
-
     def __init__(self):
-        if self._initialized:
-            return
-        self._initialized = True
-        self._local = threading.local()
+        self._conn = ConnectionManager(DB_FILE)
         self._queue = Queue()
         self._worker_thread = None
         self._cancel_event = threading.Event()
         self._current_access_code: str | None = None
         self._running = False
+        self._heartbeat_ts = 0.0
+        self._graceful_shutdown = False
+        self._shutdown_timeout = 60  # seconds to wait for current job
+        self._shutdown_done = threading.Event()  # set when worker finishes
         self._init_db()
         self._load_pending_jobs()
         self._ensure_worker()
 
     def _get_conn(self) -> sqlite3.Connection:
-        if not hasattr(self._local, "conn") or self._local.conn is None:
-            self._local.conn = sqlite3.connect(DB_FILE)
-            self._local.conn.execute("PRAGMA journal_mode=WAL")
-            self._local.conn.execute("PRAGMA busy_timeout=5000")
-            self._local.conn.row_factory = sqlite3.Row
-        return self._local.conn
+        return self._conn.get()
 
     def _load_pending_jobs(self):
         conn = self._get_conn()
@@ -229,77 +223,7 @@ class JobQueue:
 
     def _init_db(self):
         conn = self._get_conn()
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS jobs (
-                access_code TEXT PRIMARY KEY,
-                srt_path TEXT,
-                output_dir TEXT,
-                temperature REAL,
-                status TEXT,
-                error TEXT,
-                run_func_name TEXT,
-                video_number TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        for col in ("video_number", "video_file", "user_id", "text"):
-            try:
-                conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} TEXT")
-            except Exception:
-                pass
-        try:
-            conn.execute("ALTER TABLE jobs ADD COLUMN progress TEXT")
-        except Exception:
-            pass
-        try:
-            conn.execute("ALTER TABLE jobs ADD COLUMN blur TEXT DEFAULT 'yes'")
-        except Exception:
-            pass
-        try:
-            conn.execute("ALTER TABLE jobs ADD COLUMN target_language TEXT DEFAULT 'en'")
-        except Exception:
-            pass
-        try:
-            conn.execute("ALTER TABLE jobs ADD COLUMN cfg_weight REAL DEFAULT 0.5")
-        except Exception:
-            pass
-        try:
-            conn.execute("ALTER TABLE jobs ADD COLUMN exaggeration REAL DEFAULT 0.5")
-        except Exception:
-            pass
-        try:
-            conn.execute("ALTER TABLE jobs ADD COLUMN completed_at TIMESTAMP")
-        except Exception:
-            pass
-        try:
-            conn.execute("ALTER TABLE jobs ADD COLUMN failed_at TIMESTAMP")
-        except Exception:
-            pass
-        try:
-            conn.execute("ALTER TABLE jobs ADD COLUMN cancelled_at TIMESTAMP")
-        except Exception:
-            pass
-        try:
-            conn.execute("ALTER TABLE jobs ADD COLUMN status_changed_at TIMESTAMP")
-        except Exception:
-            pass
-        try:
-            conn.execute("ALTER TABLE jobs ADD COLUMN deleted_at TIMESTAMP")
-        except Exception:
-            pass
-        try:
-            conn.execute("ALTER TABLE jobs ADD COLUMN checkpoint TEXT DEFAULT ''")
-        except Exception:
-            pass
-        try:
-            conn.execute("ALTER TABLE jobs ADD COLUMN checkpoint_edited INTEGER DEFAULT 0")
-        except Exception:
-            pass
-        try:
-            conn.execute("ALTER TABLE jobs ADD COLUMN edited_srt_files TEXT DEFAULT ''")
-        except Exception:
-            pass
-        conn.commit()
+        init_jobs_schema(conn)
 
     def _generate_access_code(self) -> str:
         return str(uuid.uuid4())[:8].upper()
@@ -353,6 +277,8 @@ class JobQueue:
         conn.commit()
 
         self._queue.put(access_code)
+        # Ensure the worker thread is alive (it may have died silently)
+        self._ensure_worker()
 
         return access_code
 
@@ -362,13 +288,28 @@ class JobQueue:
         Used after ``os.fork()`` so the child process doesn't share
         the parent's connection — each process manages its own.
         """
-        if hasattr(self._local, "conn") and self._local.conn is not None:
-            self._local.conn.close()
-            self._local.conn = None
+        self._conn.close()
+
+    def _is_worker_healthy(self) -> bool:
+        """Return True if the worker thread is alive and has checked in recently."""
+        if self._worker_thread is None or not self._worker_thread.is_alive():
+            return False
+        elapsed = time.monotonic() - self._heartbeat_ts
+        if elapsed > _WORKER_HEARTBEAT_STALE:
+            logger.warning(
+                "Worker thread heartbeat stale (%.1fs since last pulse)", elapsed
+            )
+            return False
+        return True
 
     def _ensure_worker(self):
+        if self._worker_thread is not None and not self._is_worker_healthy():
+            logger.warning("Worker thread dead or stale — restarting")
+            self._running = False
+            self._worker_thread = None
         if not self._running:
             self._running = True
+            self._heartbeat_ts = time.monotonic()
             self._worker_thread = threading.Thread(
                 target=self._process_queue, daemon=True
             )
@@ -377,6 +318,13 @@ class JobQueue:
     def _process_queue(self):
         import queue as std_queue
         while self._running:
+            self._heartbeat_ts = time.monotonic()
+            if self._graceful_shutdown:
+                # Don't dequeue new jobs — let the current one finish, then exit
+                if self._current_access_code is not None:
+                    time.sleep(1)
+                    continue
+                break
             try:
                 access_code = self._queue.get(timeout=1)
             except std_queue.Empty:
@@ -387,8 +335,11 @@ class JobQueue:
             self._cancel_event.clear()
             try:
                 self._process_job(access_code)
+            except BaseException as e:
+                logger.exception(f"_process_job {access_code} raised {type(e).__name__}: {e}")
             finally:
                 self._current_access_code = None
+        self._shutdown_done.set()
 
     def _process_job(self, access_code: str):
         conn = self._get_conn()
@@ -428,6 +379,8 @@ class JobQueue:
             logger.info(f"Job {access_code} already claimed by another worker, skipping")
             return
 
+        publish_job_status(access_code, JobStatus.PROCESSING.value)
+
         job.pop("run_func_name", None)
         job.pop("created_at", None)
 
@@ -441,9 +394,26 @@ class JobQueue:
         proc.start()
 
         cancelled = False
+        shutdown_deadline = None
         try:
             while proc.is_alive():
                 proc.join(timeout=5)
+
+                # Check for graceful shutdown — set a deadline for the child
+                if self._graceful_shutdown and shutdown_deadline is None:
+                    shutdown_deadline = time.monotonic() + self._shutdown_timeout
+                    logger.info(
+                        "Job %s: graceful shutdown in progress — child has %ds to finish",
+                        access_code, self._shutdown_timeout,
+                    )
+
+                if shutdown_deadline is not None and time.monotonic() >= shutdown_deadline:
+                    logger.warning(
+                        "Job %s: shutdown deadline exceeded — terminating child",
+                        access_code,
+                    )
+                    cancelled = True
+
                 if self._cancel_event.is_set():
                     cancelled = True
                 else:
@@ -479,18 +449,36 @@ class JobQueue:
                     break
 
             if cancelled:
-                now = _now_str()
-                conn.execute(
-                    "UPDATE jobs SET status = ?, error = ?, cancelled_at = ?, status_changed_at = ? WHERE access_code = ?",
-                    (JobStatus.CANCELLED.value, "Cancelled by user", now, now, access_code)
-                )
-                logger.info(f"Job {access_code} was cancelled")
+                if shutdown_deadline is not None:
+                    # Graceful shutdown timeout — mark as PENDING so it resumes on restart
+                    now = _now_str()
+                    conn.execute(
+                        "UPDATE jobs SET status = ?, error = NULL, status_changed_at = ? WHERE access_code = ?",
+                        (JobStatus.PENDING.value, now, access_code)
+                    )
+                    conn.commit()
+                    # Re-queue so it's picked up on next startup
+                    self._queue.put(access_code)
+                    publish_job_status(access_code, JobStatus.PENDING.value)
+                    logger.info(f"Job {access_code} interrupted by shutdown — marked PENDING for resume")
+                else:
+                    # User cancellation
+                    now = _now_str()
+                    conn.execute(
+                        "UPDATE jobs SET status = ?, error = ?, cancelled_at = ?, status_changed_at = ? WHERE access_code = ?",
+                        (JobStatus.CANCELLED.value, "Cancelled by user", now, now, access_code)
+                    )
+                    conn.commit()
+                    publish_job_status(access_code, JobStatus.CANCELLED.value)
+                    logger.info(f"Job {access_code} was cancelled")
             elif proc.exitcode == 0:
                 now = _now_str()
                 conn.execute(
                     "UPDATE jobs SET status = ?, status_changed_at = ?, completed_at = ? WHERE access_code = ?",
                     (JobStatus.COMPLETED.value, now, now, access_code)
                 )
+                conn.commit()
+                publish_job_status(access_code, JobStatus.COMPLETED.value)
                 logger.info(f"Job {access_code} completed successfully")
             else:
                 now = _now_str()
@@ -499,6 +487,8 @@ class JobQueue:
                     "UPDATE jobs SET status = ?, error = ?, failed_at = ?, status_changed_at = ? WHERE access_code = ?",
                     (JobStatus.FAILED.value, f"Job process failed{sig}", now, now, access_code)
                 )
+                conn.commit()
+                publish_job_status(access_code, JobStatus.FAILED.value, error=f"Job process failed{sig}")
                 logger.warning(f"Job {access_code} failed with exit code {proc.exitcode}")
         except Exception as e:
             # Ensure the child process is cleaned up on unexpected errors
@@ -513,6 +503,8 @@ class JobQueue:
                 "UPDATE jobs SET status = ?, error = ?, failed_at = ?, status_changed_at = ? WHERE access_code = ?",
                 (JobStatus.FAILED.value, str(e)[:500], now, now, access_code)
             )
+            conn.commit()
+            publish_job_status(access_code, JobStatus.FAILED.value, error=str(e)[:500])
             logger.error(f"Job {access_code} handler error: {e}")
 
         conn.commit()
@@ -663,6 +655,7 @@ class JobQueue:
             (progress, access_code)
         )
         conn.commit()
+        publish_job_status(access_code, "progress", progress=progress)
 
     def update_target_language(self, access_code: str, lang: str):
         """Update the target_language field for a job (e.g. after language detection)."""
@@ -780,6 +773,7 @@ class JobQueue:
             (JobStatus.CANCELLED.value, "Cancelled by user", now, now, access_code, JobStatus.PENDING.value, JobStatus.PROCESSING.value)
         )
         conn.commit()
+        publish_job_status(access_code, JobStatus.CANCELLED.value)
 
         return {"success": True, "message": "Job cancelled"}
 
@@ -837,8 +831,95 @@ class JobQueue:
 
         return {"success": True, "message": "Job hidden"}
 
+    def shutdown(self, timeout: int | None = None):
+        """Initiate graceful shutdown.
+
+        Signals the worker thread to stop dequeuing new jobs and waits
+        for the currently-running job to finish (up to *timeout* seconds).
+        If the job doesn't finish in time, it is terminated and marked
+        PENDING so it auto-resumes on next startup.
+        """
+        if timeout is not None:
+            self._shutdown_timeout = timeout
+        self._graceful_shutdown = True
+        self._running = False
+        logger.info(
+            "Graceful shutdown initiated — waiting up to %ds for current job",
+            self._shutdown_timeout,
+        )
+        # Wait for the worker thread to finish (it will exit once the
+        # current job completes or times out).
+        if self._worker_thread is not None:
+            self._worker_thread.join(timeout=self._shutdown_timeout + 5)
+        if self._shutdown_done.is_set():
+            logger.info("Graceful shutdown complete")
+        else:
+            logger.warning("Graceful shutdown timed out — worker may still be running")
+
     def stop(self):
         self._running = False
+
+    def clear_job_queue(self) -> dict:
+        """Remove all deleted jobs from database and their output directories.
+        
+        Returns a summary of what was cleaned up.
+        """
+        conn = self._get_conn()
+        
+        # Find all deleted jobs with their output directories
+        rows = conn.execute(
+            "SELECT access_code, output_dir FROM jobs WHERE status = ?",
+            (JobStatus.DELETED.value,)
+        ).fetchall()
+        
+        if not rows:
+            return {"success": True, "message": "No deleted jobs found", "jobs_removed": 0, "dirs_removed": 0}
+        
+        jobs_removed = 0
+        dirs_removed = 0
+        errors = []
+        
+        # Remove output directories
+        for row in rows:
+            access_code, output_dir = row["access_code"], row["output_dir"]
+            
+            if output_dir and os.path.exists(output_dir):
+                try:
+                    shutil.rmtree(output_dir)
+                    dirs_removed += 1
+                    logger.info(f"Removed output directory for deleted job {access_code}: {output_dir}")
+                except Exception as e:
+                    error_msg = f"Failed to remove directory {output_dir} for job {access_code}: {e}"
+                    errors.append(error_msg)
+                    logger.error(error_msg)
+        
+        # Remove job entries from database
+        try:
+            cursor = conn.execute(
+                "DELETE FROM jobs WHERE status = ?",
+                (JobStatus.DELETED.value,)
+            )
+            jobs_removed = cursor.rowcount
+            conn.commit()
+            logger.info(f"Removed {jobs_removed} deleted job entries from database")
+        except Exception as e:
+            error_msg = f"Failed to remove job entries from database: {e}"
+            errors.append(error_msg)
+            logger.error(error_msg)
+        
+        result = {
+            "success": len(errors) == 0,
+            "jobs_removed": jobs_removed,
+            "dirs_removed": dirs_removed,
+        }
+        
+        if errors:
+            result["errors"] = errors
+            result["message"] = f"Completed with {len(errors)} errors"
+        else:
+            result["message"] = f"Successfully removed {jobs_removed} jobs and {dirs_removed} directories"
+        
+        return result
 
 
 def get_job_queue() -> JobQueue:

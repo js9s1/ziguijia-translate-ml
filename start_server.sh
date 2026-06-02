@@ -2,20 +2,10 @@
 
 cd ${HOME}/子归家/code_ml/chatterbox-server
 
-export NING_SERVER_URL="http://127.0.0.1:18789"
 export PYTHONPATH="${HOME}/子归家/code_ml/chatterbox-server:$PYTHONPATH"
 
-# SMTP config for email verification
-export SMTP_HOST="smtp.gmail.com"
-export SMTP_PORT="587"
-export SMTP_USER="your-email@example.com"
-export SMTP_PASS='your-app-password'
-export SMTP_FROM="your-email@example.com"
 export FLASK_SECRET_KEY="chatterbox-fixed-secret-key-2024"
 export HF_TOKEN="$(cat ${HOME}/src/chatterbox/hf_t)"
-
-# ── RapidVideOCR ────────────────────────────────────────────
-export RAPID_VIDEOCR_BIN="${HOME}/.local/bin/rapid_videocr"
 
 # PyTorch memory management — enable expandable segments to reduce fragmentation
 export PYTORCH_ALLOC_CONF=expandable_segments:True
@@ -68,9 +58,24 @@ for OLD_PID in $(lsof -ti :5600 2>/dev/null || true); do
 done
 sleep 1
 
+# Start Redis if not already running
+if ! redis-cli ping > /dev/null 2>&1; then
+    echo "Starting Redis..."
+    redis-server --daemonize yes --loglevel warning
+    sleep 1
+    if redis-cli ping > /dev/null 2>&1; then
+        echo "Redis started"
+    else
+        echo "Warning: Redis failed to start — server will use in-memory fallbacks"
+    fi
+else
+    echo "Redis already running"
+fi
+
 echo "Starting chatterbox server..."
 
 ${HOME}/.pyenv/versions/3.11.14/bin/gunicorn \
+    -c ${HOME}/子归家/code_ml/chatterbox-server/gunicorn_config.py \
     --access-logfile ${HOME}/logs/chatterbox-server/access.log \
     --error-logfile ${HOME}/logs/chatterbox-server/error.log \
     --log-level info \

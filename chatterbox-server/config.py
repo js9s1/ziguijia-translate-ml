@@ -2,6 +2,10 @@
 
 import os
 
+from dotenv import load_dotenv
+
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"))
+
 # ── ROCm environment for AMD Renoir APU (gfx90c) ────────────
 # Must be set before any PyTorch/ROCm import.
 os.environ.setdefault("HSA_OVERRIDE_GFX_VERSION", "9.0.0")
@@ -67,3 +71,24 @@ RAPID_VIDEOCR_BIN = os.environ.get(
 
 # ── Default ports ──────────────────────────────────────────
 PORT = 18789
+
+# ── Language code → full name mapping for translation ─────
+LANG_MAP = {
+    "ar": "Arabic", "da": "Danish", "de": "German", "el": "Greek",
+    "en": "English", "es": "Spanish", "fi": "Finnish", "fr": "French",
+    "he": "Hebrew", "hi": "Hindi", "it": "Italian", "ja": "Japanese",
+    "ko": "Korean", "ms": "Malay", "nl": "Dutch", "no": "Norwegian",
+    "pl": "Polish", "pt": "Portuguese", "ru": "Russian", "sv": "Swedish",
+    "sw": "Swahili", "tr": "Turkish", "zh": "Chinese",
+    "vi": "Vietnamese", "th": "Thai",
+}
+
+# ── SMTP / Email ─────────────────────────────────────────────
+SMTP_HOST = os.environ.get("SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USER = os.environ.get("SMTP_USER", "")
+SMTP_PASS = os.environ.get("SMTP_PASS", "")
+SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USER)
+
+# ── Redis ─────────────────────────────────────────────────────
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")

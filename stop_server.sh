@@ -11,5 +11,11 @@ if pgrep -f "gunicorn.*chatterbox" > /dev/null 2>&1; then
     pkill -9 -f "gunicorn" 2>/dev/null
 fi
 
+# Stop Redis if it was started by start_server.sh (only if no other clients)
+if redis-cli ping > /dev/null 2>&1; then
+    echo "Stopping Redis..."
+    redis-cli shutdown nosave 2>/dev/null
+fi
+
 echo "Servers stopped"
-ps aux | grep -E "gunicorn" | grep -v grep || echo "All stopped"
+ps aux | grep -E "gunicorn|redis" | grep -v grep || echo "All stopped"
