@@ -8,7 +8,7 @@ import uuid
 from jobqueue import get_job_queue
 from log_utils import job_log
 from config import VIDEO_DIR, RAPID_VIDEOCR_PIPELINE_SCRIPT
-from video_util import open_proc_log
+from video_util import open_proc_log, read_srt_text
 
 
 def _detect_srt_language(srt_path: str) -> str:
@@ -17,8 +17,7 @@ def _detect_srt_language(srt_path: str) -> str:
     Returns a language code (zh, ja, ko, ar, ru, el, he, hi, th, en) or 'en' as fallback.
     """
     try:
-        with open(srt_path, "r", encoding="utf-8") as f:
-            content = f.read()
+        content = read_srt_text(srt_path)
     except Exception:
         return "en"
 

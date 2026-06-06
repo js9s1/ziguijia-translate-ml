@@ -72,6 +72,7 @@
         .status-processing { background: #2196F3; color: #fff; }
         .status-completed { background: #4CAF50; color: #fff; }
         .status-failed { background: #f44336; color: #fff; }
+        .status-cancelled { background: #9e9e9e; color: #fff; }
         .no-files { color: #999; text-align: center; padding: 20px; }
         .job-info { background: #f5f5f5; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
         .job-info p { margin: 5px 0; }
@@ -308,6 +309,7 @@
             processing: '处理中',
             completed: '已完成',
             failed: '失败',
+            cancelled: '已取消',
         };
 
         function getStatusClass(status) {
@@ -375,21 +377,8 @@
                         document.getElementById('errorMsg').textContent = data.error;
                     }
 
-                    if (data.status === 'completed') {
-                        loadFiles(data.output_dir);
-                        startPolling(false);
-                    } else if (data.status === 'processing') {
-                        loadFiles(data.output_dir);
-                        startPolling(true);
-                    } else if (data.status === 'pending') {
-                        const posText = data.queue_position !== null ? `（前方还有 ${data.queue_position} 个任务在排队）` : '';
-                        document.getElementById('fileList').innerHTML = `<li class="no-files">任务等待中${posText}，自动刷新中...</li>`;
-                        startPolling(true);
-                    } else if (data.status === 'failed') {
-                        loadFiles(data.output_dir);
-                        document.getElementById('resubmitBtn').style.display = 'inline-block';
-                        startPolling(false);
-                    }
+                    loadFiles(data.output_dir);
+                    startPolling(data.status === 'processing' || data.status === 'pending');
                 })
                 .catch(err => {
                     document.getElementById('fileList').innerHTML = '<li class="no-files">加载失败: ' + err.message + '</li>';
@@ -457,17 +446,10 @@
                     } else {
                         document.getElementById('errorPara').style.display = 'none';
                     }
-                    document.getElementById('resubmitBtn').style.display = data.status === 'failed' ? 'inline-block' : 'none';
+                    document.getElementById('resubmitBtn').style.display = (data.status === 'failed' || data.status === 'cancelled') ? 'inline-block' : 'none';
 
-                    if (data.status === 'completed') {
-                        loadFiles(data.output_dir);
-                        startPolling(false);
-                    } else if (data.status === 'processing') {
-                        loadFiles(data.output_dir);
-                    } else if (data.status === 'failed') {
-                        loadFiles(data.output_dir);
-                        startPolling(false);
-                    }
+                    loadFiles(data.output_dir);
+                    startPolling(data.status === 'processing');
                 })
                 .catch(err => {
                     console.error('Poll failed:', err);
@@ -591,18 +573,9 @@
                     } else {
                         document.getElementById('errorPara').style.display = 'none';
                     }
-                    document.getElementById('resubmitBtn').style.display = data.status === 'failed' ? 'inline-block' : 'none';
-                    if (data.status === 'completed') {
-                        loadFiles(data.output_dir);
-                        startPolling(false);
-                    } else if (data.status === 'processing') {
-                        loadFiles(data.output_dir);
-                    } else if (data.status === 'pending') {
-                        const posText = data.queue_position !== null ? `（前方还有 ${data.queue_position} 个任务在排队）` : '';
-                        document.getElementById('fileList').innerHTML = `<li class="no-files">任务等待中${posText}...</li>`;
-                    } else if (data.status === 'failed') {
-                        document.getElementById('fileList').innerHTML = '<li class="no-files">任务失败</li>';
-                    }
+                    document.getElementById('resubmitBtn').style.display = (data.status === 'failed' || data.status === 'cancelled') ? 'inline-block' : 'none';
+                    loadFiles(data.output_dir);
+                    startPolling(data.status === 'processing');
                 })
                 .catch(err => {
                     console.error('Refresh failed:', err);

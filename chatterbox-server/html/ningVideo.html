@@ -23,31 +23,7 @@
         <form id="videoForm">
             <div class="form-row">
                 <label for="target_language">目标语言</label>
-                <select id="target_language" name="target_language">
-                    <option value="ar">🇸🇦 阿拉伯语 (ar)</option>
-                    <option value="da">🇩🇰 丹麦语 (da)</option>
-                    <option value="de">🇩🇪 德语 (de)</option>
-                    <option value="el">🇬🇷 希腊语 (el)</option>
-                    <option value="en" selected>🇬🇧 英文 (en)</option>
-                    <option value="es">🇪🇸 西班牙语 (es)</option>
-                    <option value="fi">🇫🇮 芬兰语 (fi)</option>
-                    <option value="fr">🇫🇷 法语 (fr)</option>
-                    <option value="he">🇮🇱 希伯来语 (he)</option>
-                    <option value="hi">🇮🇳 印地语 (hi)</option>
-                    <option value="it">🇮🇹 意大利语 (it)</option>
-                    <option value="ja">🇯🇵 日语 (ja)</option>
-                    <option value="ko">🇰🇷 韩语 (ko)</option>
-                    <option value="ms">🇲🇾 马来语 (ms)</option>
-                    <option value="nl">🇳🇱 荷兰语 (nl)</option>
-                    <option value="no">🇳🇴 挪威语 (no)</option>
-                    <option value="pl">🇵🇱 波兰语 (pl)</option>
-                    <option value="pt">🇵🇹 葡萄牙语 (pt)</option>
-                    <option value="ru">🇷🇺 俄语 (ru)</option>
-                    <option value="sv">🇸🇪 瑞典语 (sv)</option>
-                    <option value="sw">🇹🇿 斯瓦希里语 (sw)</option>
-                    <option value="tr">🇹🇷 土耳其语 (tr)</option>
-                    <option value="zh">🇨🇳 中文 (zh)</option>
-                </select>
+                <div id="langSelectContainer"></div>
             </div>
 
             <div class="form-row">
@@ -68,6 +44,21 @@
                 <input type="file" id="srt_file" name="srt_file" accept=".srt" required>
             </div>
 
+
+            <div class="form-row" id="trimSection" style="display:none;align-items:stretch;">
+                <label style="font-weight:bold;color:#e2b714;white-space:;align-self:left;">裁剪设置（OCR模式）</label>
+                <div style="display:flex;flex-direction:column;gap:4px;flex:1;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <label for="start_trim">开头裁剪 (秒)</label>
+                        <input type="number" id="start_trim" name="start_trim" min="0" step="0.01" value="12.25" style="width:120px;padding:6px;border:1px solid #555;border-radius:4px;background:#1e1e1e;color:#e0e0e0;">
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <label for="end_trim">结尾裁剪 (秒)</label>
+                        <input type="number" id="end_trim" name="end_trim" min="0" step="0.01" value="40.0" style="width:120px;padding:6px;border:1px solid #555;border-radius:4px;background:#1e1e1e;color:#e0e0e0;">
+                    </div>
+                </div>
+            </div>
+
             <div class="form-row">
                 <label for="blur">模糊处理</label>
                 <select id="blur" name="blur">
@@ -76,57 +67,97 @@
                 </select>
             </div>
 
-            <div class="form-row">
-                <label for="temperature">温度</label>
-                <span class="temp-value" id="tempValue">0.6</span>
-                <input type="range" id="temperature" name="temperature" min="0.5" max="1.5" step="0.01" value="0.6">
-                <span class="slider-max">1.5</span>
-            </div>
-
-            <div class="form-row">
-                <label for="cfg_weight">CFG 权重</label>
-                <span class="temp-value" id="cfgWeightValue">0.26</span>
-                <input type="range" id="cfg_weight" min="0" max="1.5" step="0.01" value="0.26">
-                <span class="slider-max">1.5</span>
-            </div>
-
-            <div class="form-row">
-                <label for="exaggeration">口音夸张度</label>
-                <span class="temp-value" id="exaggerationValue">0.3</span>
-                <input type="range" id="exaggeration" name="exaggeration" min="0.0" max="1.0" step="0.01" value="0.3">
-                <span class="slider-max">1.0</span>
-            </div>
+            <div id="floatSliders"></div>
             <button type="submit">开始处理！</button>
         </form>
-        <div id="resultSection" class="hidden">
-            <label>访问码：</label>
-            <span id="accessCode" class="access-code"></span>
-            <a href="#" id="checkProgressLink" class="btn-download" style="margin-left:10px;vertical-align:middle;">查看进度 →</a>
-        </div>
+        <div id="resultSection"></div>
     </div>
+    <script src="/utils.js"></script>
     <script>
         document.getElementById('mode').addEventListener('change', function() {
             var srtSection = document.getElementById('srtSection');
+            var trimSection = document.getElementById('trimSection');
             if (this.value === 'ocr') {
                 srtSection.classList.add('hidden');
                 document.getElementById('srt_file').removeAttribute('required');
+                trimSection.style.display = '';
             } else {
                 srtSection.classList.remove('hidden');
                 document.getElementById('srt_file').setAttribute('required', '');
+                trimSection.style.display = 'none';
             }
         });
 
-        document.getElementById('temperature').addEventListener('input', function(e) {
-            document.getElementById('tempValue').textContent = e.target.value;
-        });
-        document.getElementById('cfg_weight').addEventListener('input', function(e) {
-            document.getElementById('cfgWeightValue').textContent = e.target.value;
-        });
-        document.getElementById('exaggeration').addEventListener('input', function(e) {
-            document.getElementById('exaggerationValue').textContent = e.target.value;
-        });
+        initFloatSliders('floatSliders');
+        initLanguageSelect('langSelectContainer');
+        initResultSection('resultSection', 'checkProgressLink');
+
+        function showCachedPrompt(data) {
+            var overlay = document.getElementById('loadingOverlay');
+            // Create a modal dialog
+            var dialog = document.createElement('div');
+            dialog.id = 'cachedDialog';
+            dialog.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:2000;display:flex;align-items:center;justify-content:center;';
+            var box = document.createElement('div');
+            box.style.cssText = 'background:#1e1e1e;border:1px solid #555;border-radius:12px;padding:24px;max-width:500px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
+
+            var msg = document.createElement('p');
+            msg.style.cssText = 'color:#e0e0e0;font-size:1.05em;line-height:1.6;margin-bottom:20px;white-space:pre-line;';
+            msg.textContent = data.message || '已找到缓存的视频文件，是否使用该已下载的版本？';
+
+            var btnRow = document.createElement('div');
+            btnRow.style.cssText = 'display:flex;gap:12px;justify-content:flex-end;';
+
+            var btnDownload = document.createElement('button');
+            btnDownload.textContent = '重新下载';
+            btnDownload.style.cssText = 'padding:10px 20px;border:none;border-radius:6px;cursor:pointer;font-size:0.95em;background:#555;color:#e0e0e0;';
+            btnDownload.onclick = function() {
+                document.body.removeChild(dialog);
+                overlay.classList.add('active');
+                var fd = new FormData(document.getElementById('videoForm'));
+                fd.set('no_cache_check', 'true');
+                fetch('/video/ning/ocr-process', { method: 'POST', body: fd })
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    overlay.classList.remove('active');
+                    if (d.error) { alert('错误: ' + d.error); return; }
+                    showResult(d.access_code, '/result?code=' + d.access_code, 'checkProgressLink');
+                })
+                .catch(function(err) { overlay.classList.remove('active'); alert('错误: ' + err.message); });
+            };
+
+            var btnUse = document.createElement('button');
+            btnUse.textContent = '使用缓存';
+            btnUse.style.cssText = 'padding:10px 20px;border:none;border-radius:6px;cursor:pointer;font-size:0.95em;background:#e2b714;color:#1e1e1e;font-weight:bold;';
+            btnUse.onclick = function() {
+                document.body.removeChild(dialog);
+                overlay.classList.add('active');
+                var fd = new FormData(document.getElementById('videoForm'));
+                fd.set('cached_path', data.paths[0]);
+                fetch('/video/ning/ocr-process', { method: 'POST', body: fd })
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    overlay.classList.remove('active');
+                    if (d.error) { alert('错误: ' + d.error); return; }
+                    showResult(d.access_code, '/result?code=' + d.access_code, 'checkProgressLink');
+                })
+                .catch(function(err) { overlay.classList.remove('active'); alert('错误: ' + err.message); });
+            };
+
+            btnRow.appendChild(btnDownload);
+            btnRow.appendChild(btnUse);
+            box.appendChild(msg);
+            box.appendChild(btnRow);
+            dialog.appendChild(box);
+            document.body.appendChild(dialog);
+        }
+
         document.getElementById('videoForm').addEventListener('submit', function(e) {
             e.preventDefault();
+            // Remove any lingering cached dialog
+            var oldDialog = document.getElementById('cachedDialog');
+            if (oldDialog) document.body.removeChild(oldDialog);
+
             const overlay = document.getElementById('loadingOverlay');
             overlay.classList.add('active');
             const formData = new FormData();
@@ -138,6 +169,14 @@
             formData.append('exaggeration', document.getElementById('exaggeration').value);
 
             var mode = document.getElementById('mode').value;
+            if (mode === 'ocr') {
+                var startTrim = parseFloat(document.getElementById('start_trim').value);
+                var endTrim = parseFloat(document.getElementById('end_trim').value);
+                if (isNaN(startTrim) || startTrim < 0) { alert('请填写有效的开头裁剪秒数（≥0）'); overlay.classList.remove('active'); return; }
+                if (isNaN(endTrim) || endTrim < 0) { alert('请填写有效的结尾裁剪秒数（≥0）'); overlay.classList.remove('active'); return; }
+                formData.append('start_trim', startTrim);
+                formData.append('end_trim', endTrim);
+            }
             var url;
             if (mode === 'ocr') {
                 url = '/video/ning/ocr-process';
@@ -160,18 +199,18 @@
                 if (!data) return;
                 overlay.classList.remove('active');
                 if (data.error) { alert('错误: ' + data.error); return; }
-                document.getElementById('accessCode').textContent = data.access_code;
-                document.getElementById('checkProgressLink').href = '/result?code=' + data.access_code;
-                document.getElementById('resultSection').classList.remove('hidden');
-                fetch('/srt/status/' + data.access_code).then(function(r) { return r.json(); }).then(function(s) {
-                    const labels = {pending:'等待中', processing:'处理中', completed:'已完成', failed:'已失败'};
-                    document.getElementById('checkProgressLink').textContent = (labels[s.status] || '查看进度') + ' →';
-                }).catch(function() {});
+
+                // Check if we found a cached video — prompt user
+                if (data.cached_found) {
+                    showCachedPrompt(data);
+                    return;
+                }
+
+                showResult(data.access_code, '/result?code=' + data.access_code, 'checkProgressLink');
             })
             .catch(function(err) { overlay.classList.remove('active'); alert('错误: ' + err.message); });
         });
     </script>
-    <script src="/utils.js"></script>
     <script src="/auth.js"></script>
 </body>
 </html>

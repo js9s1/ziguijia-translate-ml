@@ -110,6 +110,9 @@ def _migrate_jobs_table(conn: sqlite3.Connection):
     add_column_if_missing(conn, "jobs", "checkpoint", "TEXT DEFAULT ''")
     add_column_if_missing(conn, "jobs", "checkpoint_edited", "INTEGER DEFAULT 0")
     add_column_if_missing(conn, "jobs", "edited_srt_files", "TEXT DEFAULT ''")
+    add_column_if_missing(conn, "jobs", "start_trim", "REAL DEFAULT 12.25")
+    add_column_if_missing(conn, "jobs", "end_trim", "REAL DEFAULT 40.0")
+    add_column_if_missing(conn, "jobs", "cached_path", "TEXT")
 
 
 # ── users table (used by auth.UserManager) ──────────────────────

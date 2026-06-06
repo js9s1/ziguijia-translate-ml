@@ -24,31 +24,7 @@
     <form action="/srt/process" method="POST" id="srtForm" enctype="multipart/form-data">
         <div class="form-row">
             <label for="target_language">目标语言</label>
-            <select id="target_language" name="target_language">
-                <option value="ar">🇸🇦 阿拉伯语 (ar)</option>
-                <option value="da">🇩🇰 丹麦语 (da)</option>
-                <option value="de">🇩🇪 德语 (de)</option>
-                <option value="el">🇬🇷 希腊语 (el)</option>
-                <option value="en" selected>🇬🇧 英文 (en)</option>
-                <option value="es">🇪🇸 西班牙语 (es)</option>
-                <option value="fi">🇫🇮 芬兰语 (fi)</option>
-                <option value="fr">🇫🇷 法语 (fr)</option>
-                <option value="he">🇮🇱 希伯来语 (he)</option>
-                <option value="hi">🇮🇳 印地语 (hi)</option>
-                <option value="it">🇮🇹 意大利语 (it)</option>
-                <option value="ja">🇯🇵 日语 (ja)</option>
-                <option value="ko">🇰🇷 韩语 (ko)</option>
-                <option value="ms">🇲🇾 马来语 (ms)</option>
-                <option value="nl">🇳🇱 荷兰语 (nl)</option>
-                <option value="no">🇳🇴 挪威语 (no)</option>
-                <option value="pl">🇵🇱 波兰语 (pl)</option>
-                <option value="pt">🇵🇹 葡萄牙语 (pt)</option>
-                <option value="ru">🇷🇺 俄语 (ru)</option>
-                <option value="sv">🇸🇪 瑞典语 (sv)</option>
-                <option value="sw">🇹🇿 斯瓦希里语 (sw)</option>
-                <option value="tr">🇹🇷 土耳其语 (tr)</option>
-                <option value="zh">🇨🇳 中文 (zh)</option>
-            </select>
+            <div id="langSelectContainer"></div>
         </div>
         <div class="form-row">
             <label for="srt_file">上传SRT字幕文件</label>
@@ -56,48 +32,19 @@
         </div>
 
 
-        <div class="form-row">
-            <label for="temperature">温度</label>
-            <span class="temp-value" id="tempValue">0.6</span>
-            <input type="range" id="temperature" name="temperature" min="0.5" max="1.5" step="0.01" value="0.6">
-            <span class="slider-max">1.5</span>
-        </div>
-
-        <div class="form-row">
-            <label for="cfg_weight">CFG 权重</label>
-            <span class="temp-value" id="cfgWeightValue">0.26</span>
-            <input type="range" id="cfg_weight" min="0" max="1.5" step="0.01" value="0.26">
-            <span class="slider-max">1.5</span>
-        </div>
-
-        <div class="form-row">
-            <label for="exaggeration">口音夸张度</label>
-            <span class="temp-value" id="exaggerationValue">0.3</span>
-            <input type="range" id="exaggeration" name="exaggeration" min="0.0" max="1.0" step="0.01" value="0.3">
-            <span class="slider-max">1.0</span>
-        </div>
+        <div id="floatSliders"></div>
 
         <button type="submit">开始处理！</button>
     </form>
 
-<div id="resultSection" class="hidden">
-            <label>访问码：</label>
-            <span id="accessCode" class="access-code"></span>
-            <a href="#" id="checkProgressLink" class="btn-download" style="margin-left:10px;vertical-align:middle;">查看进度 →</a>
-
-        </div>
+<div id="resultSection"></div>
     </div>
 
+    <script src="/utils.js"></script>
     <script>
-        document.getElementById('temperature').addEventListener('input', function(e) {
-            document.getElementById('tempValue').textContent = e.target.value;
-        });
-        document.getElementById('cfg_weight').addEventListener('input', function(e) {
-            document.getElementById('cfgWeightValue').textContent = e.target.value;
-        });
-        document.getElementById('exaggeration').addEventListener('input', function(e) {
-            document.getElementById('exaggerationValue').textContent = e.target.value;
-        });
+        initFloatSliders('floatSliders');
+        initLanguageSelect('langSelectContainer');
+        initResultSection('resultSection', 'checkProgressLink');
 
         document.getElementById('srtForm').addEventListener('submit', function(e) {
             e.preventDefault();
@@ -126,13 +73,7 @@
                     alert('错误: ' + data.error);
                     return;
                 }
-                document.getElementById('accessCode').textContent = data.access_code;
-                document.getElementById('checkProgressLink').href = '/result?code=' + data.access_code;
-                document.getElementById('resultSection').classList.remove('hidden');
-                fetch('/srt/status/' + data.access_code).then(r => r.json()).then(s => {
-                    const labels = {pending:'等待中', processing:'处理中', completed:'已完成', failed:'已失败'};
-                    document.getElementById('checkProgressLink').textContent = (labels[s.status] || '查看进度') + ' →';
-                }).catch(() => {});
+                showResult(data.access_code, '/result?code=' + data.access_code, 'checkProgressLink');
             })
             .catch(err => {
                 overlay.classList.remove('active');
@@ -140,7 +81,6 @@
             });
         });
     </script>
-    <script src="/utils.js"></script>
     <script src="/auth.js"></script>
 </body>
 </html>

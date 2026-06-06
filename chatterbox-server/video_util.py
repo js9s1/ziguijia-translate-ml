@@ -5,9 +5,20 @@ import sys
 import re
 from contextlib import contextmanager
 
-from jobqueue import get_job_queue
 from log_utils import job_log
 from config import HY_MT_DIR, LANG_MAP
+
+
+def read_srt_text(path: str) -> str:
+    """Read an SRT file trying common encodings: UTF-8 with BOM, UTF-16, GBK, etc."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    for enc in ("utf-8-sig", "utf-16-le", "utf-16-be", "gbk", "gb2312", "gb18030", "utf-8"):
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", errors="replace")
 
 
 @contextmanager
@@ -87,8 +98,7 @@ def translate_srt_file(srt_path: str, output_path: str, access_code: str, output
     hy_mt = _get_hy_mt()
 
     with redirect_stdout(proc_log), redirect_stderr(proc_log), redirect_logging_to_file(log_file):
-        with open(srt_path, "r", encoding="utf-8") as f:
-            content = f.read()
+        content = read_srt_text(srt_path)
         blocks = re.split(r"\n\n", content.strip())
         n_total = len([b for b in blocks if len(b.split("\n")) >= 3])
         translated_blocks = []
@@ -119,6 +129,7 @@ class CheckpointHelper:
 
     def done(self, name: str) -> bool:
         """Check if a checkpoint step has been completed."""
+        from jobqueue import get_job_queue
         ckpt = get_job_queue().get_checkpoint(self.access_code)
         parts = ckpt.split(",") if ckpt else []
         if self.valid_steps is not None:
@@ -127,6 +138,7 @@ class CheckpointHelper:
 
     def mark(self, name: str):
         """Mark a checkpoint step as completed."""
+        from jobqueue import get_job_queue
         ckpt = get_job_queue().get_checkpoint(self.access_code)
         parts = ([s for s in ckpt.split(",") if s] if ckpt else []) + [name]
         get_job_queue().set_checkpoint(self.access_code, ",".join(parts))

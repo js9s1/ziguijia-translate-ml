@@ -12,6 +12,7 @@ import soundfile as sf
 sys.path.append(os.path.join(os.path.dirname(__file__), "chatterbox-server"))
 
 from config import ASSETS_DIR as CFG_ASSETS_DIR, AUDIO_PROMPT_PATH as CFG_AUDIO_PROMPT_PATH
+from video_util import read_srt_text
 
 CHANGED_THRESHOLD = 0.05
 
@@ -66,8 +67,27 @@ def split_text(text, max_len=120):
 
 
 def load_subs(srt_path):
-    with open(srt_path, "r", encoding="utf-8") as f:
-        return list(srt.parse(f.read()))
+    """Parse SRT file preserving empty-content entries (unlike srt.parse which drops them)."""
+    content = read_srt_text(srt_path)
+    # Split on blank lines to get raw entry blocks
+    blocks = re.split(r"\n\n+", content.strip())
+    subs = []
+    for block in blocks:
+        lines = block.strip().split("\n", 2)
+        if len(lines) < 2:
+            continue
+        try:
+            idx = int(lines[0].strip())
+        except ValueError:
+            continue
+        ts_match = re.match(r"(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})", lines[1])
+        if not ts_match:
+            continue
+        start = srt.srt_timestamp_to_timedelta(ts_match.group(1))
+        end = srt.srt_timestamp_to_timedelta(ts_match.group(2))
+        sub_content = lines[2] if len(lines) > 2 else ""
+        subs.append(srt.Subtitle(index=idx, start=start, end=end, content=sub_content))
+    return subs
 
 
 def generate_silence(duration_sec, sample_rate):
@@ -132,6 +152,25 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
 
         orig_start = sub.start.total_seconds()
         orig_duration = (sub.end - sub.start).total_seconds()
+
+        new_start = orig_start + accumulated_offset
+
+        if not clean_content.strip():
+            # Empty segment — generate silence and preserve timing
+            silence_wav = generate_silence(orig_duration, sample_rate)
+            seg_wav_path = os.path.join(output_dir, "tmp", f"combined_segment_{i}.wav")
+            save_audio(seg_wav_path, silence_wav, sample_rate)
+            adjusted_subs.append(
+                srt.Subtitle(index=i, start=timedelta(seconds=new_start),
+                             end=timedelta(seconds=new_start + orig_duration),
+                             content=sub.content)
+            )
+            segments_info.append({
+                "wav_path": seg_wav_path,
+                "wav_duration": orig_duration,
+                "new_start": new_start,
+            })
+            continue
 
         prompt = get_speaker_prompt(speaker, audio_prompt, assets_dir)
 
@@ -255,7 +294,12 @@ def main():
     save_audio(os.path.join(args.output_dir, args.output_wav), combined_tensor, sample_rate)
 
     with open(os.path.join(args.output_dir, args.output_srt), "w", encoding="utf-8") as f:
-        f.write(srt.compose(adjusted_subs))
+        # Write SRT manually to preserve empty-content entries
+        # (srt.compose silently drops them)
+        for i, sub in enumerate(adjusted_subs):
+            f.write(f"{i+1}\n")
+            f.write(f"{srt.timedelta_to_srt_timestamp(sub.start)} --> {srt.timedelta_to_srt_timestamp(sub.end)}\n")
+            f.write(sub.content + "\n\n")
 
     with open(os.path.join(args.output_dir, args.changed_json), "w") as f:
         json.dump(changed_segments, f)

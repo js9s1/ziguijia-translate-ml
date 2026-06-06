@@ -41,14 +41,15 @@ if [ $? -ne 0 ]; then echo "Error: gen_audio.py failed"; exit 1; fi
 echo "Step 2: Downloading video..."
 /usr/bin/python3 ${HOME}/子归家/pre-process/download_orig.py "$NUMBER" "$OUTPUT_DIR"
 if [ $? -ne 0 ]; then echo "Error: download_orig.py failed"; exit 1; fi
-echo "Step 3: Decompressing video..."
-${HOME}/子归家/pre-process/dcbl.sh "$OUTPUT_DIR/${NUMBER}.mp4" "$OUTPUT_DIR/${NUMBER}_decompressed.mov" "$BLUR_CHINESE"
-if [ $? -ne 0 ]; then echo "Error: dcbl.sh failed"; exit 1; fi
-echo "Step 4: Processing video with stretched segments..."
-VIDEO_FILE="$OUTPUT_DIR/${NUMBER}_decompressed.mov"
+echo "Step 3: Processing video with stretched segments..."
+VIDEO_FILE="$OUTPUT_DIR/${NUMBER}.mp4"
 ADJUSTED_SRT="$AUDIO_DIR/output_adjusted.srt"
 CHANGED_JSON="$AUDIO_DIR/changed_segments.json"
 OUTPUT_MODIFIED="$OUTPUT_DIR/output_modified.mp4"
-/usr/bin/python3 ${HOME}/子归家/code_ml/gen_video.py "$VIDEO_FILE" "$SRT_FILE" "$ADJUSTED_SRT" "$CHANGED_JSON" --output "$OUTPUT_MODIFIED"
+if [ "$BLUR_CHINESE" = "yes" ]; then
+    /usr/bin/python3 ${HOME}/子归家/code_ml/gen_video.py "$VIDEO_FILE" "$SRT_FILE" "$ADJUSTED_SRT" "$CHANGED_JSON" --output "$OUTPUT_MODIFIED" --blur
+else
+    /usr/bin/python3 ${HOME}/子归家/code_ml/gen_video.py "$VIDEO_FILE" "$SRT_FILE" "$ADJUSTED_SRT" "$CHANGED_JSON" --output "$OUTPUT_MODIFIED"
+fi
 if [ $? -ne 0 ]; then echo "Error: gen_video.py failed"; exit 1; fi
 echo "Done! All files saved to: $OUTPUT_DIR"

@@ -222,6 +222,141 @@ def cancel_job(code: str) -> str:
     return f"✅ 任务 {code} 已取消"
 
 
+VALID_CHECKPOINT_STEPS = {"download", "trim", "ocr", "translate", "audio", "video"}
+
+# ordered list for "which steps are after X"
+_CHECKPOINT_ORDER = ["download", "trim", "ocr", "translate", "audio", "video"]
+
+
+def _invalidated_steps(keep_steps: list[str]) -> list[str]:
+    """Return steps not in keep_steps, in checkpoint order."""
+    kept = set(keep_steps)
+    return [s for s in _CHECKPOINT_ORDER if s not in kept]
+
+
+def _purge_step_output(output_dir: str, video_number: str, step: str):
+    """Delete files/dirs associated with a single checkpoint step."""
+    import shutil
+    paths = []
+    if step == "download":
+        paths.append(os.path.join(output_dir, f"{video_number}.mp4"))
+    elif step == "trim":
+        paths.append(os.path.join(output_dir, f"{video_number}_trimmed.mp4"))
+    elif step == "ocr":
+        paths.append(os.path.join(output_dir, "ocr_screen.srt"))
+        paths.append(os.path.join(output_dir, "frames"))
+    elif step == "translate":
+        paths.append(os.path.join(output_dir, "translated.srt"))
+    elif step == "audio":
+        paths.append(os.path.join(output_dir, "audio"))
+    elif step == "video":
+        paths.append(os.path.join(output_dir, "output_modified.mp4"))
+        paths.append(os.path.join(output_dir, "output_final.mp4"))
+    for p in paths:
+        if not p:
+            continue
+        if os.path.isfile(p):
+            os.remove(p)
+        elif os.path.isdir(p):
+            shutil.rmtree(p, ignore_errors=True)
+
+
+def purge_invalidated_output(output_dir: str, keep_steps: list[str]):
+    """Delete output files for checkpoint steps not in keep_steps."""
+    if not output_dir or not os.path.isdir(output_dir):
+        return
+    # Extract video_number from output_dir name (pattern: {number}-{access_code})
+    base = os.path.basename(output_dir)
+    video_number = base.split("-")[0] if "-" in base else ""
+    for step in _invalidated_steps(keep_steps):
+        _purge_step_output(output_dir, video_number, step)
+
+
+def get_checkpoint(code: str) -> str:
+    """Return the checkpoint string for a job, filtered to only valid current steps."""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT checkpoint FROM jobs WHERE access_code = ?", (code.upper(),)
+    ).fetchone()
+    conn.close()
+    if not row or not row[0]:
+        return ""
+    steps = [s.strip() for s in row[0].split(",") if s.strip() in VALID_CHECKPOINT_STEPS]
+    return ",".join(steps)
+
+
+def resubmit_job(code: str, keep_steps: list[str] | None = None) -> str:
+    """Resubmit a failed/completed job.
+
+    If *keep_steps* is given, the checkpoint column is overwritten with only
+    those steps (all others are invalidated).  Pass an empty list to clear
+    all checkpoints (restart from scratch).
+    """
+    code = code.upper()
+    conn = get_conn()
+    job = conn.execute(
+        "SELECT status, checkpoint_edited, output_dir FROM jobs WHERE access_code = ?", (code,)
+    ).fetchone()
+    if not job:
+        conn.close()
+        return f"任务 {code} 不存在"
+
+    status = job["status"]
+    checkpoint_edited = job["checkpoint_edited"]
+
+    if status == "deleted":
+        conn.close()
+        return f"任务 {code} 已被删除，无法重新提交"
+
+    if status not in ("failed", "completed", "cancelled"):
+        conn.close()
+        return f"任务 {code} 状态为 {status}，只能重新提交失败、已完成或已取消的任务"
+
+    output_dir = job["output_dir"]
+
+    # Purge output files for invalidated steps before updating checkpoint DB
+    if keep_steps is not None:
+        purge_invalidated_output(output_dir, keep_steps)
+
+    # Update checkpoint and mark as edited, let server update status and queue
+    if keep_steps is not None:
+        new_checkpoint = ",".join(s for s in keep_steps if s in VALID_CHECKPOINT_STEPS)
+        conn.execute(
+            "UPDATE jobs SET checkpoint = ?, checkpoint_edited = 1 WHERE access_code = ?",
+            (new_checkpoint, code),
+        )
+    else:
+        # Mark as edited so server allows resubmit
+        conn.execute(
+            "UPDATE jobs SET checkpoint_edited = 1 WHERE access_code = ?",
+            (code,),
+        )
+    conn.commit()
+    conn.close()
+
+    # Notify server via HTTP to update status and queue the job
+    try:
+        import urllib.request
+        import json
+        req = urllib.request.Request(
+            f"http://localhost:5600/srt/resubmit/{code}",
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            if resp.status == 200 and data.get("success"):
+                return f"✅ 任务 {code} 已重新提交"
+            else:
+                error_msg = data.get("error", "未知错误")
+                return f"⚠️ 检查点已更新，但服务器拒绝: {error_msg}"
+    except urllib.error.HTTPError as e:
+        error_data = e.read().decode('utf-8') if e.fp else ""
+        return f"⚠️ 检查点已更新，但服务器返回错误 ({e.code}): {error_data}"
+    except Exception as e:
+        # Server might not be running or connection failed
+        return f"⚠️ 检查点已更新，但无法通知服务器: {e}"
+
+
 def delete_job(code: str) -> str:
     code = code.upper()
     conn = get_conn()
@@ -368,6 +503,8 @@ class State:
         opts: list[tuple[str, str]] = [("detail", r"\[D]详情"), ("open_dir", r"\[o]打开目录")]
         if self.selected_job and self.selected_job.status in ("pending", "processing"):
             opts.append(("cancel", r"\[k]取消"))
+        if self.selected_job and self.selected_job.status in ("failed", "completed", "cancelled"):
+            opts.append(("resubmit", r"\[s]重新提交"))
         if self.selected_job and self.selected_job.user_id is not None:
             opts.append(("user_jobs", r"\[u]该用户任务"))
         opts.append(("delete", r"\[r]删除"))
@@ -944,7 +1081,7 @@ def render_menu_overlay(s: State) -> Group:
     if job:
         items.append("")
         items.append(Align.center(make_menu_popup(s)))
-        items.append(Align.center("[dim]← → 选择  Enter=确认  D/l/o/k/r/c=直接操作  Q=关闭[/dim]"))
+        items.append(Align.center("[dim]← → 选择  Enter=确认  D/l/o/k/s/r/c=直接操作  Q=关闭[/dim]"))
     return Group(*items)
 
 
@@ -968,7 +1105,7 @@ def run_menu_screen(s: State, console: Console):
         console.print(render_table(s))
         console.print()
         console.print(Align.center(make_menu_popup(s)))
-        console.print(Align.center("[dim]↑↓ 选择任务  ← → 选择操作  Enter=确认  D/l/o/k/r/c=直接操作[/dim]"))
+        console.print(Align.center("[dim]↑↓ 选择任务  ← → 选择操作  Enter=确认  D/l/o/k/s/r/c=直接操作[/dim]"))
 
         key = read_key()
 
@@ -983,9 +1120,11 @@ def run_menu_screen(s: State, console: Console):
             action = "open_dir"
         elif key in ("k", "K"):
             action = "cancel"
+        elif key in ("s",):
+            action = "resubmit"
         elif key in ("u", "U"):
             action = "user_jobs"
-        elif key in ("r", "R"):
+        elif key in ("r",):
             action = "delete"
         elif key in ("c", "C"):
             action = "close"
@@ -1022,6 +1161,83 @@ def run_menu_screen(s: State, console: Console):
                 s.menu_open = False
                 s.reload(reset_page=False)
                 return
+
+            elif action == "resubmit":
+                checkpoint_str = get_checkpoint(job.access_code)
+                steps = [st.strip() for st in checkpoint_str.split(",") if st.strip()] if checkpoint_str else []
+
+                if steps:
+                    while True:
+                        console.clear()
+                        console.print(render_summary(s.all, s.search_query))
+                        console.print()
+                        console.print(render_table(s))
+                        console.print()
+                        lines = [f"[bold yellow]重新提交任务 {job.access_code}[/]", ""]
+                        lines.append("[dim]选择从哪个步骤之后重新开始（选中步骤之后的将被清除）：[/]")
+                        lines.append("")
+                        for i, step in enumerate(steps):
+                            lines.append(f"  {i+1}. {step}")
+                        lines.append(f"  0. [从头开始]")
+                        lines.append("")
+                        lines.append("[dim]输入数字  Enter=确认  ESC=取消[/dim]")
+                        console.print(Panel("\n".join(lines), border_style="yellow", padding=(1, 2), width=60))
+                        
+                        # Read a single digit
+                        ch = os.read(sys.stdin.fileno(), 1)
+                        if not ch:
+                            continue
+                        c = ch.decode("utf-8", errors="replace")
+                        if c == "\x1b":
+                            break
+                        elif c.isdigit():
+                            choice = int(c)
+                            if choice == 0:
+                                keep_steps = []
+                            elif 1 <= choice <= len(steps):
+                                keep_steps = steps[:choice]
+                            else:
+                                continue
+                            try:
+                                msg = resubmit_job(job.access_code, keep_steps=keep_steps)
+                                s.message(msg)
+                                s.menu_open = False
+                                s.reload(reset_page=False)
+                                return
+                            except Exception as e:
+                                s.message(f"❌ 重新提交失败: {e}")
+                                s.menu_open = False
+                                s.reload(reset_page=False)
+                                return
+                else:
+                    console.clear()
+                    console.print(render_summary(s.all, s.search_query))
+                    console.print()
+                    console.print(render_table(s))
+                    console.print()
+                    confirm_panel = Panel(
+                        Align.center(
+                            f"[bold yellow]确定要重新提交任务 {job.access_code} 吗？[/]\n\n"
+                            f"[dim]无检查点，将从头开始。[/]\n\n"
+                            f"[reverse] Y/Enter=确认  N=取消 [/]"
+                        ),
+                        border_style="yellow", padding=(1, 2), width=60,
+                    )
+                    console.print(Align.center(confirm_panel))
+                    while True:
+                        ch = os.read(sys.stdin.fileno(), 1)
+                        if not ch:
+                            continue
+                        ch = ch.decode("utf-8", errors="replace").lower()
+                        if ch in ("y", "\r", "\n"):
+                            msg = resubmit_job(job.access_code)
+                            s._message = msg
+                            s.menu_open = False
+                            s.reload(reset_page=False)
+                            return
+                        elif ch in ("n", "\x1b", "q"):
+                            break
+                continue
 
             elif action == "delete":
                 console.clear()
@@ -1120,6 +1336,83 @@ def run_menu_screen(s: State, console: Console):
                 s.menu_open = False
                 s.reload(reset_page=False)
                 return
+
+            elif action == "resubmit":
+                checkpoint_str = get_checkpoint(job.access_code)
+                steps = [st.strip() for st in checkpoint_str.split(",") if st.strip()] if checkpoint_str else []
+
+                if steps:
+                    while True:
+                        console.clear()
+                        console.print(render_summary(s.all, s.search_query))
+                        console.print()
+                        console.print(render_table(s))
+                        console.print()
+                        lines = [f"[bold yellow]重新提交任务 {job.access_code}[/]", ""]
+                        lines.append("[dim]选择从哪个步骤之后重新开始（选中步骤之后的将被清除）：[/]")
+                        lines.append("")
+                        for i, step in enumerate(steps):
+                            lines.append(f"  {i+1}. {step}")
+                        lines.append(f"  0. [从头开始]")
+                        lines.append("")
+                        lines.append("[dim]输入数字  Enter=确认  ESC=取消[/dim]")
+                        console.print(Panel("\n".join(lines), border_style="yellow", padding=(1, 2), width=60))
+                        
+                        # Read a single digit
+                        ch = os.read(sys.stdin.fileno(), 1)
+                        if not ch:
+                            continue
+                        c = ch.decode("utf-8", errors="replace")
+                        if c == "\x1b":
+                            break
+                        elif c.isdigit():
+                            choice = int(c)
+                            if choice == 0:
+                                keep_steps = []
+                            elif 1 <= choice <= len(steps):
+                                keep_steps = steps[:choice]
+                            else:
+                                continue
+                            try:
+                                msg = resubmit_job(job.access_code, keep_steps=keep_steps)
+                                s.message(msg)
+                                s.menu_open = False
+                                s.reload(reset_page=False)
+                                return
+                            except Exception as e:
+                                s.message(f"❌ 重新提交失败: {e}")
+                                s.menu_open = False
+                                s.reload(reset_page=False)
+                                return
+                else:
+                    console.clear()
+                    console.print(render_summary(s.all, s.search_query))
+                    console.print()
+                    console.print(render_table(s))
+                    console.print()
+                    confirm_panel = Panel(
+                        Align.center(
+                            f"[bold yellow]确定要重新提交任务 {job.access_code} 吗？[/]\n\n"
+                            f"[dim]无检查点，将从头开始。[/]\n\n"
+                            f"[reverse] Y/Enter=确认  N=取消 [/]"
+                        ),
+                        border_style="yellow", padding=(1, 2), width=60,
+                    )
+                    console.print(Align.center(confirm_panel))
+                    while True:
+                        ch = os.read(sys.stdin.fileno(), 1)
+                        if not ch:
+                            continue
+                        ch = ch.decode("utf-8", errors="replace").lower()
+                        if ch in ("y", "\r", "\n"):
+                            msg = resubmit_job(job.access_code)
+                            s._message = msg
+                            s.menu_open = False
+                            s.reload(reset_page=False)
+                            return
+                        elif ch in ("n", "\x1b", "q"):
+                            break
+                continue
 
             elif action == "delete":
                 # ── Confirmation dialog ──
@@ -1397,6 +1690,8 @@ def main():
     parser.add_argument("--log", type=str, help="查看任务日志")
     parser.add_argument("--cancel", "-k", type=str, help="取消任务")
     parser.add_argument("--delete", "-d", type=str, help="删除任务")
+    parser.add_argument("--purge", action="store_true", help="清除所有已删除的任务")
+    parser.add_argument("--dry-run", action="store_true", help="配合 --purge 使用，预览会清除的内容而不实际删除")
     parser.add_argument("--watch", "-w", type=str, help="持续监控任务状态")
     parser.add_argument("--interval", "-i", type=int, default=5, help="监控间隔秒数")
     args = parser.parse_args()
@@ -1413,6 +1708,24 @@ def main():
         print(cancel_job(args.cancel.upper()))
     elif args.delete:
         print(delete_job(args.delete.upper()))
+    elif args.purge:
+        try:
+            # Import and delegate to the unified JobQueue.clear_job_queue()
+            sys.path.insert(0, str(HERE / "chatterbox-server"))
+            from jobqueue import get_job_queue
+            jq = get_job_queue()
+            result = jq.clear_job_queue(dry_run=args.dry_run)
+            if result["success"]:
+                print("✓ " + result["message"])
+            else:
+                print("✗ " + result.get("message", "Failed"))
+                if "error" in result:
+                    print(f"  Error: {result['error']}")
+                if "errors" in result:
+                    for e in result["errors"]:
+                        print(f"  Error: {e}")
+        except Exception as e:
+            print(f"✗ 清除失败: {e}")
     elif args.watch:
         watch_mode(args.watch.upper(), args.interval, console)
     else:

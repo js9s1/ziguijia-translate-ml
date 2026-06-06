@@ -92,3 +92,13 @@ SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USER)
 
 # ── Redis ─────────────────────────────────────────────────────
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+
+# ── SRT filename → checkpoint step mapping ─────────────────
+# Shared between jobqueue.py (clear_checkpoint_for_file) and
+# chatterbox_server.py (SRT save/edit endpoint).
+FILENAME_TO_CHECKPOINT_STEP = {
+    "ocr_screen.srt": "ocr",
+    "translated.srt": "translate",
+    "whisper.srt": "whisper",
+    "output_adjusted.srt": "audio",
+}

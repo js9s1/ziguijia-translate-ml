@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import secrets
+import subprocess
 import sys
 import time
 import uuid
@@ -12,7 +13,7 @@ from collections import defaultdict
 import importlib
 from jobqueue import get_job_queue
 from auth import get_user_manager
-from config import AUDIO_TRACKS_DIR, VIDEO_DIR
+from config import AUDIO_TRACKS_DIR, VIDEO_DIR, FILENAME_TO_CHECKPOINT_STEP
 from redis_util import (
     check_rate_limit, InMemoryRateLimiter, is_available as redis_available,
     cache_get, cache_set, JOB_STATUS_CHANNEL, get_redis, get_session_redis,
@@ -73,16 +74,26 @@ def rate_limit(f):
 
 
 def email_rate_limit(email: str) -> tuple[bool, str]:
-    """Check per-email rate limit for password reset. Returns (allowed, error_message)."""
+    """Check per-email rate limit for password reset. Returns (allowed, error_message).
+
+    Follows the same pattern as the IP-level ``rate_limit`` decorator —
+    checks Redis first, then falls back to in-memory when Redis is down.
+    """
     key = f"rl:email:{email}"
+    # Redis check — returns True if within limit OR if Redis is down
     if check_rate_limit(key, EMAIL_RATE_LIMIT_MAX, EMAIL_RATE_LIMIT_WINDOW):
-        return True, ""
-    if redis_available():
+        pass  # allowed by Redis or Redis unavailable — check in-memory below
+    else:
+        # Redis was up and rejected the request
+        if redis_available():
+            logger.warning(f"Email rate limit exceeded for {email}")
+            return False, "该邮箱的密码重置请求过于频繁，请稍后再试"
+
+    # In-memory fallback when Redis is down
+    if not redis_available() and not _email_limiter.check(email):
         logger.warning(f"Email rate limit exceeded for {email}")
         return False, "该邮箱的密码重置请求过于频繁，请稍后再试"
-    if not _email_limiter.check(email):
-        logger.warning(f"Email rate limit exceeded for {email}")
-        return False, "该邮箱的密码重置请求过于频繁，请稍后再试"
+
     return True, ""
 
 
@@ -417,6 +428,41 @@ def _safe_file_path(requested_path: str) -> str | None:
     return None
 
 
+def _get_video_metadata(path: str) -> dict:
+    """Get duration (seconds) and resolution (WxH) of a video file via ffprobe.
+
+    Returns dict with ``duration`` (float) and ``resolution`` (str, e.g. "1280x720").
+    On any error returns empty dict so the caller still works.
+    """
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json",
+             "-show_format", "-show_streams", path],
+            capture_output=True, text=True, timeout=30,
+        )
+        info = json.loads(result.stdout)
+        duration = float(info.get("format", {}).get("duration", 0))
+        resolution = ""
+        for s in info.get("streams", []):
+            if s.get("codec_type") == "video":
+                w = s.get("width", 0)
+                h = s.get("height", 0)
+                if w and h:
+                    resolution = f"{w}x{h}"
+                break
+        meta = {}
+        if duration:
+            mins = int(duration // 60)
+            secs = int(duration % 60)
+            meta["duration"] = round(duration, 1)
+            meta["duration_str"] = f"{mins}分{secs}秒"
+        if resolution:
+            meta["resolution"] = resolution
+        return meta
+    except Exception:
+        return {}
+
+
 @app.route("/files/list", methods=["GET"])
 @login_required
 def files_list():
@@ -526,12 +572,8 @@ def files_delete():
 
 # ── SRT save/edit endpoint ────────────────────────────────
 
-_FILENAME_TO_CHECKPOINT_STEP = {
-    "ocr_screen.srt": "ocr",
-    "translated.srt": "translate",
-    "whisper.srt": "whisper",
-    "output_adjusted.srt": "audio",
-}
+# Mapping defined in config.py (shared with jobqueue.py).
+# Invalidate downstream checkpoints when an SRT is edited.
 
 
 @app.route("/files/save-srt", methods=["POST"])
@@ -576,7 +618,7 @@ def files_save_srt():
         # Invalidate downstream checkpoints
         jq = get_job_queue()
         basename = os.path.basename(safe_path)
-        step = _FILENAME_TO_CHECKPOINT_STEP.get(basename)
+        step = FILENAME_TO_CHECKPOINT_STEP.get(basename)
         if step:
             jq.invalidate_checkpoints_after(access_code, step)
 
@@ -708,9 +750,55 @@ def video_ning_ocr_process():
         params = _parse_job_params(request.form)
 
         process_video_ning_ocr = _lazy("video_ning_job", "process_video_ning_ocr")
+        find_cached = _lazy("video_ning_job", "_find_cached_video")
         blur = request.form.get("blur", "yes")
+        start_trim = request.form.get("start_trim", "12.25")
+        end_trim = request.form.get("end_trim", "40.0")
+
+        # Check if user already decided to use a cached file
+        cached_path = request.form.get("cached_path", "")
+        if cached_path:
+            result = process_video_ning_ocr(number, params["temperature"], session["user_id"], blur,
+                                            target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"],
+                                            start_trim=float(start_trim), end_trim=float(end_trim),
+                                            cached_path=cached_path)
+            return jsonify(result)
+
+        # Check if user explicitly said to ignore cache
+        no_cache_check = request.form.get("no_cache_check", "false") == "true"
+        if no_cache_check:
+            result = process_video_ning_ocr(number, params["temperature"], session["user_id"], blur,
+                                            target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"],
+                                            start_trim=float(start_trim), end_trim=float(end_trim))
+            return jsonify(result)
+
+        # First-time submission: check for cached video files
+        cached = find_cached(number)
+        if cached:
+            meta = _get_video_metadata(cached)
+            meta_parts = []
+            if meta.get("duration_str"):
+                meta_parts.append(f"时长 {meta['duration_str']}")
+            if meta.get("resolution"):
+                meta_parts.append(f"分辨率 {meta['resolution']}")
+            meta_str = "，".join(meta_parts) if meta_parts else ""
+            basename = os.path.basename(cached)
+            msg = f"已找到缓存的视频文件 ({basename})"
+            if meta_str:
+                msg += f"\n{meta_str}"
+            msg += "\n是否使用该已下载的版本？"
+            return jsonify({
+                "cached_found": True,
+                "paths": [cached],
+                "number": number,
+                "message": msg,
+                "metadata": meta,
+            })
+
+        # No cached file found — proceed normally
         result = process_video_ning_ocr(number, params["temperature"], session["user_id"], blur,
-                                        target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"])
+                                        target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"],
+                                        start_trim=float(start_trim), end_trim=float(end_trim))
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error OCR processing ning video: {str(e)}")

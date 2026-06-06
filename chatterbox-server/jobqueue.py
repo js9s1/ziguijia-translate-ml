@@ -16,6 +16,7 @@ import psutil
 from db_schema import init_jobs_schema, ConnectionManager
 from redis_util import publish_job_status
 from singleton import singleton
+from config import FILENAME_TO_CHECKPOINT_STEP
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(BASE_DIR, "jobs.db")
@@ -253,8 +254,8 @@ class JobQueue:
         prev_ckpt = existing_checkpoint[0] if existing_checkpoint else ""
 
         conn.execute("""
-            INSERT OR REPLACE INTO jobs (access_code, srt_path, output_dir, temperature, status, error, run_func_name, video_number, video_file, user_id, text, blur, target_language, cfg_weight, exaggeration, checkpoint, status_changed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO jobs (access_code, srt_path, output_dir, temperature, status, error, run_func_name, video_number, video_file, user_id, text, blur, target_language, cfg_weight, exaggeration, start_trim, end_trim, cached_path, checkpoint, status_changed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             access_code,
             job_data.get("srt_path"),
@@ -271,6 +272,9 @@ class JobQueue:
             job_data.get("target_language", "en"),
             job_data.get("cfg_weight", 0.5),
             job_data.get("exaggeration", 0.5),
+            job_data.get("start_trim", 12.25),
+            job_data.get("end_trim", 40.0),
+            job_data.get("cached_path"),
             prev_ckpt,
             _now_str(),
         ))
@@ -344,7 +348,7 @@ class JobQueue:
     def _process_job(self, access_code: str):
         conn = self._get_conn()
 
-        columns = ["access_code", "srt_path", "output_dir", "temperature", "status", "error", "run_func_name", "video_number", "created_at", "video_file", "user_id", "text", "blur", "target_language", "cfg_weight", "exaggeration"]
+        columns = ["access_code", "srt_path", "output_dir", "temperature", "status", "error", "run_func_name", "video_number", "created_at", "video_file", "user_id", "text", "blur", "target_language", "cfg_weight", "exaggeration", "start_trim", "end_trim", "cached_path"]
         row = conn.execute(
             f"SELECT {', '.join(columns)} FROM jobs WHERE access_code = ?", (access_code,)
         ).fetchone()
@@ -356,7 +360,17 @@ class JobQueue:
         job = dict(zip(columns, row))
 
         run_func_name = job.get("run_func_name")
-        run_func = _get_run_func(run_func_name) if run_func_name else None
+        try:
+            run_func = _get_run_func(run_func_name) if run_func_name else None
+        except Exception as e:
+            logger.error(f"Job {access_code} failed to load handler '{run_func_name}': {e}")
+            now = _now_str()
+            conn.execute(
+                "UPDATE jobs SET status = ?, error = ?, status_changed_at = ? WHERE access_code = ?",
+                (JobStatus.FAILED.value, f"Handler import failed: {e}", now, access_code)
+            )
+            conn.commit()
+            return
 
         if not run_func:
             logger.error(f"Job {access_code} has no run_func")
@@ -398,6 +412,7 @@ class JobQueue:
         try:
             while proc.is_alive():
                 proc.join(timeout=5)
+                self._heartbeat_ts = time.monotonic()
 
                 # Check for graceful shutdown — set a deadline for the child
                 if self._graceful_shutdown and shutdown_deadline is None:
@@ -534,12 +549,13 @@ class JobQueue:
         basename = os.path.basename(file_path)
         steps_to_clear = set()
 
-        # Map deleted filenames back to checkpoint steps for ning OCR jobs
-        if basename == "ocr_screen.srt":
-            steps_to_clear.add("ocr")
-        elif basename == "translated.srt":
-            steps_to_clear.add("translate")
-        elif basename == "output_modified.mp4":
+        # Exact-match lookups shared with chatterbox_server.py
+        step = FILENAME_TO_CHECKPOINT_STEP.get(basename)
+        if step:
+            steps_to_clear.add(step)
+
+        # Pattern-based lookups for job-specific file types
+        if basename == "output_modified.mp4":
             steps_to_clear.add("video")
         elif "_decompressed.mov" in basename:
             steps_to_clear.add("decompress")
@@ -558,7 +574,10 @@ class JobQueue:
             self.set_checkpoint(access_code, ",".join(new_parts))
 
     def invalidate_checkpoints_after(self, access_code: str, step: str):
-        """Remove checkpoint *step* and all subsequent steps after a user edit.
+        """Remove all checkpoint steps *after* *step*, keeping *step* intact.
+
+        Also deletes the output artifacts of those steps so the job
+        can cleanly re-generate them.
 
         The checkpoint order depends on the job type.  Built-in ordering:
 
@@ -566,27 +585,61 @@ class JobQueue:
 
         If *step* is not found, nothing changes.  This is called when a user
         edits a file belonging to *step* and saves it — everything after that
-        step must be re-run.
+        step must be re-run, but the edited step itself is preserved since
+        the new content is already saved.
         """
         ORDER = ["download", "decompress", "trim", "extract_audio", "whisper", "ocr", "translate", "audio", "video"]
         ckpt = self.get_checkpoint(access_code)
         if not ckpt:
-            return
-        parts = [s for s in ckpt.split(",") if s]
-        if not parts:
-            return
+            logger.info("invalidate_checkpoints_after(%s, %s): no checkpoint", access_code, step)
+        parts = [s for s in (ckpt or "").split(",") if s]
 
-        # If step isn't in our built-in order, fall back to removing step only
         try:
             idx = ORDER.index(step)
         except ValueError:
-            # Not a standard step — remove just this one
             new_parts = [p for p in parts if p != step]
         else:
-            new_parts = [p for p in parts if p not in ORDER[idx:]]
+            new_parts = [p for p in parts if p not in ORDER[idx+1:]]
+
+        removed_from_ckpt = set(parts) - set(new_parts)
+        # Steps after the edited step whose artifacts must be purged
+        steps_to_regen = ORDER[idx+1:] if step in ORDER else []
+
+        logger.info("invalidate_checkpoints_after(%s, %s): parts=%s, new=%s, removed_from_ckpt=%s, steps_to_regen=%s",
+                     access_code, step, parts, new_parts, removed_from_ckpt, steps_to_regen)
 
         if new_parts != parts:
             self.set_checkpoint(access_code, ",".join(new_parts))
+
+        # Purge artifacts for steps that will re-run
+        if steps_to_regen:
+            conn = self._get_conn()
+            row = conn.execute("SELECT output_dir FROM jobs WHERE access_code = ?", (access_code,)).fetchone()
+            output_dir = row[0] if row else None
+            if output_dir and os.path.isdir(output_dir):
+                self._purge_step_artifacts(output_dir, set(steps_to_regen))
+
+    _STEP_ARTIFACTS = {
+        "translate":  ["translated.srt"],
+        "audio":      ["audio", "audio_tracks"],
+        "video":      ["output_modified.mp4", "output_final.mp4"],
+    }
+
+    def _purge_step_artifacts(self, output_dir: str, steps: set[str]):
+        """Delete output files/dirs produced by the given checkpoint steps."""
+        import shutil
+        for step in steps:
+            for rel in self._STEP_ARTIFACTS.get(step, []):
+                path = os.path.join(output_dir, rel)
+                try:
+                    if os.path.isdir(path):
+                        shutil.rmtree(path)
+                        logger.info("Purged directory: %s", path)
+                    elif os.path.isfile(path):
+                        os.remove(path)
+                        logger.info("Purged file: %s", path)
+                except Exception as e:
+                    logger.warning("Failed to purge %s: %s", path, e)
 
     def set_checkpoint_edited(self, access_code: str, edited: bool = True):
         """Mark that the checkpoint has been edited (user edited an SRT)."""
@@ -729,7 +782,7 @@ class JobQueue:
 
         status, output_dir = row
 
-        if status not in ("pending", "processing"):
+        if status not in (JobStatus.PENDING.value, JobStatus.PROCESSING.value):
             return {"success": False, "error": f"Job is already {status}, cannot cancel"}
 
         if output_dir:
@@ -789,17 +842,16 @@ class JobQueue:
         if row[0] == JobStatus.DELETED.value:
             return {"success": False, "error": "Job has been deleted"}
 
-        # Allow resubmit for failed jobs, or completed jobs that have been
-        # checkpoint-edited (user edited an SRT after completion).
+        # Allow resubmit for failed, cancelled, or completed jobs (with checkpoint_edited flag)
         if row[0] == JobStatus.COMPLETED.value:
             # Must have checkpoint_edited flag set
             ckpt_row = conn.execute(
                 "SELECT checkpoint_edited FROM jobs WHERE access_code = ?", (access_code,)
             ).fetchone()
             if not ckpt_row or not ckpt_row[0]:
-                return {"success": False, "error": f"Job is completed, only failed or checkpoint-edited jobs can be resubmitted"}
-        elif row[0] != JobStatus.FAILED.value:
-            return {"success": False, "error": f"Job is {row[0]}, only failed or checkpoint-edited jobs can be resubmitted"}
+                return {"success": False, "error": f"Job is completed, only failed, cancelled or checkpoint-edited jobs can be resubmitted"}
+        elif row[0] not in (JobStatus.FAILED.value, JobStatus.CANCELLED.value):
+            return {"success": False, "error": f"Job is {row[0]}, only failed, cancelled or checkpoint-edited jobs can be resubmitted"}
 
         now = _now_str()
         conn.execute(
@@ -859,30 +911,38 @@ class JobQueue:
     def stop(self):
         self._running = False
 
-    def clear_job_queue(self) -> dict:
+    def clear_job_queue(self, dry_run: bool = False) -> dict:
         """Remove all deleted jobs from database and their output directories.
-        
+
+        Args:
+            dry_run: If True, report what would be removed without doing anything.
+
         Returns a summary of what was cleaned up.
         """
         conn = self._get_conn()
-        
+
         # Find all deleted jobs with their output directories
         rows = conn.execute(
             "SELECT access_code, output_dir FROM jobs WHERE status = ?",
             (JobStatus.DELETED.value,)
         ).fetchall()
-        
+
         if not rows:
             return {"success": True, "message": "No deleted jobs found", "jobs_removed": 0, "dirs_removed": 0}
-        
+
+        if dry_run:
+            dirs_found = sum(1 for r in rows if r["output_dir"] and os.path.exists(r["output_dir"]))
+            return {"success": True, "message": f"Would remove {len(rows)} jobs and {dirs_found} directories",
+                    "jobs_removed": len(rows), "dirs_removed": dirs_found}
+
         jobs_removed = 0
         dirs_removed = 0
         errors = []
-        
+
         # Remove output directories
         for row in rows:
             access_code, output_dir = row["access_code"], row["output_dir"]
-            
+
             if output_dir and os.path.exists(output_dir):
                 try:
                     shutil.rmtree(output_dir)
@@ -892,7 +952,7 @@ class JobQueue:
                     error_msg = f"Failed to remove directory {output_dir} for job {access_code}: {e}"
                     errors.append(error_msg)
                     logger.error(error_msg)
-        
+
         # Remove job entries from database
         try:
             cursor = conn.execute(
@@ -906,19 +966,19 @@ class JobQueue:
             error_msg = f"Failed to remove job entries from database: {e}"
             errors.append(error_msg)
             logger.error(error_msg)
-        
+
         result = {
             "success": len(errors) == 0,
             "jobs_removed": jobs_removed,
             "dirs_removed": dirs_removed,
         }
-        
+
         if errors:
             result["errors"] = errors
             result["message"] = f"Completed with {len(errors)} errors"
         else:
             result["message"] = f"Successfully removed {jobs_removed} jobs and {dirs_removed} directories"
-        
+
         return result
 
 

@@ -20,6 +20,9 @@ import shutil
 
 import srt
 
+sys.path.append(os.path.join(os.path.dirname(__file__), "chatterbox-server"))
+from video_util import read_srt_text
+
 
 def get_video_info(video_file):
     """Get video duration using ffprobe."""
@@ -289,6 +292,12 @@ def main():
         default=None,
         help="Audio WAV file (default: <adjusted_srt_dir>/output.wav)",
     )
+    parser.add_argument(
+        "--blur",
+        action="store_true",
+        default=False,
+        help="Apply delogo filter to blur Chinese text before final mux",
+    )
     args = parser.parse_args()
 
     # Validate inputs
@@ -325,11 +334,9 @@ def main():
         sys.exit(1)
 
     # Load SRT files
-    with open(args.original_srt, "r", encoding="utf-8") as f:
-        original_subs = list(srt.parse(f.read()))
+    original_subs = list(srt.parse(read_srt_text(args.original_srt)))
 
-    with open(args.adjusted_srt, "r", encoding="utf-8") as f:
-        adjusted_subs = list(srt.parse(f.read()))
+    adjusted_subs = list(srt.parse(read_srt_text(args.adjusted_srt)))
 
     if len(original_subs) != len(adjusted_subs):
         print(f"Error: Segment count mismatch: {len(original_subs)} original vs {len(adjusted_subs)} adjusted")
@@ -373,17 +380,30 @@ def main():
     temp_output = output_file.replace("_modified.mp4", "_temp.mp4")
 
     try:
-        subprocess.run([
-            "ffmpeg", "-y",
-            "-i", output_file,
-            "-i", audio_wav,
-            #"-c:v", "libx265", "-crf", "23", "-preset", "fast",  # software (old)
-            "-c:v", "copy",
-            "-c:a", "aac", "-b:a", "192k",
-            "-map", "0:v", "-map", "1:a",
-            "-shortest",
-            temp_output
-        ], check=True)
+        if args.blur:
+            print("Applying delogo filter to blur Chinese text...")
+            subprocess.run([
+                "ffmpeg", "-y",
+                "-i", output_file,
+                "-i", audio_wav,
+                "-vf", "delogo=x=100:y=600:w=1060:h=80:show=0",
+                "-c:v", "libx265", "-crf", "23", "-preset", "fast",
+                "-c:a", "aac", "-b:a", "192k",
+                "-map", "0:v", "-map", "1:a",
+                "-shortest",
+                temp_output
+            ], check=True)
+        else:
+            subprocess.run([
+                "ffmpeg", "-y",
+                "-i", output_file,
+                "-i", audio_wav,
+                "-c:v", "copy",
+                "-c:a", "aac", "-b:a", "192k",
+                "-map", "0:v", "-map", "1:a",
+                "-shortest",
+                temp_output
+            ], check=True)
 
         subprocess.run([
             "ffmpeg", "-y",

@@ -11,6 +11,7 @@ import torchaudio as ta
 from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 from config import AUDIO_PROMPT_PATH
 from singleton import singleton
+from video_util import read_srt_text
 
 
 def _check_gpu_healthy() -> bool:
@@ -164,8 +165,7 @@ class NingAudio:
         return torch.zeros(1, num_frames)
 
     def load_subs(self, srt_path):
-        with open(srt_path, "r", encoding="utf-8") as f:
-            return list(srt.parse(f.read()))
+        return list(srt.parse(read_srt_text(srt_path)))
 
     def generate_audio(self, text, output_path, sample_rate, temperature=None, prompt_file=None, target_language="en", cfg_weight=0.5, exaggeration=0.5):
         if temperature is None:

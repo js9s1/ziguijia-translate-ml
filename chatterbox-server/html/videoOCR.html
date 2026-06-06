@@ -29,17 +29,12 @@
             <button type="submit">开始 OCR 提取字幕！</button>
         </form>
 
-        <div id="resultSection" class="hidden">
-            <label>访问码：</label>
-            <span id="accessCode" class="access-code"></span>
-            <a href="#" id="checkLink" class="btn-download" style="margin-left:10px;vertical-align:middle;">查看进度 →</a>
-        </div>
+        <div id="resultSection"></div>
     </div>
 
     <script src="/utils.js"></script>
     <script src="/auth.js"></script>
     <script>
-// Redirect to login if not authenticated
 var isAuthenticated = false;
 fetch('/auth/me').then(function(r) { return r.json(); }).then(function(data) {
     isAuthenticated = data.authenticated;
@@ -47,6 +42,8 @@ fetch('/auth/me').then(function(r) { return r.json(); }).then(function(data) {
         window.location.href = '/auth/login?next=' + encodeURIComponent('/video/ocr');
     }
 });
+
+initResultSection('resultSection', 'checkLink');
 
 document.getElementById('ocrForm').addEventListener('submit', async function(e) {
     e.preventDefault();
@@ -91,9 +88,7 @@ document.getElementById('ocrForm').addEventListener('submit', async function(e) 
         }
 
         overlay.classList.remove('active');
-        document.getElementById('accessCode').textContent = data.access_code;
-        document.getElementById('checkLink').href = '/result?code=' + data.access_code;
-        document.getElementById('resultSection').classList.remove('hidden');
+        showResult(data.access_code, '/result?code=' + data.access_code, 'checkLink');
 
     } catch (err) {
         alert('请先登录后再使用此功能');
