@@ -1,19 +1,44 @@
+/* ── CSS Custom Properties ──────────────────────────────── */
+:root {
+    --color-primary: #4CAF50;
+    --color-primary-hover: #45a049;
+    --color-secondary: #2196F3;
+    --color-secondary-hover: #1976D2;
+    --color-danger: #f44336;
+    --color-warning: #FF9800;
+    --color-text-dark: #333;
+    --color-text-medium: #555;
+    --color-text-light: #666;
+    --color-text-hint: #999;
+    --color-border: #ddd;
+    --color-bg: #f5f5f5;
+    --color-bg-white: #fff;
+    --color-access-code-bg: #e8f5e9;
+    --color-accent-green: #4CAF50;
+    --shadow-card: 0 2px 4px rgba(0,0,0,0.1);
+    --shadow-card-hover: 0 4px 12px rgba(0,0,0,0.15);
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --font-family: Arial, sans-serif;
+    --transition-transform: transform 0.2s;
+}
+
 body {
-    font-family: Arial, sans-serif;
+    font-family: var(--font-family);
     margin: 0;
     padding: 0;
-    background-color: #f5f5f5;
+    background-color: var(--color-bg);
     min-height: 100vh;
 }
 
 .page-header {
-    background: white;
+    background: var(--color-bg-white);
     padding: 15px 20px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    box-shadow: var(--shadow-card);
 }
 
 .back-link {
-    color: #4CAF50;
+    color: var(--color-primary);
     text-decoration: none;
     font-weight: bold;
 }
@@ -27,13 +52,13 @@ body {
 }
 h1 {
     text-align: center;
-    color: #333;
+    color: var(--color-text-dark);
 }
 form {
-    background: white;
+    background: var(--color-bg-white);
     padding: 30px;
-    border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-card);
 }
 .form-row {
     display: flex;
@@ -46,7 +71,7 @@ form {
     flex-shrink: 0;
     margin-bottom: 0;
     font-weight: bold;
-    color: #555;
+    color: var(--color-text-medium);
 }
 .form-row input,
 .form-row select,
@@ -54,8 +79,8 @@ form {
     flex: 1;
     margin-bottom: 0;
     padding: 8px 10px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
     box-sizing: border-box;
 }
 .form-row input[type="file"] {
@@ -68,27 +93,27 @@ form {
 .form-row .float-input {
     width: 120px;
     padding: 6px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    background: #fff;
-    color: #333;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-white);
+    color: var(--color-text-dark);
 }
 .form-row .slider-hint {
-    color: #999;
+    color: var(--color-text-hint);
     font-size: 0.85em;
 }
 label {
     display: block;
     margin-bottom: 5px;
     font-weight: bold;
-    color: #555;
+    color: var(--color-text-medium);
 }
 input[type="text"], textarea {
     width: 100%;
     padding: 10px;
     margin-bottom: 20px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
     box-sizing: border-box;
 }
 textarea {
@@ -101,28 +126,28 @@ input[type="file"] {
 button {
     width: 100%;
     padding: 12px;
-    background-color: #4CAF50;
+    background-color: var(--color-primary);
     color: white;
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     cursor: pointer;
     font-size: 16px;
 }
 button:hover {
-    background-color: #45a049;
+    background-color: var(--color-primary-hover);
 }
 .optional {
     font-weight: normal;
-    color: #999;
+    color: var(--color-text-hint);
     font-size: 0.9em;
 }
 #audioSection {
     display: none;
     margin-top: 20px;
-    background: white;
+    background: var(--color-bg-white);
     padding: 20px;
-    border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-card);
 }
 #audioSection.visible {
     display: block;
@@ -132,11 +157,11 @@ audio {
     margin: 10px 0;
 }
 .btn-secondary {
-    background-color: #2196F3;
+    background-color: var(--color-secondary);
     margin-top: 10px;
 }
 .btn-secondary:hover {
-    background-color: #1976D2;
+    background-color: var(--color-secondary-hover);
 }
 .loading-overlay {
     display: none;
@@ -183,11 +208,11 @@ audio {
 }
 .hero h1 {
     font-size: 2.5em;
-    color: #333;
+    color: var(--color-text-dark);
     margin-bottom: 10px;
 }
 .hero p {
-    color: #666;
+    color: var(--color-text-light);
     font-size: 1.1em;
 }
 .menu-grid {
@@ -196,25 +221,25 @@ audio {
     gap: 20px;
 }
 .menu-item {
-    background: white;
+    background: var(--color-bg-white);
     padding: 30px;
-    border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-card);
     text-decoration: none;
     color: inherit;
-    transition: transform 0.2s, box-shadow 0.2s;
+    transition: var(--transition-transform), box-shadow 0.2s;
 }
 .menu-item:hover {
     transform: translateY(-4px);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    box-shadow: var(--shadow-card-hover);
 }
 .menu-item h2 {
-    color: #4CAF50;
+    color: var(--color-primary);
     margin-bottom: 10px;
     font-size: 1.3em;
 }
 .menu-item p {
-    color: #666;
+    color: var(--color-text-light);
     font-size: 0.95em;
     line-height: 1.5;
 }
@@ -224,14 +249,14 @@ audio {
 }
 .status-check {
     margin-top: 40px;
-    background: white;
+    background: var(--color-bg-white);
     padding: 20px;
-    border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-card);
 }
 .status-check h3 {
     margin-top: 0;
-    color: #333;
+    color: var(--color-text-dark);
 }
 .status-check form {
     display: flex;
@@ -247,7 +272,7 @@ audio {
 #statusResult {
     margin-top: 15px;
     padding: 10px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
 }
 #statusResult.hidden {
     display: none;
@@ -255,10 +280,10 @@ audio {
 .access-code {
     font-size: 1.5em;
     font-weight: bold;
-    color: #4CAF50;
-    background: #e8f5e9;
+    color: var(--color-primary);
+    background: var(--color-access-code-bg);
     padding: 5px 15px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     letter-spacing: 2px;
 }
 .hidden {
@@ -266,7 +291,7 @@ audio {
 }
 
 .info-text {
-    color: #666;
+    color: var(--color-text-light);
     font-size: 0.9em;
     margin-top: 10px;
 }

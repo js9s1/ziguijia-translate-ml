@@ -47,6 +47,13 @@ MAX_LOAD_JOBS = 500
 PAGE_SIZE = 10
 AUTO_REFRESH_SEC = 3
 
+# Import canonical checkpoint order from config to keep in sync
+import sys as _sys
+_sys.path.insert(0, str(HERE / "chatterbox-server"))
+from config import CHECKPOINT_ORDER as _CKPT_ORDER
+VALID_CHECKPOINT_STEPS = set(_CKPT_ORDER)
+_CHECKPOINT_ORDER = list(_CKPT_ORDER)  # ordered list for "which steps are after X"
+
 # ── Data types ────────────────────────────────────────────
 
 _TYPE_MAP = {
@@ -220,12 +227,6 @@ def cancel_job(code: str) -> str:
     conn.commit()
     conn.close()
     return f"✅ 任务 {code} 已取消"
-
-
-VALID_CHECKPOINT_STEPS = {"download", "trim", "ocr", "translate", "audio", "video"}
-
-# ordered list for "which steps are after X"
-_CHECKPOINT_ORDER = ["download", "trim", "ocr", "translate", "audio", "video"]
 
 
 def _invalidated_steps(keep_steps: list[str]) -> list[str]:

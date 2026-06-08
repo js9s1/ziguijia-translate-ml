@@ -102,3 +102,12 @@ FILENAME_TO_CHECKPOINT_STEP = {
     "whisper.srt": "whisper",
     "output_adjusted.srt": "audio",
 }
+
+# ── Checkpoint step ordering ─────────────────────────────────
+# Canonical order of checkpoint steps. Used by jobqueue.py for
+# invalidation and by jobs_tui.py for purge logic. The single
+# definition here keeps both in sync.
+CHECKPOINT_ORDER = [
+    "download", "decompress", "trim", "extract_audio",
+    "whisper", "ocr", "translate", "audio", "video",
+]

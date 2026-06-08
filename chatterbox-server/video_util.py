@@ -9,16 +9,36 @@ from log_utils import job_log
 from config import HY_MT_DIR, LANG_MAP
 
 
+def _normalize_srt_timestamps(text: str) -> str:
+    """Normalize common SRT timestamp malformations to SRT-standard comma (,).
+
+    Handles:
+    - ffmpeg-style dot milliseconds (``HH:MM:SS.mmm``)
+    - colons instead of dots/commas before milliseconds (``HH:MM:SS:mmm``)
+    - single-dash arrow (``->`` instead of ``-->``)
+    - trailing garbage like ``seconds`` after the end timestamp
+    """
+    # Normalize any non-comma millisecond separator (. or :) → comma
+    text = re.sub(r"(\d{2}:\d{2}:\d{2})[.:](\d{3})", r"\1,\2", text)
+    # Fix single-dash arrow → triple-dash arrow in timestamp lines only
+    text = re.sub(r"(\d{2}:\d{2}:\d{2},\d{3})\s*->\s*(\d{2}:\d{2}:\d{2},\d{3})", r"\1 --> \2", text)
+    return text
+
+
 def read_srt_text(path: str) -> str:
-    """Read an SRT file trying common encodings: UTF-8 with BOM, UTF-16, GBK, etc."""
+    """Read an SRT file trying common encodings: UTF-8 with BOM, UTF-16, GBK, etc.
+
+    Timestamps are normalized to SRT standard (comma milliseconds, triple-dash
+    arrow) so callers don't need to handle ffmpeg-style dot-milliseconds.
+    """
     with open(path, "rb") as f:
         raw = f.read()
     for enc in ("utf-8-sig", "utf-16-le", "utf-16-be", "gbk", "gb2312", "gb18030", "utf-8"):
         try:
-            return raw.decode(enc)
+            return _normalize_srt_timestamps(raw.decode(enc))
         except (UnicodeDecodeError, LookupError):
             continue
-    return raw.decode("utf-8", errors="replace")
+    return _normalize_srt_timestamps(raw.decode("utf-8", errors="replace"))
 
 
 @contextmanager

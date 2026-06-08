@@ -16,7 +16,7 @@ import psutil
 from db_schema import init_jobs_schema, ConnectionManager
 from redis_util import publish_job_status
 from singleton import singleton
-from config import FILENAME_TO_CHECKPOINT_STEP
+from config import FILENAME_TO_CHECKPOINT_STEP, CHECKPOINT_ORDER
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(BASE_DIR, "jobs.db")
@@ -588,7 +588,7 @@ class JobQueue:
         step must be re-run, but the edited step itself is preserved since
         the new content is already saved.
         """
-        ORDER = ["download", "decompress", "trim", "extract_audio", "whisper", "ocr", "translate", "audio", "video"]
+        ORDER = CHECKPOINT_ORDER
         ckpt = self.get_checkpoint(access_code)
         if not ckpt:
             logger.info("invalidate_checkpoints_after(%s, %s): no checkpoint", access_code, step)

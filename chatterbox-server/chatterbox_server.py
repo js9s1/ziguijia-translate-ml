@@ -15,8 +15,8 @@ from jobqueue import get_job_queue
 from auth import get_user_manager
 from config import AUDIO_TRACKS_DIR, VIDEO_DIR, FILENAME_TO_CHECKPOINT_STEP
 from redis_util import (
-    check_rate_limit, InMemoryRateLimiter, is_available as redis_available,
-    cache_get, cache_set, JOB_STATUS_CHANNEL, get_redis, get_session_redis,
+    InMemoryRateLimiter, is_available as redis_available,
+    cache_get, cache_set, get_redis, get_session_redis,
 )
 
 # ── Deferred imports ──────────────────────────────────────
@@ -61,12 +61,24 @@ def rate_limit(f):
     def decorated(*args, **kwargs):
         ip = request.remote_addr or "unknown"
         key = f"rl:ip:{ip}"
-        if not check_rate_limit(key, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW):
-            # Redis allowed it — but if Redis is down, check in-memory
-            if redis_available():
-                logger.warning(f"Rate limit exceeded for IP {ip}")
-                return jsonify({"error": "请求过于频繁，请稍后再试"}), 429
-        if not redis_available() and not _ip_limiter.check(ip):
+
+        # Try Redis first
+        r = get_redis()
+        if r is not None:
+            try:
+                pipe = r.pipeline()
+                pipe.incr(key)
+                pipe.expire(key, RATE_LIMIT_WINDOW)
+                count, _ = pipe.execute()
+                if count > RATE_LIMIT_MAX:
+                    logger.warning(f"Rate limit exceeded for IP {ip}")
+                    return jsonify({"error": "请求过于频繁，请稍后再试"}), 429
+                return f(*args, **kwargs)
+            except redis.RedisError:
+                pass  # fall through to in-memory
+
+        # In-memory fallback (Redis unavailable or errored)
+        if not _ip_limiter.check(ip):
             logger.warning(f"Rate limit exceeded for IP {ip}")
             return jsonify({"error": "请求过于频繁，请稍后再试"}), 429
         return f(*args, **kwargs)
@@ -76,21 +88,27 @@ def rate_limit(f):
 def email_rate_limit(email: str) -> tuple[bool, str]:
     """Check per-email rate limit for password reset. Returns (allowed, error_message).
 
-    Follows the same pattern as the IP-level ``rate_limit`` decorator —
-    checks Redis first, then falls back to in-memory when Redis is down.
+    Tries Redis first, falls back to in-memory when Redis is down.
     """
     key = f"rl:email:{email}"
-    # Redis check — returns True if within limit OR if Redis is down
-    if check_rate_limit(key, EMAIL_RATE_LIMIT_MAX, EMAIL_RATE_LIMIT_WINDOW):
-        pass  # allowed by Redis or Redis unavailable — check in-memory below
-    else:
-        # Redis was up and rejected the request
-        if redis_available():
-            logger.warning(f"Email rate limit exceeded for {email}")
-            return False, "该邮箱的密码重置请求过于频繁，请稍后再试"
 
-    # In-memory fallback when Redis is down
-    if not redis_available() and not _email_limiter.check(email):
+    # Try Redis first
+    r = get_redis()
+    if r is not None:
+        try:
+            pipe = r.pipeline()
+            pipe.incr(key)
+            pipe.expire(key, EMAIL_RATE_LIMIT_WINDOW)
+            count, _ = pipe.execute()
+            if count > EMAIL_RATE_LIMIT_MAX:
+                logger.warning(f"Email rate limit exceeded for {email}")
+                return False, "该邮箱的密码重置请求过于频繁，请稍后再试"
+            return True, ""
+        except redis.RedisError:
+            pass  # fall through to in-memory
+
+    # In-memory fallback
+    if not _email_limiter.check(email):
         logger.warning(f"Email rate limit exceeded for {email}")
         return False, "该邮箱的密码重置请求过于频繁，请稍后再试"
 
@@ -309,7 +327,7 @@ def audio_process():
                                  exaggeration=params["exaggeration"])
             return jsonify(result)
     except Exception as e:
-        logger.error(f"Audio process error: {e}")
+        logger.error(f"Audio process error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
@@ -332,7 +350,7 @@ def tts_process():
                              exaggeration=params["exaggeration"])
         return jsonify(result)
     except Exception as e:
-        logger.error(f"TTS process error: {e}")
+        logger.error(f"TTS process error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
@@ -387,12 +405,12 @@ def tts_status_stream(access_code):
 @app.route("/health", methods=["GET"])
 def health_check():
     """Health check endpoint (GPU status cached for 60s in Redis)."""
-    import torch
+    import importlib
     cached = cache_get("health:gpu")
     if cached:
         cuda_ok = cached == "1"
     else:
-        cuda_ok = torch.cuda.is_available()
+        cuda_ok = importlib.import_module("torch").cuda.is_available()
         cache_set("health:gpu", "1" if cuda_ok else "0", ttl=60)
     return jsonify({
         "status": "healthy", "message": "Server is running",
@@ -498,7 +516,7 @@ def files_list():
 
         return jsonify({"files": files})
     except Exception as e:
-        logger.error(f"Error listing files: {e}")
+        logger.error(f"Error listing files: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
@@ -519,7 +537,7 @@ def files_read():
             content = f.read()
         return content, 200, {'Content-Type': 'text/plain; charset=utf-8'}
     except Exception as e:
-        logger.error(f"Error reading file: {e}")
+        logger.error(f"Error reading file: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
@@ -538,7 +556,7 @@ def files_download():
 
         return send_file(safe_path, as_attachment=True)
     except Exception as e:
-        logger.error(f"Error downloading file: {e}")
+        logger.error(f"Error downloading file: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
@@ -566,7 +584,7 @@ def files_delete():
 
         return jsonify({"success": True})
     except Exception as e:
-        logger.error(f"Error deleting file: {e}")
+        logger.error(f"Error deleting file: {e}", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -629,7 +647,7 @@ def files_save_srt():
 
         return jsonify({"success": True, "message": "File saved, downstream steps marked for re-run"})
     except Exception as e:
-        logger.error(f"Error saving SRT: {e}")
+        logger.error(f"Error saving SRT: {e}", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -653,7 +671,7 @@ def files_srt_resubmit(access_code):
             return jsonify(result)
         return jsonify(result), 400
     except Exception as e:
-        logger.error(f"Error resubmitting SRT-edited job {access_code}: {str(e)}")
+        logger.error(f"Error resubmitting SRT-edited job {access_code}: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
@@ -682,7 +700,7 @@ def srt_process():
                                   target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"])
         return jsonify(result)
     except Exception as e:
-        logger.error(f"Error processing SRT: {str(e)}")
+        logger.error(f"Error processing SRT: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
@@ -702,7 +720,7 @@ def srt_resubmit(access_code):
             return jsonify(result)
         return jsonify(result), 400
     except Exception as e:
-        logger.error(f"Error resubmitting job {access_code}: {str(e)}")
+        logger.error(f"Error resubmitting job {access_code}: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
@@ -735,7 +753,7 @@ def video_ning_process():
                                     target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"])
         return jsonify(result)
     except Exception as e:
-        logger.error(f"Error processing video: {str(e)}")
+        logger.error(f"Error processing video: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
@@ -801,7 +819,7 @@ def video_ning_ocr_process():
                                         start_trim=float(start_trim), end_trim=float(end_trim))
         return jsonify(result)
     except Exception as e:
-        logger.error(f"Error OCR processing ning video: {str(e)}")
+        logger.error(f"Error OCR processing ning video: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
@@ -828,7 +846,7 @@ def video_custom_process():
                                       target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"])
         return jsonify(result)
     except Exception as e:
-        logger.error(f"Error processing custom video: {str(e)}")
+        logger.error(f"Error processing custom video: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
@@ -847,7 +865,7 @@ def video_custom_auto_process():
                                     target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"])
         return jsonify(result)
     except Exception as e:
-        logger.error(f"Error auto processing video: {str(e)}")
+        logger.error(f"Error auto processing video: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
@@ -873,7 +891,7 @@ def video_ocr_process():
         result = process_ocr_only(video_file, session["user_id"])
         return jsonify(result)
     except Exception as e:
-        logger.error(f"Error processing OCR-only job: {e}")
+        logger.error(f"Error processing OCR-only job: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
@@ -892,7 +910,7 @@ def video_custom_ocr_process():
                                    target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"])
         return jsonify(result)
     except Exception as e:
-        logger.error(f"Error OCR processing video: {str(e)}")
+        logger.error(f"Error OCR processing video: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 
@@ -942,6 +960,8 @@ def auth_login():
 @app.route("/auth/logout", methods=["POST"])
 def auth_logout():
     session.clear()
+    # Regenerate session ID to prevent session fixation
+    session.regenerate() if hasattr(session, 'regenerate') else None
     return jsonify({"success": True})
 
 

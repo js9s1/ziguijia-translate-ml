@@ -6,9 +6,7 @@ application keeps working with in-memory fallbacks.
 
 import json
 import logging
-import secrets
 import time
-from functools import wraps
 
 import redis
 

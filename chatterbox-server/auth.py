@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(BASE_DIR, "users.db")
 
+# Pre-computed dummy hash for timing-attack resistance on unknown-user lookups.
+# Generated once so the format is always valid and modern.
+_DUMMY_HASH = generate_password_hash("dummy-timing-guard")
+
 
 @singleton
 class UserManager:
@@ -77,8 +81,8 @@ class UserManager:
             "SELECT * FROM users WHERE email = ?", (email,)
         ).fetchone()
         if not user:
-            # Hash against a dummy string to equalize timing with valid users
-            check_password_hash("pbkdf2:sha256:600000$dummy$dummy", password)
+            # Hash against a dummy to equalize timing with valid users
+            check_password_hash(_DUMMY_HASH, password)
             return {"success": False, "error": "邮箱或密码错误"}
         if not check_password_hash(user["password_hash"], password):
             return {"success": False, "error": "邮箱或密码错误"}
@@ -159,7 +163,11 @@ class UserManager:
         return {"success": True, "message": "重置密码的邮件已发送，请查收"}
 
     def reset_password(self, email: str, code: str, new_password: str) -> dict:
-        """Verify reset code and update password."""
+        """Verify reset code and update password.
+
+        Returns the same generic error for all failure modes to prevent
+        email enumeration and timing oracle attacks.
+        """
         conn = self._get_conn()
         user = conn.execute(
             "SELECT * FROM users WHERE email = ?", (email,)
@@ -167,13 +175,13 @@ class UserManager:
         if not user:
             return {"success": False, "error": "链接无效或已过期"}
         if not user["reset_code"] or not user["reset_code_expires"]:
-            return {"success": False, "error": "未请求重置密码"}
+            return {"success": False, "error": "链接无效或已过期"}
         if time.time() > float(user["reset_code_expires"]):
-            return {"success": False, "error": "验证码已过期，请重新请求"}
+            return {"success": False, "error": "链接无效或已过期"}
         if user["reset_code"] != code:
-            return {"success": False, "error": "验证码错误"}
+            return {"success": False, "error": "链接无效或已过期"}
         if len(new_password) < 6:
-            return {"success": False, "error": "密码至少6个字符"}
+            return {"success": False, "error": "链接无效或已过期"}
         new_hash = generate_password_hash(new_password)
         conn.execute(
             "UPDATE users SET password_hash = ?, reset_code = NULL, reset_code_expires = NULL WHERE email = ?",

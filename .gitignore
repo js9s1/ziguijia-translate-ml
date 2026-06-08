@@ -1,31 +1,24 @@
-# Python
-__pycache__/
-*.pyc
-
-# Secrets
-.env
-
-# Databases (generated at runtime)
+# ── Database files ──────────────────────────────────────────
 *.db
 *.db-shm
 *.db-wal
+*.rdb
 
-# Scripts
-start_server.sh
+# ── Secrets / config ───────────────────────────────────────
+.secret_key
+.env
 
-# Generated outputs
-audio_tracks/
-client/*.wav
+# ── Python ─────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.so
+dist/
+*.egg-info/
 
-# GPU crash dumps
-gpucore.*
-chatterbox-server/gpucore.*
-
-# Cache / metadata
-chatterbox-server/.jobqueue.lock
-chatterbox-server/jobqueue.py.backup
-chatterbox-server/jobqueue_corrupted.py
+# ── Output directories ─────────────────────────────────────
+chatterbox-server/html/views/
 graphify-out/
 
-# IDE / misc
-opencode.json
+# ── Generated / temporary files ────────────────────────────
+*.backup
+gpucore.*
