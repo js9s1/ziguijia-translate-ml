@@ -1,14 +1,13 @@
 """Custom/auto video jobs — user video + SRT, or auto-extract+translate+generate."""
 
 import os
-import shutil
 import subprocess
 import uuid
 
 from jobqueue import get_job_queue
 from log_utils import job_log
 from config import VIDEO_DIR, WHISPER_MODEL, RAPID_VIDEOCR_PIPELINE_SCRIPT, LANG_MAP
-from pipeline import run_gen_audio_step, run_gen_video_step
+from pipeline import run_audio_ckpt, run_video_ckpt, run_gen_audio_step
 from video_util import CheckpointHelper, translate_srt_file, open_proc_log
 
 
@@ -19,17 +18,16 @@ def _run_video_custom_job(job_data: dict):
     output_dir = job_data["output_dir"]
 
     os.makedirs(output_dir, exist_ok=True)
-    job_log(access_code, output_dir, "Step 1: Generating audio from SRT")
     gen_audio_dir = os.path.join(output_dir, "audio_tracks")
+    job_log(access_code, output_dir, "Step 1: Generating audio from SRT")
     audio_out = run_gen_audio_step(srt_path, gen_audio_dir, job_data.get("temperature", 0.8), access_code,
                                    target_language=job_data.get("target_language", "en"),
                                    cfg_weight=job_data.get("cfg_weight", 0.5),
                                    exaggeration=job_data.get("exaggeration", 0.5))
 
     job_log(access_code, output_dir, "Step 2: Processing video")
-    video_output = os.path.join(output_dir, "output_modified.mp4")
-    run_gen_video_step(video_file, srt_path, audio_out["output_srt_path"], audio_out["changed_json_path"], video_output, access_code)
-    shutil.copy2(audio_out["output_srt_path"], output_dir)
+    run_video_ckpt(video_file, srt_path, audio_out, output_dir, access_code,
+                   output_filename="output_modified.mp4")
     job_log(access_code, output_dir, "Done!")
 
 
@@ -115,31 +113,17 @@ def _run_video_auto_job(job_data: dict):
             job_log(access_code, output_dir, "  ↪ translation already done, skipping")
 
         # Step 4: Generate audio from translated SRT
-        gen_audio_dir = os.path.join(output_dir, "audio_tracks")
-        if not ckpt.done("audio"):
-            job_log(access_code, output_dir, "Step 1: Generating audio from translated SRT")
-            audio_out = run_gen_audio_step(translated_srt, gen_audio_dir, temperature, access_code,
-                                           target_language=target_language,
-                                           cfg_weight=cfg_weight,
-                                           exaggeration=exaggeration)
-            ckpt.mark("audio")
-        else:
-            audio_out = {
-                "output_srt_path": os.path.join(gen_audio_dir, "output_adjusted.srt"),
-                "changed_json_path": os.path.join(gen_audio_dir, "changed_segments.json"),
-            }
-            job_log(access_code, output_dir, "  ↪ audio already done, skipping")
+        audio_out = run_audio_ckpt(
+            translated_srt, output_dir, temperature, access_code,
+            target_language=target_language,
+            cfg_weight=cfg_weight, exaggeration=exaggeration,
+            ckpt=ckpt,
+            audio_subdir="audio_tracks",
+        )
 
         # Step 5: Process video
-        if not ckpt.done("video"):
-            job_log(access_code, output_dir, "Step 2: Processing video")
-            video_output = os.path.join(output_dir, "output_modified.mp4")
-            run_gen_video_step(video_file, translated_srt, audio_out["output_srt_path"], audio_out["changed_json_path"], video_output, access_code)
-            ckpt.mark("video")
-        else:
-            job_log(access_code, output_dir, "  ↪ video already done, skipping")
-
-        shutil.copy2(audio_out["output_srt_path"], output_dir)
+        run_video_ckpt(video_file, translated_srt, audio_out, output_dir, access_code,
+                       ckpt=ckpt, output_filename="output_modified.mp4")
 
     job_log(access_code, output_dir, "Done!")
 
@@ -213,32 +197,17 @@ def _run_video_ocr_job(job_data: dict):
             job_log(access_code, output_dir, "  ↪ translation already done, skipping")
 
         # Step 3: Generate audio from translated SRT
-        if not ckpt.done("audio"):
-            job_log(access_code, output_dir, "Step 3: Generating audio from translated SRT")
-            gen_audio_dir = os.path.join(output_dir, "audio_tracks")
-            audio_out = run_gen_audio_step(translated_srt, gen_audio_dir, temperature, access_code,
-                                           target_language=target_language,
-                                           cfg_weight=cfg_weight,
-                                           exaggeration=exaggeration)
-            ckpt.mark("audio")
-        else:
-            gen_audio_dir = os.path.join(output_dir, "audio_tracks")
-            audio_out = {
-                "output_srt_path": os.path.join(gen_audio_dir, "output_adjusted.srt"),
-                "changed_json_path": os.path.join(gen_audio_dir, "changed_segments.json"),
-            }
-            job_log(access_code, output_dir, "  ↪ audio already done, skipping")
+        audio_out = run_audio_ckpt(
+            translated_srt, output_dir, temperature, access_code,
+            target_language=target_language,
+            cfg_weight=cfg_weight, exaggeration=exaggeration,
+            ckpt=ckpt,
+            audio_subdir="audio_tracks",
+        )
 
         # Step 4: Process video
-        if not ckpt.done("video"):
-            job_log(access_code, output_dir, "Step 4: Processing video")
-            video_output = os.path.join(output_dir, "output_modified.mp4")
-            run_gen_video_step(video_file, translated_srt, audio_out["output_srt_path"], audio_out["changed_json_path"], video_output, access_code)
-            ckpt.mark("video")
-        else:
-            job_log(access_code, output_dir, "  ↪ video already done, skipping")
-
-        shutil.copy2(audio_out["output_srt_path"], output_dir)
+        run_video_ckpt(video_file, translated_srt, audio_out, output_dir, access_code,
+                       ckpt=ckpt, output_filename="output_modified.mp4")
 
     job_log(access_code, output_dir, "Done!")
 

@@ -4,13 +4,12 @@ import json
 import os
 import shutil
 import subprocess
-import time
 import uuid
 
 from jobqueue import get_job_queue, JobStatus
 from log_utils import job_log, job_log_lines
 from config import VIDEO_DIR, GEN_VIDEO_ORIG_SCRIPT, RAPID_VIDEOCR_PIPELINE_SCRIPT, PROJECT_ROOT, RAPID_VIDEOCR_BIN, PYTHON_BIN, LANG_MAP
-from pipeline import validate_files
+from pipeline import run_audio_ckpt, run_video_ckpt, validate_files
 from video_util import CheckpointHelper, translate_srt_file, open_proc_log
 
 
@@ -196,51 +195,24 @@ def _run_video_ning_ocr_job(job_data: dict):
             job_log(access_code, output_dir, "  ↪ translation already done, skipping")
 
         # Step 5: Generate audio from translated SRT
-        audio_dir = os.path.join(output_dir, "audio")
-        adjusted_srt = os.path.join(audio_dir, "output_adjusted.srt")
-        if not ckpt.done("audio"):
-            job_log(access_code, output_dir, "Generating audio from translated SRT...")
-            gen_audio_script = os.path.join(PROJECT_ROOT, "gen_audio.py")
-            audio_prompt = os.path.join(PROJECT_ROOT, "..", "assets", "std_ning.wav")
-            subprocess.run(
-                [PYTHON_BIN, gen_audio_script, translated_srt,
-                 "--audio_prompt", audio_prompt,
-                 "--output_dir", audio_dir,
-                 "--output_srt", "output_adjusted.srt",
-                 "--output_wav", "output.wav",
-                 "--changed_json", "changed_segments.json",
-                 "--temperature", str(temperature),
-                 "--target_language", target_language,
-                 "--cfg_weight", str(cfg_weight),
-                 "--exaggeration", str(exaggeration)],
-                stdout=proc_log, stderr=proc_log, timeout=7200,
-            )
-            ckpt.mark("audio")
-        else:
-            job_log(access_code, output_dir, "  ↪ audio already done, skipping")
+        audio_out = run_audio_ckpt(
+            translated_srt, output_dir, temperature, access_code,
+            target_language=target_language,
+            cfg_weight=cfg_weight, exaggeration=exaggeration,
+            ckpt=ckpt,
+            audio_subdir="audio",
+            timeout=7200,
+        )
 
         # Step 6: Process video with stretched segments
-        output_modified = os.path.join(output_dir, "output_modified.mp4")
-        if not ckpt.done("video"):
-            job_log(access_code, output_dir, "Processing video...")
-            changed_json = os.path.join(audio_dir, "changed_segments.json")
-            gen_video_script = os.path.join(PROJECT_ROOT, "gen_video.py")
-            cmd = [PYTHON_BIN, gen_video_script, trimmed_path, translated_srt, adjusted_srt, changed_json,
-                   "--output", output_modified]
-            if blur == "yes":
-                cmd.append("--blur")
-            subprocess.run(
-                cmd,
-                stdout=proc_log, stderr=proc_log, timeout=7200,
-            )
-            ckpt.mark("video")
-        else:
-            job_log(access_code, output_dir, "  ↪ video already done, skipping")
+        run_video_ckpt(trimmed_path, translated_srt, audio_out, output_dir,
+                       access_code, ckpt=ckpt, output_filename="output_modified.mp4",
+                       blur=(blur == "yes"))
 
     validate_files([
-        adjusted_srt,
-        os.path.join(audio_dir, "output.wav"),
-        output_modified,
+        audio_out["output_srt_path"],
+        audio_out["output_wav_path"],
+        os.path.join(output_dir, "output_modified.mp4"),
     ], label="宁视频OCR翻译")
     job_log(access_code, output_dir, "Done!")
 
