@@ -116,11 +116,20 @@ def email_rate_limit(email: str) -> tuple[bool, str]:
 
 
 def _get_secret_key() -> str:
-    """Get the Flask secret key — persist to file so sessions survive restarts."""
+    """Get the Flask secret key — persist to file so sessions survive restarts.
+
+    The key file is stored one directory above BASE_DIR (the project root)
+    so it is outside the web-served directory tree and the catch-all static
+    route can never serve it.
+    """
     env_key = os.environ.get("FLASK_SECRET_KEY")
     if env_key:
         return env_key
-    key_file = os.path.join(BASE_DIR, ".secret_key")
+    key_file = os.path.join(os.path.dirname(BASE_DIR), ".secret_key")
+    # Migrate from legacy location inside BASE_DIR if present
+    legacy = os.path.join(BASE_DIR, ".secret_key")
+    if os.path.exists(legacy) and not os.path.exists(key_file):
+        os.rename(legacy, key_file)
     if os.path.exists(key_file):
         with open(key_file, "r") as f:
             return f.read().strip()
