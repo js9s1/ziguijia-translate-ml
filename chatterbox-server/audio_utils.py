@@ -15,17 +15,36 @@ from video_util import read_srt_text
 
 
 def _check_gpu_healthy() -> bool:
-    """Probe GPU with a tiny CUDA operation in a subprocess (with timeout).
-    This catches GPU Hang conditions that `torch.cuda.is_available()` misses."""
+    """Probe GPU health with a progressively heavier workload (with timeout).
+
+    A single tiny 128×128 matmul can still pass on a degraded ROCm/HIP
+    driver state after a long video job.  This test ramps up through
+    multiple tensor sizes and runs a small inference pipeline:
+    matmul → activation → softmax, repeated across sizes, with explicit
+    ``torch.cuda.synchronize()`` after each step.
+
+    Returns True only if all sizes pass, indicating the GPU is genuinely
+    healthy enough for TTS inference.
+    """
     import subprocess
     import sys
     probe_code = (
+        "import os\n"
+        "os.environ.setdefault('HSA_OVERRIDE_GFX_VERSION', '9.0.0')\n"
+        "os.environ.setdefault('HSA_XNACK', '0')\n"
+        "os.environ.setdefault('ROCBLAS_USE_HIPBLASLT', '0')\n"
         "import torch\n"
+        "ok = True\n"
         "try:\n"
-        "    a = torch.randn(128, 128, device='cuda')\n"
-        "    b = torch.randn(128, 128, device='cuda')\n"
-        "    c = a @ b  # matmul/GEMM — catches HIPBLAS errors\n"
-        "    torch.cuda.synchronize()\n"
+        "    # Progressive workload — small → large, catching driver decay\n"
+        "    for size in [128, 256, 512, 768]:\n"
+        "        a = torch.randn(size, size, device='cuda')\n"
+        "        b = torch.randn(size, size, device='cuda')\n"
+        "        c = a @ b                     # GEMM — catches HIPBLAS errors\n"
+        "        c = torch.nn.functional.relu(c)  # activation path\n"
+        "        c = torch.softmax(c, dim=-1)    # reduction path\n"
+        "        torch.cuda.synchronize()\n"
+        "    torch.cuda.empty_cache()\n"
         "    print('OK', flush=True)\n"
         "except Exception as e:\n"
         "    print(f'FAIL: {e}', flush=True)"
@@ -33,7 +52,7 @@ def _check_gpu_healthy() -> bool:
     try:
         r = subprocess.run(
             [sys.executable, "-c", probe_code],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, timeout=30,
             env={
                 **os.environ,
                 "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", "0"),
