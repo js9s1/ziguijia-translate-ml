@@ -6,7 +6,7 @@ import uuid
 
 from jobqueue import get_job_queue
 from log_utils import job_log
-from config import VIDEO_DIR, WHISPER_MODEL, RAPID_VIDEOCR_PIPELINE_SCRIPT, LANG_MAP
+from config import VIDEO_DIR, WHISPER_MODEL, WHISPER_OV_DEVICE, RAPID_VIDEOCR_PIPELINE_SCRIPT, LANG_MAP
 from pipeline import run_audio_ckpt, run_video_ckpt, run_gen_audio_step
 from video_util import CheckpointHelper, translate_srt_file, open_proc_log
 
@@ -90,9 +90,10 @@ def _run_video_auto_job(job_data: dict):
         # Step 2: Run whisper speech recognition
         whisper_srt = os.path.join(output_dir, "whisper.srt")
         if not ckpt.done("whisper"):
-            job_log(access_code, output_dir, "Running whisper speech recognition...")
+            job_log(access_code, output_dir, f"Running whisper speech recognition (OpenVINO device={WHISPER_OV_DEVICE})...")
             subprocess.run(
-                ["whisper-cli", "-m", WHISPER_MODEL, "-f", audio_path, "-osrt", "-of", whisper_srt.replace(".srt", ""), "-l", "zh"],
+                ["whisper-cli", "-m", WHISPER_MODEL, "-f", audio_path, "-osrt", "-of", whisper_srt.replace(".srt", ""), "-l", "zh",
+                 "-oved", WHISPER_OV_DEVICE],
                 stdout=proc_log, stderr=proc_log, timeout=7200,
             )
             if not os.path.exists(whisper_srt):

@@ -19,8 +19,22 @@
 #   --keep-frames          Don't delete the frames directory after processing
 #   -h, --help             Show this help
 #
+# Engine selection (via env var OCR_ENGINE):
+#   openvino   — CPU via OpenVINO (default, ~6 fps, stable)
+#   torch      — GPU via ROCm/PyTorch (~1 fps, experimental, requires ROCm stack)
+#   onnxruntime — CPU via ONNX Runtime (fallback if above not available)
+#
+# Examples:
+#   ./rapid_videocr_pipeline.sh -i video.mp4                          # openvino (default)
+#   OCR_ENGINE=torch    ./rapid_videocr_pipeline.sh -i video.mp4      # GPU / ROCm
+#   OCR_ENGINE=onnxruntime ./rapid_videocr_pipeline.sh -i video.mp4   # ONNX Runtime CPU
+#
 
 set -euo pipefail
+
+# ---- source ROCm env (bypass hipBLASLt, set gfx override) ----
+ROCM_ENV="${HOME}/子归家/code_ml/rocm_env.sh"
+[[ -f "$ROCM_ENV" ]] && source "$ROCM_ENV"
 
 # ---- defaults ----
 FPS=3
@@ -29,7 +43,38 @@ OUTPUT_SRT="./output.srt"
 PREFIX="result"
 SAVE_DIR=""
 KEEP_FRAMES=0
-RAPID_VIDEOCR_BIN="${RAPID_VIDEOCR_BIN:-${HOME}/.local/bin/rapid_videocr}"
+RAPID_VIDEOCR_BIN="${RAPID_VIDEOCR_BIN:-/home/js9s/.pyenv/versions/3.11.14/bin/rapid_videocr}"
+PYTHON311="${PYTHON311:-/home/js9s/.pyenv/versions/3.11.14/bin/python3}"
+
+# ---- OCR engine selection ----
+# Switch the rapidocr config.yaml to the desired engine.
+# Set OCR_ENGINE=torch or OCR_ENGINE=onnxruntime to experiment with other backends.
+OCR_ENGINE="${OCR_ENGINE:-openvino}"
+case "$OCR_ENGINE" in
+    openvino|onnxruntime|torch)
+        # Only rewrite if the engine actually differs from current config
+        CURRENT_ENGINE=$("${PYTHON311}" -c "
+import yaml
+from pathlib import Path
+p = Path('${PYTHON311}').parent.parent / 'lib/python3.11/site-packages/rapidocr/config.yaml'
+cfg = yaml.safe_load(p.read_text())
+print(cfg['Det']['engine_type'])
+" 2>/dev/null || echo "unknown")
+        if [[ "$CURRENT_ENGINE" != "$OCR_ENGINE" ]]; then
+            echo "Switching OCR engine: ${CURRENT_ENGINE} -> ${OCR_ENGINE}"
+            RAPIDOCR_CFG="$("${PYTHON311}" -c "
+from rapidocr.main import root_dir
+print(root_dir / 'config.yaml')
+")"
+            sed -i "s/engine_type: \"$CURRENT_ENGINE\"/engine_type: \"$OCR_ENGINE\"/g" "$RAPIDOCR_CFG"
+        fi
+        ;;
+    *)
+        echo "Warning: unknown OCR_ENGINE='$OCR_ENGINE', using openvino (default)"
+        OCR_ENGINE=openvino
+        ;;
+esac
+echo "OCR engine: $OCR_ENGINE"
 
 # Always crop lower portion of frame before OCR (removes watermark/logo/borders)
 # Percentage of frame height to keep from the bottom. 40 = lower 40%.
@@ -85,7 +130,7 @@ ffmpeg -y -i "$INPUT_VIDEO" -vf "${EXTRACT_FILTER}" -c:v png "$FRAMES_DIR/frame_
 
 # ---- 2. Rename frames to VSF naming convention ----
 echo "[2/4] Renaming frames to VSF convention..."
-FRAME_COUNT=$(python3 -c "
+FRAME_COUNT=$("${PYTHON311}" -c "
 import os
 from pathlib import Path
 
@@ -178,7 +223,7 @@ echo "Raw SRT: $RAW_SRT (${#ALL_SRTS[@]} chunks, ${TOTAL_FRAMES} frames)"
 
 # ---- 4. Merge adjacent duplicate / near-duplicate segments ----
 echo "[4/4] Merging adjacent duplicate segments..."
-python3 -c "
+"${PYTHON311}" -c "
 import re
 from difflib import SequenceMatcher
 

@@ -99,6 +99,12 @@ class Job:
     status_changed_at: str | None = None
     target_language: str | None = None
     username: str = ""
+    temperature: float | None = None
+    cfg_weight: float | None = None
+    exaggeration: float | None = None
+    start_trim: float | None = None
+    end_trim: float | None = None
+    text: str | None = None
 
     @property
     def display_type(self) -> str:
@@ -161,14 +167,16 @@ def load_jobs(limit: int = MAX_LOAD_JOBS, offset: int = 0, search: str = "") -> 
             "SELECT COUNT(*) FROM jobs WHERE access_code LIKE ?", (pattern,)
         ).fetchone()[0]
         rows = conn.execute(
-            "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at "
+            "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at, "
+            "temperature, cfg_weight, exaggeration, start_trim, end_trim, text "
             "FROM jobs WHERE access_code LIKE ? " + order_clause + " LIMIT ? OFFSET ?",
             (pattern, limit, offset),
         ).fetchall()
     else:
         total = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
         rows = conn.execute(
-            "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at "
+            "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at, "
+            "temperature, cfg_weight, exaggeration, start_trim, end_trim, text "
             "FROM jobs " + order_clause + " LIMIT ? OFFSET ?",
             (limit, offset),
         ).fetchall()
@@ -184,7 +192,8 @@ def load_jobs(limit: int = MAX_LOAD_JOBS, offset: int = 0, search: str = "") -> 
 def get_job(code: str) -> Job | None:
     conn = get_conn()
     r = conn.execute(
-        "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at "
+        "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at, "
+        "temperature, cfg_weight, exaggeration, start_trim, end_trim, text "
         "FROM jobs WHERE access_code = ?",
         (code.upper(),),
     ).fetchone()
@@ -452,6 +461,9 @@ class State:
         self._message: str | None = None
         self._message_time: float = 0.0
         self.search_query: str = ""
+        # Orphan tracking
+        self._orphans: list[dict] = []
+        self._orphans_last_scan: float = 0.0
 
     def reload(self, reset_page=True):
         self.all, self.total = load_jobs(search=self.search_query)
@@ -651,7 +663,103 @@ def read_key(timeout: float | None = None) -> str:
     return "\x1b" + s
 
 
-# ── Render functions ──────────────────────────────────────
+# ── Orphan detection ──────────────────────────────────────
+
+_ORPHAN_CACHE: tuple[float, list[dict]] = (0.0, [])  # (cached_at, orphans)
+_ORPHAN_CACHE_TTL = 5  # seconds
+
+
+def detect_orphans(force: bool = False) -> list[dict]:
+    """Find running processes whose cmdline references a job output_dir,
+    where the job is no longer in a running/pending state.
+
+    Returns list of dicts: {access_code, output_dir, pid, cmd, cpu_percent, memory_rss, runtime}.
+    Cached for _ORPHAN_CACHE_TTL seconds to avoid excessive psutil iteration.
+    """
+    global _ORPHAN_CACHE
+    now = time.monotonic()
+    if not force and (now - _ORPHAN_CACHE[0]) < _ORPHAN_CACHE_TTL:
+        return _ORPHAN_CACHE[1]
+
+    # Load all non-PENDING, non-PROCESSING jobs with an output_dir
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT access_code, output_dir FROM jobs WHERE status NOT IN ('pending', 'processing') AND output_dir IS NOT NULL"
+    ).fetchall()
+    conn.close()
+
+    dir_to_code = {r["output_dir"]: r["access_code"] for r in rows if r["output_dir"]}
+
+    orphans = []
+    try:
+        for proc in psutil.process_iter(["pid", "cmdline", "cpu_percent", "memory_info", "create_time"]):
+            try:
+                cmdline = " ".join(proc.info["cmdline"] or [])
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+            if not cmdline:
+                continue
+            # Skip terminal/UI processes that happen to have the output_dir
+            # in their cwd — they aren't runaway job subprocesses.
+            skip_procs = {"ghostty", "wezterm-gui", "alacritty", "kitty", "konsole",
+                          "gnome-terminal", "xfce4-terminal", "tmux", "screen"}
+            cmd_base = os.path.basename(cmdline.split()[0]) if cmdline.split() else ""
+            if cmd_base in skip_procs:
+                continue
+            for output_dir, access_code in dir_to_code.items():
+                if output_dir in cmdline:
+                    try:
+                        runtime = time.time() - proc.info["create_time"]
+                    except Exception:
+                        runtime = 0
+                    rss = proc.info["memory_info"].rss if proc.info["memory_info"] else 0
+                    cpu = proc.info["cpu_percent"] or 0
+                    short_cmd = os.path.basename(cmdline.split()[0]) if cmdline.split() else "?"
+                    orphans.append({
+                        "access_code": access_code,
+                        "output_dir": output_dir,
+                        "pid": proc.info["pid"],
+                        "cmd": short_cmd,
+                        "cpu_percent": cpu,
+                        "memory_rss_mb": rss / (1024 * 1024),
+                        "runtime_sec": runtime,
+                    })
+                    break  # one match per proc is enough
+    except Exception:
+        pass
+
+    _ORPHAN_CACHE = (now, orphans)
+    return orphans
+
+
+def render_orphan_warning(orphans: list[dict]) -> Panel | None:
+    """Render a warning panel if orphan processes are found."""
+    if not orphans:
+        return None
+    lines = []
+    total_cpu = 0
+    total_mem = 0
+    for o in orphans:
+        rt = _format_duration(o["runtime_sec"]) if o["runtime_sec"] else "?"
+        lines.append(
+            f"  PID {o['pid']}  [bold red]{o['cmd']}[/]  "
+            f"[yellow]{o['cpu_percent']:.0f}% CPU[/]  "
+            f"[magenta]{o['memory_rss_mb']:.0f} MB[/]  "
+            f"[dim]运行 {rt}[/]  "
+            f"[cyan]{o['access_code']}[/]"
+        )
+        total_cpu += o["cpu_percent"]
+        total_mem += o["memory_rss_mb"]
+    header = (
+        f"[bold red]⚠ 发现 {len(orphans)} 个孤儿进程[/] "
+        f"([yellow]{total_cpu:.0f}% CPU[/], [magenta]{total_mem:.0f} MB[/]) "
+        f"[dim]N=刷新  K=杀掉[/]"
+    )
+    return Panel(
+        Align.left("\n".join([header] + lines)),
+        border_style="red",
+        padding=(0, 1),
+    )
 
 
 def render_summary(jobs: list[Job], search_query: str = "") -> Panel:
@@ -725,6 +833,15 @@ def render_footer(s: State) -> Panel:
 
 def render_all(s: State) -> list:
     items = [render_summary(s.all, s.search_query), "", render_table(s), "", render_footer(s)]
+    # Orphan warning, if any
+    now = time.monotonic()
+    if s._orphans_last_scan and (now - s._orphans_last_scan) > _ORPHAN_CACHE_TTL:
+        s._orphans = detect_orphans()
+        s._orphans_last_scan = now
+    orphan_panel = render_orphan_warning(s._orphans)
+    if orphan_panel:
+        items.insert(1, orphan_panel)
+        items.insert(2, "")
     if s._message:
         items.append(
             Panel(
@@ -734,6 +851,37 @@ def render_all(s: State) -> list:
             )
         )
     return items
+
+
+def _format_duration(seconds: float) -> str:
+    """Format a duration in seconds to a human-readable string."""
+    if seconds < 60:
+        return f"{seconds:.0f}秒"
+    elif seconds < 3600:
+        return f"{seconds // 60:.0f}分{seconds % 60:.0f}秒"
+    elif seconds < 86400:
+        h = seconds // 3600
+        m = (seconds % 3600) // 60
+        return f"{h:.0f}小时{m:.0f}分"
+    else:
+        d = seconds // 86400
+        h = (seconds % 86400) // 3600
+        return f"{d:.0f}天{h:.0f}小时"
+
+
+def _elapsed_since(dt_str: str | None) -> str | None:
+    """Return human-readable elapsed time from *dt_str* to now, or None."""
+    if not dt_str:
+        return None
+    try:
+        dt = time.strptime(dt_str, '%Y-%m-%d %H:%M:%S')
+        epoch = time.mktime(dt)
+        elapsed = time.time() - epoch
+        if elapsed < 0:
+            return None
+        return _format_duration(elapsed)
+    except (ValueError, OSError):
+        return None
 
 
 def render_detail(job: Job, mode: str) -> Panel:
@@ -748,6 +896,36 @@ def render_detail(job: Job, mode: str) -> Panel:
             f"SRT路径: {job.srt_path or 'N/A'}",
             f"用户: {job.username or 'N/A'}",
         ]
+        # Show elapsed time for active statuses
+        if job.status in ("processing", "pending"):
+            elapsed = _elapsed_since(job.status_changed_at)
+            if elapsed:
+                label = "处理中" if job.status == "processing" else "等待中"
+                # Insert right after the status line (index 2)
+                lines.insert(3, f"已{label}: [bold]{elapsed}[/]")
+        # Show optional numeric parameters
+        param_lines = []
+        if job.temperature is not None:
+            param_lines.append(f"温度: {job.temperature}")
+        if job.cfg_weight is not None:
+            param_lines.append(f"CFG权重: {job.cfg_weight}")
+        if job.exaggeration is not None:
+            param_lines.append(f"夸张度: {job.exaggeration}")
+        if job.start_trim is not None:
+            param_lines.append(f"开始裁剪: {job.start_trim}s")
+        if job.end_trim is not None:
+            param_lines.append(f"结束裁剪: {job.end_trim}s")
+        if param_lines:
+            lines.append("")
+            lines.extend(param_lines)
+        # ── Show input text for TTS jobs ────────────────────────
+        if job.display_type == "语音合成" and job.text:
+            lines.append("")
+            # Truncate long text for display
+            display_text = job.text[:1000]
+            if len(job.text) > 1000:
+                display_text += "..."
+            lines.append(f"输入文本:\n[italic]{display_text}[/]")
         if job.error:
             lines.append(f"\n错误信息:\n{job.error}")
         return Panel(
@@ -769,7 +947,8 @@ def load_user_jobs(user_id: int) -> list[Job]:
     """Load all jobs for a given user_id."""
     conn = get_conn()
     rows = conn.execute(
-        "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at "
+        "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at, "
+        "text "
         "FROM jobs WHERE user_id = ?"
         " ORDER BY"
         "   CASE WHEN status = 'processing' THEN 0 ELSE 1 END,"
@@ -1508,6 +1687,8 @@ def interactive(console: Console):
 
     s = State(raw_jobs, total)
     s.clamp_cursor(at_bottom=True)
+    s._orphans = detect_orphans(force=True)
+    s._orphans_last_scan = time.monotonic()
     console.clear()
     last_auto_refresh = time.monotonic()
 
@@ -1605,8 +1786,41 @@ def interactive(console: Console):
 
             elif key in ("n", "N"):
                 s.search_query = ""
+                s._orphans = detect_orphans(force=True)
+                s._orphans_last_scan = time.monotonic()
                 s.reload()
                 s.message("✅ 已刷新")
+
+            elif key in ("k", "K"):
+                orphans = detect_orphans(force=True)
+                if not orphans:
+                    s.message("没有孤儿进程需要清理")
+                else:
+                    killed = 0
+                    for o in orphans:
+                        try:
+                            os.kill(o["pid"], signal.SIGTERM)
+                            killed += 1
+                        except ProcessLookupError:
+                            killed += 1  # already dead
+                        except Exception as e:
+                            s.message(f"❌ 无法杀掉 PID {o['pid']}: {e}")
+                    if killed:
+                        # Give them a moment, then SIGKILL survivors
+                        time.sleep(1)
+                        for o in detect_orphans(force=True):
+                            try:
+                                os.kill(o["pid"], signal.SIGKILL)
+                                killed += 1
+                            except Exception:
+                                pass
+                    s._orphans = detect_orphans(force=True)
+                    s._orphans_last_scan = time.monotonic()
+                    remaining = len(s._orphans)
+                    if remaining:
+                        s.message(f"⚠ 杀掉了 {killed - remaining} 个孤儿进程，{remaining} 个幸存")
+                    else:
+                        s.message(f"✅ 已杀掉 {killed} 个孤儿进程")
 
             elif key in ("r", "R"):
                 s.auto_refresh = not s.auto_refresh

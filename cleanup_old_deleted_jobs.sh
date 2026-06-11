@@ -283,7 +283,7 @@ main_cleanup() {
             continue
         fi
 
-        ((removed_count++))
+        ((++removed_count))
         log_info "Processed job: $access_code"
     done <<< "$jobs_data"
 

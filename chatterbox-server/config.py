@@ -29,6 +29,13 @@ ASSETS_DIR = os.environ.get(
     os.path.abspath(os.path.join(PROJECT_ROOT, "..", "assets")),  # /home/js9s/子归家/assets
 )
 
+# Top-level directory holding collected final modified SRTs from completed jobs.
+# Files are named {access_code}_output-final-modified.srt.
+FINAL_SRT_DIR = os.environ.get(
+    "FINAL_SRT_DIR",
+    os.path.abspath(os.path.join(PROJECT_ROOT, "..", "output_srt")),  # /home/js9s/子归家/output_srt
+)
+
 # ── File paths ───────────────────────────────────────────────
 AUDIO_PROMPT_PATH = os.environ.get(
     "AUDIO_PROMPT_PATH",
@@ -56,17 +63,19 @@ WHISPER_MODEL = os.environ.get(
     "WHISPER_MODEL",
     "__WHISPER_MODEL__",
 )
+WHISPER_OV_DEVICE = os.environ.get("WHISPER_OV_DEVICE", "CPU")
 HY_MT_DIR = os.environ.get(
     "HY_MT_DIR",
     "__HY_MT_DIR__",
 )
+HY_MT_BACKEND = os.environ.get("HY_MT_BACKEND", "openvino")  # "openvino" | "pytorch"
 RAPID_VIDEOCR_PIPELINE_SCRIPT = os.environ.get(
     "RAPID_VIDEOCR_PIPELINE_SCRIPT",
     os.path.join(PROJECT_ROOT, "rapid_videocr_pipeline.sh"),
 )
 RAPID_VIDEOCR_BIN = os.environ.get(
     "RAPID_VIDEOCR_BIN",
-    "/home/js9s/.local/bin/rapid_videocr",
+    "/home/js9s/.pyenv/versions/3.11.14/bin/rapid_videocr",
 )
 
 # ── Default ports ──────────────────────────────────────────

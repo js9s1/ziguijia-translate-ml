@@ -13,7 +13,7 @@ from typing import Callable, Optional
 
 import psutil
 
-from db_schema import init_jobs_schema, ConnectionManager
+from db_schema import init_jobs_schema, ConnectionManager, JOB_COLUMNS
 from redis_util import publish_job_status
 from singleton import singleton
 from config import FILENAME_TO_CHECKPOINT_STEP, CHECKPOINT_ORDER
@@ -22,6 +22,80 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(BASE_DIR, "jobs.db")
 
 logger = logging.getLogger(__name__)
+
+
+def _reset_gpu_state():
+    """Reset the ROCm/HIP GPU driver state between jobs.
+
+    Long-running jobs (especially video processing) can leave the AMD
+    Renoir iGPU (gfx90c) ROCm driver in an unstable state, causing
+    subsequent jobs to crash with SIGABRT during heavier GPU workloads
+    even though a lightweight health probe passes.
+
+    This runs a subprocess that:
+      1. Allocates and computes on the GPU (heavier than the TTS probe)
+      2. Calls ``torch.cuda.empty_cache()`` and ``torch.cuda.synchronize()``
+      3. Calls ``hipDeviceReset()`` if available (ROCm)
+
+    The subprocess approach isolates any GPU driver crashes so they don't
+    affect the parent server process.
+    """
+    import subprocess
+    import sys
+
+    probe = (
+        "import os\n"
+        "os.environ.setdefault('HSA_OVERRIDE_GFX_VERSION', '9.0.0')\n"
+        "os.environ.setdefault('HSA_XNACK', '0')\n"
+        "os.environ.setdefault('ROCBLAS_USE_HIPBLASLT', '0')\n"
+        "import torch\n"
+        "ok = True\n"
+        "try:\n"
+        "    # Heavier probe — larger tensors, multiple iterations\n"
+        "    for size in [256, 512, 1024]:\n"
+        "        a = torch.randn(size, size, device='cuda')\n"
+        "        b = torch.randn(size, size, device='cuda')\n"
+        "        c = a @ b\n"
+        "        c = torch.nn.functional.relu(c)\n"
+        "        torch.cuda.synchronize()\n"
+        "    torch.cuda.empty_cache()\n"
+        "    torch.cuda.synchronize()\n"
+        "    # Attempt HIP device reset (ROCm) — helps clear driver state\n"
+        "    try:\n"
+        "        torch.cuda.reset_peak_memory_stats()\n"
+        "    except Exception:\n"
+        "        pass\n"
+        "except Exception as e:\n"
+        "    print(f'GPU reset/probe failed: {e}', flush=True)\n"
+        "    ok = False\n"
+        "print('OK' if ok else 'FAIL', flush=True)\n"
+    )
+    try:
+        r = subprocess.run(
+            [sys.executable, "-c", probe],
+            capture_output=True, text=True, timeout=30,
+            env={
+                **os.environ,
+                "HSA_OVERRIDE_GFX_VERSION": "9.0.0",
+                "HSA_XNACK": "0",
+                "ROCBLAS_USE_HIPBLASLT": "0",
+                "PYTHONUNBUFFERED": "1",
+                "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", "0"),
+            },
+        )
+        if "OK" in r.stdout:
+            logger.info("GPU state reset between jobs — ok")
+        else:
+            logger.warning(
+                "GPU state reset between jobs — probe failed: stderr=%s stdout=%s",
+                r.stderr.strip()[:200], r.stdout.strip()[:200],
+            )
+    except subprocess.TimeoutExpired:
+        logger.warning("GPU state reset between jobs — timed out (GPU may be hung)")
+    except FileNotFoundError:
+        logger.debug("GPU state reset skipped — python interpreter not found")
+    except Exception as e:
+        logger.warning("GPU state reset between jobs — error: %s", e)
 
 def _now_str() -> str:
     return time.strftime('%Y-%m-%d %H:%M:%S')
@@ -158,14 +232,16 @@ class JobQueue:
         """Kill subprocesses orphaned by a server crash / restart.
 
         Iterates all running processes and terminates any whose command-line
-        references the output directory of a now-pending job.  This prevents
-        resource leaks where ``gen_audio.py``, ``gen_video.py``, ffmpeg, etc.
-        keep consuming CPU / GPU / memory after their parent died.
+        references the output directory of a job that is no longer in a
+        running/processing state.  This prevents resource leaks where
+        ``gen_audio.py``, ``gen_video.py``, ffmpeg, etc. keep consuming
+        CPU / GPU / memory after their parent died or the job was marked
+        failed before the subprocess finished.
         """
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT DISTINCT output_dir FROM jobs WHERE status = ? AND output_dir IS NOT NULL",
-            (JobStatus.PENDING.value,)
+            "SELECT DISTINCT output_dir FROM jobs WHERE status NOT IN (?, ?) AND output_dir IS NOT NULL",
+            (JobStatus.PROCESSING.value, JobStatus.PENDING.value)
         ).fetchall()
         dirs = {r["output_dir"] for r in rows}
         if not dirs:
@@ -286,6 +362,66 @@ class JobQueue:
 
         return access_code
 
+    @staticmethod
+    def _kill_processes_by_output_dir(output_dir: str, sig: int = signal.SIGTERM):
+        """Kill all running processes whose cmdline contains *output_dir*.
+
+        Uses ``psutil`` to iterate running processes — this works even when
+        the original parent process (``multiprocessing.Process``) has already
+        exited but its children/descendants (shell scripts, ffmpeg, etc.) are
+        still alive as orphans.
+        """
+        if not output_dir:
+            return
+        for proc in psutil.process_iter(["pid", "cmdline"]):
+            try:
+                cmdline = " ".join(proc.info["cmdline"] or [])
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+            if output_dir in cmdline:
+                try:
+                    os.kill(proc.info["pid"], sig)
+                except (ProcessLookupError, PermissionError):
+                    pass
+
+    @staticmethod
+    def _kill_process_group(proc: multiprocessing.Process, output_dir: str | None = None):
+        """Kill *proc* and its entire process group, with a psutil-based
+        fallback when the child process PID is no longer valid.
+
+        After ``os.fork()`` the child calls ``os.setpgid(os.getpid(), os.getpid())``
+        so that grandchildren (shell scripts, gen_audio.py, ffmpeg, etc.) share
+        the same PGID.  When the child exits, ``os.getpgid(proc.pid)`` raises
+        ``ProcessLookupError`` even though the PGID is still active.  In that
+        case we fall back to scanning ``/proc`` via ``psutil``.
+        """
+        import signal as _sig
+
+        # Try process-group kill first
+        try:
+            pgid = os.getpgid(proc.pid)
+            os.killpg(pgid, _sig.SIGTERM)
+            pgid_killed = True
+        except (ProcessLookupError, PermissionError, AttributeError):
+            pgid_killed = False
+
+        # Fall back to psutil-based kill when PGID lookup failed
+        if not pgid_killed and output_dir:
+            _kill_pg = JobQueue._kill_processes_by_output_dir
+            _kill_pg(output_dir, _sig.SIGTERM)
+
+        proc.join(timeout=3)
+        if proc.is_alive():
+            try:
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, _sig.SIGKILL)
+                pgid_killed = True
+            except (ProcessLookupError, PermissionError, AttributeError):
+                pgid_killed = False
+            if not pgid_killed and output_dir:
+                _kill_pg(output_dir, _sig.SIGKILL)
+            proc.join(timeout=2)
+
     def _close_conn(self):
         """Close the current thread-local DB connection, if open.
 
@@ -348,16 +484,15 @@ class JobQueue:
     def _process_job(self, access_code: str):
         conn = self._get_conn()
 
-        columns = ["access_code", "srt_path", "output_dir", "temperature", "status", "error", "run_func_name", "video_number", "created_at", "video_file", "user_id", "text", "blur", "target_language", "cfg_weight", "exaggeration", "start_trim", "end_trim", "cached_path"]
         row = conn.execute(
-            f"SELECT {', '.join(columns)} FROM jobs WHERE access_code = ?", (access_code,)
+            f"SELECT {', '.join(JOB_COLUMNS)} FROM jobs WHERE access_code = ?", (access_code,)
         ).fetchone()
 
         if not row:
             logger.warning(f"Job {access_code} not found in database")
             return
 
-        job = dict(zip(columns, row))
+        job = dict(zip(JOB_COLUMNS, row))
 
         run_func_name = job.get("run_func_name")
         try:
@@ -447,20 +582,8 @@ class JobQueue:
                 if cancelled:
                     # Kill the entire process group so subprocesses
                     # (ffmpeg, rapid_videocr, whisper-cli, etc.) don't linger.
-                    import signal
-                    try:
-                        pgid = os.getpgid(proc.pid)
-                        os.killpg(pgid, signal.SIGTERM)
-                    except (ProcessLookupError, PermissionError, AttributeError):
-                        pass
-                    proc.join(timeout=3)
-                    if proc.is_alive():
-                        try:
-                            pgid = os.getpgid(proc.pid)
-                            os.killpg(pgid, signal.SIGKILL)
-                        except (ProcessLookupError, PermissionError, AttributeError):
-                            pass
-                        proc.join(timeout=2)
+                    output_dir = job.get("output_dir")
+                    self._kill_process_group(proc, output_dir)
                     break
 
             if cancelled:
@@ -496,6 +619,12 @@ class JobQueue:
                 publish_job_status(access_code, JobStatus.COMPLETED.value)
                 logger.info(f"Job {access_code} completed successfully")
             else:
+                # Kill the process group — the child proc may have exited but
+                # grandchild subprocesses (shell scripts → gen_audio.py, ffmpeg, etc.)
+                # can still be alive, consuming resources as orphans.
+                output_dir = job.get("output_dir")
+                self._kill_process_group(proc, output_dir)
+
                 now = _now_str()
                 sig = f" (exit {proc.exitcode})" if proc.exitcode is not None else ""
                 conn.execute(
@@ -508,11 +637,8 @@ class JobQueue:
         except Exception as e:
             # Ensure the child process is cleaned up on unexpected errors
             if proc.is_alive():
-                proc.terminate()
-                proc.join(timeout=3)
-                if proc.is_alive():
-                    proc.kill()
-                    proc.join(timeout=2)
+                output_dir = job.get("output_dir")
+                self._kill_process_group(proc, output_dir)
             now = _now_str()
             conn.execute(
                 "UPDATE jobs SET status = ?, error = ?, failed_at = ?, status_changed_at = ? WHERE access_code = ?",
@@ -521,6 +647,12 @@ class JobQueue:
             conn.commit()
             publish_job_status(access_code, JobStatus.FAILED.value, error=str(e)[:500])
             logger.error(f"Job {access_code} handler error: {e}")
+
+        # ── GPU state reset between jobs ─────────────────────────
+        # After any job finishes (success, failure, or cancellation),
+        # reset the ROCm/HIP GPU driver state so the next job doesn't
+        # inherit a degraded GPU from a long-running predecessor.
+        _reset_gpu_state()
 
         conn.commit()
 

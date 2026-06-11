@@ -6,7 +6,7 @@ import re
 from contextlib import contextmanager
 
 from log_utils import job_log
-from config import HY_MT_DIR, LANG_MAP
+from config import HY_MT_DIR, HY_MT_BACKEND, LANG_MAP
 
 
 def _normalize_srt_timestamps(text: str) -> str:
@@ -30,15 +30,23 @@ def read_srt_text(path: str) -> str:
 
     Timestamps are normalized to SRT standard (comma milliseconds, triple-dash
     arrow) so callers don't need to handle ffmpeg-style dot-milliseconds.
+
+    Line endings (\\r\\n) are normalized to \\n so that downstream parsers using
+    ``\\n\\n`` to split subtitle blocks work correctly with files originating
+    from Windows / other platforms.
     """
     with open(path, "rb") as f:
         raw = f.read()
     for enc in ("utf-8-sig", "utf-16-le", "utf-16-be", "gbk", "gb2312", "gb18030", "utf-8"):
         try:
-            return _normalize_srt_timestamps(raw.decode(enc))
+            text = raw.decode(enc)
+            text = text.replace("\r\n", "\n").replace("\r", "\n")
+            return _normalize_srt_timestamps(text)
         except (UnicodeDecodeError, LookupError):
             continue
-    return _normalize_srt_timestamps(raw.decode("utf-8", errors="replace"))
+    text = raw.decode("utf-8", errors="replace")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return _normalize_srt_timestamps(text)
 
 
 @contextmanager
@@ -68,6 +76,8 @@ def _get_hy_mt():
     if HY_MT_DIR not in sys.path:
         sys.path.insert(0, HY_MT_DIR)
     import importlib
+    if HY_MT_BACKEND == "openvino":
+        return importlib.import_module("hy_mt_openvino")
     return importlib.import_module("hy_mt")
 
 
