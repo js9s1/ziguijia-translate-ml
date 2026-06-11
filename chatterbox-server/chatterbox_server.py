@@ -13,7 +13,7 @@ from collections import defaultdict
 import importlib
 from jobqueue import get_job_queue
 from auth import get_user_manager
-from config import AUDIO_TRACKS_DIR, VIDEO_DIR, FINAL_SRT_DIR, FILENAME_TO_CHECKPOINT_STEP
+from config import AUDIO_TRACKS_DIR, VIDEO_DIR, FILENAME_TO_CHECKPOINT_STEP
 from redis_util import (
     InMemoryRateLimiter, is_available as redis_available,
     cache_get, cache_set, get_redis, get_session_redis,
@@ -435,7 +435,6 @@ ALLOWED_FILE_DIRS = [
     os.path.realpath(BASE_DIR),
     os.path.realpath(AUDIO_TRACKS_DIR) if os.path.exists(AUDIO_TRACKS_DIR) else None,
     os.path.realpath(VIDEO_DIR) if VIDEO_DIR and os.path.exists(VIDEO_DIR) else None,
-    os.path.realpath(FINAL_SRT_DIR) if FINAL_SRT_DIR and os.path.exists(FINAL_SRT_DIR) else None,
 ]
 ALLOWED_FILE_DIRS = [d for d in ALLOWED_FILE_DIRS if d]
 

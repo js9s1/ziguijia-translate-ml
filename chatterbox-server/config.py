@@ -29,13 +29,6 @@ ASSETS_DIR = os.environ.get(
     os.path.abspath(os.path.join(PROJECT_ROOT, "..", "assets")),  # /home/js9s/子归家/assets
 )
 
-# Top-level directory holding collected final modified SRTs from completed jobs.
-# Files are named {access_code}_output-final-modified.srt.
-FINAL_SRT_DIR = os.environ.get(
-    "FINAL_SRT_DIR",
-    os.path.abspath(os.path.join(PROJECT_ROOT, "..", "output_srt")),  # /home/js9s/子归家/output_srt
-)
-
 # ── File paths ───────────────────────────────────────────────
 AUDIO_PROMPT_PATH = os.environ.get(
     "AUDIO_PROMPT_PATH",
