@@ -342,8 +342,8 @@ class JobQueue:
         prev_ckpt = existing_checkpoint[0] if existing_checkpoint else ""
 
         conn.execute("""
-            INSERT OR REPLACE INTO jobs (access_code, srt_path, output_dir, temperature, status, error, run_func_name, video_number, video_file, user_id, text, blur, target_language, cfg_weight, exaggeration, start_trim, end_trim, cached_path, checkpoint, status_changed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO jobs (access_code, srt_path, output_dir, temperature, status, error, run_func_name, video_number, video_file, user_id, text, blur, target_language, cfg_weight, exaggeration, start_trim, end_trim, cached_path, filename, checkpoint, status_changed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             access_code,
             job_data.get("srt_path"),
@@ -363,6 +363,7 @@ class JobQueue:
             job_data.get("start_trim", 12.25),
             job_data.get("end_trim", 40.0),
             job_data.get("cached_path"),
+            job_data.get("filename"),
             prev_ckpt,
             _now_str(),
         ))

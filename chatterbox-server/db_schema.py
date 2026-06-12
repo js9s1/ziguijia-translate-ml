@@ -113,6 +113,7 @@ def _migrate_jobs_table(conn: sqlite3.Connection):
     add_column_if_missing(conn, "jobs", "start_trim", "REAL DEFAULT 12.25")
     add_column_if_missing(conn, "jobs", "end_trim", "REAL DEFAULT 40.0")
     add_column_if_missing(conn, "jobs", "cached_path", "TEXT")
+    add_column_if_missing(conn, "jobs", "filename", "TEXT")
 
 
 # ── users table (used by auth.UserManager) ──────────────────────
@@ -145,7 +146,7 @@ JOB_COLUMNS = [
     "access_code", "srt_path", "output_dir", "temperature", "status",
     "error", "run_func_name", "video_number", "created_at", "video_file",
     "user_id", "text", "blur", "target_language", "cfg_weight",
-    "exaggeration", "start_trim", "end_trim", "cached_path",
+    "exaggeration", "start_trim", "end_trim", "cached_path", "filename",
 ]
 
 
