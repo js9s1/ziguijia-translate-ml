@@ -142,11 +142,21 @@ def process_audio_file(content: str, original_filename: str, temperature: float,
     output_dir = os.path.join(AUDIO_TRACKS_DIR, access_code)
     os.makedirs(output_dir, exist_ok=True)
 
+    # Use user-supplied filename, falling back to a unique name derived from the
+    # original filename so concurrent submissions don't overwrite each other.
+    if original_filename:
+        base, ext = os.path.splitext(original_filename)
+        if not ext:
+            ext = ".wav"
+        filename = f"{base}{ext}"
+    else:
+        filename = f"output_{access_code}.wav"
+
     job_data = {
         "access_code": access_code,
         "content": content,
         "output_dir": output_dir,
-        "filename": "output.wav",
+        "filename": filename,
         "temperature": temperature,
         "target_language": target_language,
         "cfg_weight": cfg_weight,
