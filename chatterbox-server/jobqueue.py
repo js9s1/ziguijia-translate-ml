@@ -208,7 +208,22 @@ class JobQueue:
     def _load_pending_jobs(self):
         conn = self._get_conn()
 
-        # Find any jobs that were still PROCESSING when the server died —
+        # Kill orphan subprocesses left behind by the dead server instance
+        # BEFORE resetting statuses so the orphans are still findable via
+        # their PROCESSING output_dir.
+        self._cleanup_orphan_processes()
+
+        # Also kill any children that were in PROCESSING state — the parent
+        # died and the non-daemon child might still be running.  Scan their
+        # output directories and terminate any processes referencing them.
+        processing_rows = conn.execute(
+            "SELECT output_dir FROM jobs WHERE status = ? AND output_dir IS NOT NULL",
+            (JobStatus.PROCESSING.value,)
+        ).fetchall()
+        for row in processing_rows:
+            self._kill_processes_by_output_dir(row["output_dir"])
+
+        # Now find any jobs that were still PROCESSING when the server died —
         # reset them to PENDING so they can be retried.
         now = _now_str()
         conn.execute(
@@ -216,9 +231,6 @@ class JobQueue:
             (JobStatus.PENDING.value, now, JobStatus.PROCESSING.value)
         )
         conn.commit()
-
-        # Kill orphan subprocesses left behind by the dead server instance.
-        self._cleanup_orphan_processes()
 
         rows = conn.execute(
             "SELECT access_code FROM jobs WHERE status = ?",
@@ -384,8 +396,7 @@ class JobQueue:
                 except (ProcessLookupError, PermissionError):
                     pass
 
-    @staticmethod
-    def _kill_process_group(proc: multiprocessing.Process, output_dir: str | None = None):
+    def _kill_process_group(self, proc: multiprocessing.Process, output_dir: str | None = None):
         """Kill *proc* and its entire process group, with a psutil-based
         fallback when the child process PID is no longer valid.
 
@@ -405,10 +416,13 @@ class JobQueue:
         except (ProcessLookupError, PermissionError, AttributeError):
             pgid_killed = False
 
-        # Fall back to psutil-based kill when PGID lookup failed
+        # Fall back to psutil-based kill when PGID lookup failed.
+        # Use self._kill_processes_by_output_dir (not JobQueue._kill…)
+        # because the @singleton decorator replaces the class with a
+        # function, so JobQueue._kill_processes_by_output_dir would be
+        # an AttributeError on a function object.
         if not pgid_killed and output_dir:
-            _kill_pg = JobQueue._kill_processes_by_output_dir
-            _kill_pg(output_dir, _sig.SIGTERM)
+            self._kill_processes_by_output_dir(output_dir, _sig.SIGTERM)
 
         proc.join(timeout=3)
         if proc.is_alive():
@@ -419,7 +433,7 @@ class JobQueue:
             except (ProcessLookupError, PermissionError, AttributeError):
                 pgid_killed = False
             if not pgid_killed and output_dir:
-                _kill_pg(output_dir, _sig.SIGKILL)
+                self._kill_processes_by_output_dir(output_dir, _sig.SIGKILL)
             proc.join(timeout=2)
 
     def _close_conn(self):
@@ -535,10 +549,14 @@ class JobQueue:
 
         # Run the job in a child process so we can detect cancellation
         # and abort without blocking the queue worker.
+        # Non-daemon so the child survives parent process exit (e.g. gunicorn
+        # worker recycle on SIGHUP).  The child creates its own process group
+        # in _job_process_wrapper so it is immune to parent signal propagation.
+        # Cancellation still works via _kill_process_group (os.killpg).
         proc = multiprocessing.Process(
             target=_job_process_wrapper,
             args=(job, run_func_name),
-            daemon=True,
+            daemon=False,
         )
         proc.start()
 
@@ -753,12 +771,28 @@ class JobQueue:
 
     _STEP_ARTIFACTS = {
         "translate":  ["translated.srt"],
-        "audio":      ["audio", "audio_tracks"],
+        "audio":      [
+            "audio/output.wav",
+            "audio/output_adjusted.srt",
+            "audio/output-final-modified.srt",
+            "audio/changed_segments.json",
+            "audio/job.log",
+            "audio_tracks/output.wav",
+            "audio_tracks/output_adjusted.srt",
+            "audio_tracks/output-final-modified.srt",
+            "audio_tracks/changed_segments.json",
+            "audio_tracks/job.log",
+        ],
         "video":      ["output_modified.mp4", "output_final.mp4"],
     }
 
     def _purge_step_artifacts(self, output_dir: str, steps: set[str]):
-        """Delete output files/dirs produced by the given checkpoint steps."""
+        """Delete output files produced by the given checkpoint steps.
+
+        For the audio step, only the final output files are removed;
+        the ``tmp/`` subdirectory (holding per-segment cached wavs and
+        meta JSONs) is preserved so unchanged segments can skip re-generation.
+        """
         import shutil
         for step in steps:
             for rel in self._STEP_ARTIFACTS.get(step, []):
@@ -993,6 +1027,8 @@ class JobQueue:
         conn.commit()
 
         self._queue.put(access_code)
+        # Ensure the worker thread is alive (it may have died silently)
+        self._ensure_worker()
 
         return {"success": True, "message": "Job resubmitted"}
 
