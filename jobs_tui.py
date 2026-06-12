@@ -245,7 +245,13 @@ def _invalidated_steps(keep_steps: list[str]) -> list[str]:
 
 
 def _purge_step_output(output_dir: str, video_number: str, step: str):
-    """Delete files/dirs associated with a single checkpoint step."""
+    """Delete files/dirs associated with a single checkpoint step.
+
+    For the "audio" step, only final output files inside ``audio/`` or
+    ``audio_tracks/`` are removed.  The ``tmp/`` subdirectory (per-segment
+    cached wavs and meta JSONs) is preserved so unchanged segments skip
+    re-generation on resubmit.
+    """
     import shutil
     paths = []
     if step == "download":
@@ -258,7 +264,21 @@ def _purge_step_output(output_dir: str, video_number: str, step: str):
     elif step == "translate":
         paths.append(os.path.join(output_dir, "translated.srt"))
     elif step == "audio":
-        paths.append(os.path.join(output_dir, "audio"))
+        # Remove only final output files — preserve tmp/ cache
+        _AUDIO_OUTPUT_FILES = [
+            "output.wav",
+            "output_adjusted.srt",
+            "output-final-modified.srt",
+            "changed_segments.json",
+            "job.log",
+        ]
+        for subdir in ("audio", "audio_tracks"):
+            ad = os.path.join(output_dir, subdir)
+            if os.path.isdir(ad):
+                for fn in _AUDIO_OUTPUT_FILES:
+                    fp = os.path.join(ad, fn)
+                    if os.path.isfile(fp):
+                        paths.append(fp)
     elif step == "video":
         paths.append(os.path.join(output_dir, "output_modified.mp4"))
         paths.append(os.path.join(output_dir, "output_final.mp4"))

@@ -38,7 +38,6 @@ def run_gen_audio_step(
     output_srt: str = "output_adjusted.srt",
     output_wav: str = "output.wav",
     changed_json: str = "changed_segments.json",
-    timeout: int = 3600,
 ) -> dict[str, str]:
     """Run the gen_audio.py subprocess and return paths to generated files.
     Progress is updated every 30 seconds while waiting.
@@ -138,7 +137,6 @@ def run_gen_video_step(
     output_path: str,
     access_code: str,
     blur: bool = False,
-    timeout: int = 7200,
 ):
     """Run the gen_video.py subprocess to produce the final video.
 
@@ -232,7 +230,6 @@ def run_audio_ckpt(
     exaggeration: float = 0.5,
     ckpt=None,
     audio_subdir: str = "audio_tracks",
-    timeout: int = 3600,
 ) -> dict[str, str]:
     """Run the audio generation step if the checkpoint is not yet done.
 
@@ -253,7 +250,6 @@ def run_audio_ckpt(
         target_language=target_language,
         cfg_weight=cfg_weight,
         exaggeration=exaggeration,
-        timeout=timeout,
     )
     if ckpt:
         ckpt.mark("audio")

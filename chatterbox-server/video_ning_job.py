@@ -202,7 +202,6 @@ def _run_video_ning_ocr_job(job_data: dict):
             cfg_weight=cfg_weight, exaggeration=exaggeration,
             ckpt=ckpt,
             audio_subdir="audio",
-            timeout=7200,
         )
 
         # Step 6: Process video with stretched segments

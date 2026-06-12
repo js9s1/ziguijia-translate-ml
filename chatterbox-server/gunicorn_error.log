@@ -50024,3 +50024,136 @@ KeyError: 'content'
 [2026-05-29 09:57:56 -0400] [45386] [INFO] Worker exiting (pid: 45386)
 [2026-05-29 09:57:56 -0400] [45385] [INFO] Handling signal: term
 [2026-05-29 09:58:01 -0400] [45385] [INFO] Shutting down: Master
+[2026-06-11 10:43:31 -0400] [2472533] [DEBUG] Current configuration:
+  config: gunicorn_config.py
+  wsgi_app: None
+  bind: ['0.0.0.0:5600']
+  backlog: 2048
+  workers: 1
+  worker_class: sync
+  threads: 1
+  worker_connections: 1000
+  max_requests: 0
+  max_requests_jitter: 0
+  timeout: 30
+  graceful_timeout: 30
+  keepalive: 2
+  limit_request_line: 4094
+  limit_request_fields: 100
+  limit_request_field_size: 8190
+  reload: False
+  reload_engine: auto
+  reload_extra_files: []
+  spew: False
+  check_config: False
+  print_config: False
+  preload_app: False
+  sendfile: None
+  reuse_port: False
+  chdir: /home/js9s/子归家/code_ml/chatterbox-server
+  daemon: False
+  raw_env: []
+  pidfile: None
+  worker_tmp_dir: None
+  user: 1000
+  group: 1000
+  umask: 0
+  initgroups: False
+  tmp_upload_dir: None
+  secure_scheme_headers: {'X-FORWARDED-PROTOCOL': 'ssl', 'X-FORWARDED-PROTO': 'https', 'X-FORWARDED-SSL': 'on'}
+  forwarded_allow_ips: ['127.0.0.1', '::1']
+  accesslog: None
+  disable_redirect_access_to_syslog: False
+  access_log_format: %(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"
+  errorlog: gunicorn_error.log
+  loglevel: debug
+  capture_output: False
+  logger_class: gunicorn.glogging.Logger
+  logconfig: None
+  logconfig_dict: {}
+  logconfig_json: None
+  syslog_addr: udp://localhost:514
+  syslog: False
+  syslog_prefix: None
+  syslog_facility: user
+  enable_stdio_inheritance: False
+  statsd_host: None
+  dogstatsd_tags: 
+  statsd_prefix: 
+  enable_backlog_metric: False
+  proc_name: None
+  default_proc_name: chatterbox_server:app
+  pythonpath: None
+  paste: None
+  on_starting: <function OnStarting.on_starting at 0x7f211c939f80>
+  on_reload: <function OnReload.on_reload at 0x7f211c93a0c0>
+  when_ready: <function WhenReady.when_ready at 0x7f211c93a200>
+  pre_fork: <function Prefork.pre_fork at 0x7f211c93a340>
+  post_fork: <function post_fork at 0x7f211c960d60>
+  post_worker_init: <function PostWorkerInit.post_worker_init at 0x7f211c93a5c0>
+  worker_int: <function WorkerInt.worker_int at 0x7f211c93a700>
+  worker_abort: <function WorkerAbort.worker_abort at 0x7f211c93a840>
+  pre_exec: <function PreExec.pre_exec at 0x7f211c93a980>
+  pre_request: <function PreRequest.pre_request at 0x7f211c93aac0>
+  post_request: <function PostRequest.post_request at 0x7f211c93ab60>
+  child_exit: <function ChildExit.child_exit at 0x7f211c93aca0>
+  worker_exit: <function worker_exit at 0x7f211c28d3a0>
+  nworkers_changed: <function NumWorkersChanged.nworkers_changed at 0x7f211c93af20>
+  on_exit: <function OnExit.on_exit at 0x7f211c93b060>
+  ssl_context: <function NewSSLContext.ssl_context at 0x7f211c93b240>
+  proxy_protocol: off
+  proxy_allow_ips: ['127.0.0.1', '::1']
+  protocol: http
+  uwsgi_allow_ips: ['127.0.0.1', '::1']
+  keyfile: None
+  certfile: None
+  ssl_version: 2
+  cert_reqs: 0
+  ca_certs: None
+  suppress_ragged_eofs: True
+  do_handshake_on_connect: False
+  ciphers: None
+  http_protocols: ['h1']
+  http2_max_concurrent_streams: 100
+  http2_initial_window_size: 65535
+  http2_max_frame_size: 16384
+  http2_max_header_list_size: 65536
+  raw_paste_global_conf: []
+  permit_obsolete_folding: False
+  strip_header_spaces: False
+  permit_unconventional_http_method: False
+  permit_unconventional_http_version: False
+  casefold_http_method: False
+  forwarder_headers: ['SCRIPT_NAME', 'PATH_INFO']
+  header_map: drop
+  asgi_loop: auto
+  asgi_lifespan: auto
+  asgi_disconnect_grace_period: 3
+  http_parser: auto
+  root_path: 
+  dirty_apps: []
+  dirty_workers: 0
+  dirty_timeout: 300
+  dirty_threads: 1
+  dirty_graceful_timeout: 30
+  on_dirty_starting: <function OnDirtyStarting.on_dirty_starting at 0x7f211c93b740>
+  dirty_post_fork: <function DirtyPostFork.dirty_post_fork at 0x7f211c93b880>
+  dirty_worker_init: <function DirtyWorkerInit.dirty_worker_init at 0x7f211c93b9c0>
+  dirty_worker_exit: <function DirtyWorkerExit.dirty_worker_exit at 0x7f211c93bb00>
+  control_socket: /run/user/1000/gunicorn.ctl
+  control_socket_mode: 384
+  control_socket_disable: False
+[2026-06-11 10:43:31 -0400] [2472533] [INFO] Starting gunicorn 25.3.0
+[2026-06-11 10:43:31 -0400] [2472533] [DEBUG] Arbiter booted
+[2026-06-11 10:43:31 -0400] [2472533] [INFO] Listening at: http://0.0.0.0:5600 (2472533)
+[2026-06-11 10:43:31 -0400] [2472533] [INFO] Using worker: sync
+[2026-06-11 10:43:31 -0400] [2472534] [INFO] Booting worker with pid: 2472534
+[2026-06-11 10:43:31 -0400] [2472533] [DEBUG] 1 workers
+[2026-06-11 10:43:31 -0400] [2472533] [INFO] Control socket listening at /run/user/1000/gunicorn.ctl
+{"ts": "2026-06-11T10:43:31", "level": "INFO", "logger": "gunicorn.error", "msg": "Worker 2472534 forked — JobQueue reset, structured logging installed", "request_id": "-"}
+{"ts": "2026-06-11T10:43:31", "level": "INFO", "logger": "redis_util", "msg": "Redis connected: redis://localhost:6379/0", "request_id": "-"}
+{"ts": "2026-06-11T10:43:35", "level": "DEBUG", "logger": "gunicorn.error", "msg": "GET /health", "request_id": "-"}
+{"ts": "2026-06-11T10:43:35", "level": "INFO", "logger": "chatterbox_server", "msg": "→ GET /health", "request_id": "f2434130c6c5", "endpoint": "/health", "method": "GET", "ip": "127.0.0.1"}
+{"ts": "2026-06-11T10:43:37", "level": "INFO", "logger": "chatterbox_server", "msg": "← GET /health 200 (2239ms)", "request_id": "f2434130c6c5", "endpoint": "/health", "method": "GET", "status": 200, "duration_ms": 2239, "ip": "127.0.0.1"}
+{"ts": "2026-06-11T10:44:09", "level": "INFO", "logger": "gunicorn.error", "msg": "Worker exiting (pid: 2472534)", "request_id": "-"}
+[2026-06-11 10:44:09 -0400] [2472533] [INFO] Handling signal: term

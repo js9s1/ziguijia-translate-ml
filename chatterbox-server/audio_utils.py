@@ -170,13 +170,26 @@ class NingAudio:
         self.setup()
         if prompt_file:
             self.model.prepare_conditionals(prompt_file)
-        wav = self.model.generate(
-                text,
-                language_id=target_language,
-                temperature=temperature,
-                cfg_weight=cfg_weight,
-                exaggeration=exaggeration,
-            )
+        try:
+            wav = self.model.generate(
+                    text,
+                    language_id=target_language,
+                    temperature=temperature,
+                    cfg_weight=cfg_weight,
+                    exaggeration=exaggeration,
+                )
+        except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
+            if not self._fallback_to_cpu(e):
+                raise
+            if prompt_file:
+                self.model.prepare_conditionals(prompt_file)
+            wav = self.model.generate(
+                    text,
+                    language_id=target_language,
+                    temperature=temperature,
+                    cfg_weight=cfg_weight,
+                    exaggeration=exaggeration,
+                )
         return self.wav_to_bytes(wav, self.model.sr)
 
     def generate_silence(self, duration_sec, sample_rate):
@@ -186,12 +199,45 @@ class NingAudio:
     def load_subs(self, srt_path):
         return list(srt.parse(read_srt_text(srt_path)))
 
+    def _fallback_to_cpu(self, error: Exception) -> bool:
+        """Reload model to CPU after a GPU error. Returns True if successful."""
+        global _model
+        if self.model is None or getattr(self.model, 'device', 'cpu') != 'cuda':
+            return False
+        print(f"GPU error during generation ({error}), falling back to CPU")
+        _model = None
+        self.model = None
+        torch.cuda.empty_cache()
+        try:
+            self.get_model(device="cpu")
+            print("Successfully reloaded model on CPU")
+            return True
+        except Exception as e2:
+            print(f"CPU fallback also failed: {e2}")
+            return False
+
     def generate_audio(self, text, output_path, sample_rate, temperature=None, prompt_file=None, target_language="en", cfg_weight=0.5, exaggeration=0.5):
         if temperature is None:
             temperature = self.model.temperature
+        # If on CPU, try to re-upgrade to GPU — GPU may have recovered
+        if self.model and getattr(self.model, 'device', 'cpu') == 'cpu' and torch.cuda.is_available():
+            try:
+                free, _ = torch.cuda.mem_get_info()
+                if free >= 6.6 * (1024**3):
+                    self.get_model(device="cuda")
+            except Exception:
+                pass
         if prompt_file:
             self.model.prepare_conditionals(prompt_file)
-        wav = self.model.generate(text, language_id=target_language, temperature=temperature, cfg_weight=cfg_weight, exaggeration=exaggeration)
+        try:
+            wav = self.model.generate(text, language_id=target_language, temperature=temperature, cfg_weight=cfg_weight, exaggeration=exaggeration)
+        except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
+            if not self._fallback_to_cpu(e):
+                raise
+            # Retry with CPU model
+            if prompt_file:
+                self.model.prepare_conditionals(prompt_file)
+            wav = self.model.generate(text, language_id=target_language, temperature=temperature, cfg_weight=cfg_weight, exaggeration=exaggeration)
         # Ensure wav is 2D tensor [1, samples]
         if wav.dim() == 1:
             wav = wav.unsqueeze(0)

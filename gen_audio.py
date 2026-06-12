@@ -17,6 +17,70 @@ from video_util import read_srt_text
 CHANGED_THRESHOLD = 0.05
 
 
+# ── Per-segment cache helpers ────────────────────────────────
+
+
+def _segment_meta_path(output_dir, seg_idx):
+    return os.path.join(output_dir, "tmp", f"segment_{seg_idx}_meta.json")
+
+
+def _combined_seg_path(output_dir, seg_idx):
+    return os.path.join(output_dir, "tmp", f"combined_segment_{seg_idx}.wav")
+
+
+def _check_segment_cache(output_dir, seg_idx, content, speaker, chunks,
+                         temperature, target_language, cfg_weight, exaggeration):
+    """Check if cached wav + metadata exist and match current segment.
+
+    Returns (is_cached: bool, wav_duration: float).
+    """
+    meta_path = _segment_meta_path(output_dir, seg_idx)
+    wav_path = _combined_seg_path(output_dir, seg_idx)
+
+    if not os.path.exists(wav_path) or not os.path.exists(meta_path):
+        return False, 0.0
+
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+
+        # Compare current segment text + parameters with cached metadata
+        if (meta.get("content") == content
+                and meta.get("speaker") == speaker
+                and meta.get("chunks") == chunks
+                and abs(meta.get("temperature", 0.8) - temperature) < 0.001
+                and meta.get("target_language") == target_language
+                and abs(meta.get("cfg_weight", 0.5) - cfg_weight) < 0.001
+                and abs(meta.get("exaggeration", 0.5) - exaggeration) < 0.001):
+            return True, meta.get("wav_duration", 0.0)
+    except (json.JSONDecodeError, KeyError, TypeError):
+        pass
+
+    return False, 0.0
+
+
+def _save_segment_meta(output_dir, seg_idx, content, speaker, chunks,
+                       wav_duration, temperature, target_language,
+                       cfg_weight, exaggeration):
+    """Save metadata for a generated segment so it can be reused."""
+    meta_path = _segment_meta_path(output_dir, seg_idx)
+    meta = {
+        "content": content,
+        "speaker": speaker,
+        "chunks": chunks,
+        "wav_duration": wav_duration,
+        "temperature": temperature,
+        "target_language": target_language,
+        "cfg_weight": cfg_weight,
+        "exaggeration": exaggeration,
+    }
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False)
+
+
+# ── Processing ───────────────────────────────────────────────
+
+
 def extract_speaker(content):
     m = re.match(r"^\s*(\w+)\s*:\s*(.*)", content, re.DOTALL)
     if m:
@@ -155,11 +219,16 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
 
         new_start = orig_start + accumulated_offset
 
+        seg_wav_path = _combined_seg_path(output_dir, i)
+
         if not clean_content.strip():
             # Empty segment — generate silence and preserve timing
             silence_wav = generate_silence(orig_duration, sample_rate)
-            seg_wav_path = os.path.join(output_dir, "tmp", f"combined_segment_{i}.wav")
             save_audio(seg_wav_path, silence_wav, sample_rate)
+            # Clear any stale metadata for empty segments
+            meta_path = _segment_meta_path(output_dir, i)
+            if os.path.exists(meta_path):
+                os.remove(meta_path)
             adjusted_subs.append(
                 srt.Subtitle(index=i, start=timedelta(seconds=new_start),
                              end=timedelta(seconds=new_start + orig_duration),
@@ -172,30 +241,49 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
             })
             continue
 
-        prompt = get_speaker_prompt(speaker, audio_prompt, assets_dir)
+        # ── Check per-segment cache ──
+        cached, cached_duration = _check_segment_cache(
+            output_dir, i, clean_content, speaker, chunks,
+            temperature, target_language, cfg_weight, exaggeration)
 
-        chunk_wavs = []
-        total_wav_duration = 0.0
-        for chunk in chunks:
-            wav_path = os.path.join(output_dir, "tmp", f"segment_{seg_counter}.wav")
-            wav_data, wav_duration = audio.generate_audio(
-                chunk, wav_path, sample_rate, temperature, prompt_file=prompt,
-                target_language=target_language, cfg_weight=cfg_weight, exaggeration=exaggeration
-            )
-            if wav_data.dim() == 1:
-                wav_data = wav_data.unsqueeze(0)
-            chunk_wavs.append(wav_data)
-            total_wav_duration += wav_duration
-            seg_counter += 1
+        if cached:
+            print(f"  ↪ segment {i} cached (duration: {cached_duration:.2f}s), skipping generation")
+            total_wav_duration = cached_duration
+            # Advance seg_counter past chunk slots this segment would use
+            seg_counter += len(chunks)
+        else:
+            prompt = get_speaker_prompt(speaker, audio_prompt, assets_dir)
 
-        combined_wav = torch.cat(chunk_wavs, dim=1) if len(chunk_wavs) > 1 else chunk_wavs[0]
+            chunk_wavs = []
+            total_wav_duration = 0.0
+            for chunk in chunks:
+                wav_path = os.path.join(output_dir, "tmp", f"segment_{seg_counter}.wav")
+                wav_data, wav_duration = audio.generate_audio(
+                    chunk, wav_path, sample_rate, temperature, prompt_file=prompt,
+                    target_language=target_language, cfg_weight=cfg_weight, exaggeration=exaggeration
+                )
+                if wav_data.dim() == 1:
+                    wav_data = wav_data.unsqueeze(0)
+                chunk_wavs.append(wav_data)
+                total_wav_duration += wav_duration
+                seg_counter += 1
 
-        # Pad with silence if generated audio is shorter than original duration
-        if total_wav_duration < orig_duration:
-            silence_duration = orig_duration - total_wav_duration
-            silence = generate_silence(silence_duration, sample_rate)
-            combined_wav = torch.cat([combined_wav, silence], dim=1)
-            total_wav_duration = orig_duration
+            combined_wav = torch.cat(chunk_wavs, dim=1) if len(chunk_wavs) > 1 else chunk_wavs[0]
+
+            # Pad with silence if generated audio is shorter than original duration
+            if total_wav_duration < orig_duration:
+                silence_duration = orig_duration - total_wav_duration
+                silence = generate_silence(silence_duration, sample_rate)
+                combined_wav = torch.cat([combined_wav, silence], dim=1)
+                total_wav_duration = orig_duration
+
+            save_audio(seg_wav_path, combined_wav, sample_rate)
+
+            # Save metadata so this segment can be reused next time
+            _save_segment_meta(
+                output_dir, i, clean_content, speaker, chunks,
+                total_wav_duration, temperature, target_language,
+                cfg_weight, exaggeration)
 
         new_start = orig_start + accumulated_offset
         duration_diff = total_wav_duration - orig_duration
@@ -217,12 +305,6 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
                 content=sub.content,
             )
         )
-
-        seg_wav_path = os.path.join(output_dir, "tmp", f"combined_segment_{i}.wav")
-        save_audio(seg_wav_path, combined_wav, sample_rate)
-
-        seg_wav_path = os.path.join(output_dir, "tmp", f"combined_segment_{i}.wav")
-        save_audio(seg_wav_path, combined_wav, sample_rate)
 
         segments_info.append(
             {
