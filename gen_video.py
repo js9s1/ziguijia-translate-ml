@@ -23,6 +23,8 @@ import srt
 sys.path.append(os.path.join(os.path.dirname(__file__), "chatterbox-server"))
 from video_util import read_srt_text
 
+VAAPI_DEVICE = "/dev/dri/renderD128"
+
 
 def get_video_info(video_file):
     """Get video duration using ffprobe."""
@@ -87,169 +89,226 @@ def calculate_segments(original_subs, adjusted_subs, changed_indices):
 
 
 def process_video(video_file, segments, output_file):
-    """Process video by cutting, stretching, and concatenating segments."""
+    """Process video by cutting, stretching, and concatenating segments.
+
+    Each subtitle segment's video source is the original timing (*orig_start* … *orig_end*),
+    stretched by *adj_duration / orig_duration* so the video length matches the adjusted audio.
+    Gaps between subtitles use the adjusted timing so that segment *i* is placed at
+    :math:`adj\\_start[i]` in the output — this eliminates systematic drift over hundreds of
+    segments without needing a post-hoc correction pass.
+    """
     temp_dir = tempfile.mkdtemp(prefix="gen_video_")
 
     try:
         video_info = get_video_info(video_file)
         video_duration = video_info["duration"]
 
-        segment_files = []
         segment_data = []
 
-        # Build segment list: leading gap, subtitle segments, gaps, trailing
-        cumulative_time = 0.0
+        # ── Build segment list ──────────────────────────────
+        # Every entry maps a source time-range to the output with a stretch factor.
+        # We use *adjusted* start/end for placement so that cumulated time stays
+        # synchronised with the audio WAV.
 
-        # Leading segment (0 to first subtitle start)
+        # Leading gap: from video start to the first subtitle's *adjusted* start.
         if segments:
-            first_sub_start = segments[0]["orig_start"]
-            if first_sub_start > 0:
+            first_adj_start = segments[0]["adj_start"]
+            first_orig_start = segments[0]["orig_start"]
+            if first_adj_start > 0 and first_orig_start > 0:
+                stretch = first_adj_start / first_orig_start
                 segment_data.append({
                     "start": 0,
-                    "end": first_sub_start,
-                    "stretch": 1.0,
+                    "end": first_orig_start,
+                    "stretch": stretch,
                     "is_subtitle": False
                 })
-                cumulative_time += first_sub_start
 
-        # Subtitle segments with gaps
+        # Subtitle segments with inter-segment gaps
         for i, seg in enumerate(segments):
-            start = seg["orig_start"]
-            end = seg["orig_end"]
-            stretch = seg["stretch_factor"]
+            orig_start = seg["orig_start"]
+            orig_end   = seg["orig_end"]
+            adj_start  = seg["adj_start"]
+            adj_end    = seg["adj_end"]
+            orig_dur   = seg["orig_duration"]
+            adj_dur    = seg["adj_duration"]
 
-            # Gap before this subtitle
+            # Gap before this subtitle (adjusted timing)
             if i > 0:
-                prev_end = segments[i-1]["orig_end"]
-                if start > prev_end:
+                prev_orig_end  = segments[i-1]["orig_end"]
+                prev_adj_end   = segments[i-1]["adj_end"]
+                orig_gap = orig_start - prev_orig_end
+                adj_gap  = adj_start - prev_adj_end
+
+                # Determine source time-range for the gap.
+                # Normally the original video already has a gap between
+                # subtitles.  When the original segments are back-to-back
+                # but the adjusted audio inserts a pause, we steal the
+                # last frame of the previous segment as a freeze-frame
+                # and stretch it to fill the pause.
+                if orig_gap > 0.001:
+                    gap_start = prev_orig_end
+                    gap_end   = orig_start
+                elif adj_gap > 0.001:
+                    # No original gap — use the tail 1 frame of the prev segment.
+                    gap_start = max(0, prev_orig_end - 0.04)
+                    gap_end   = prev_orig_end
+                    orig_gap  = gap_end - gap_start
+                else:
+                    orig_gap = 0.0  # skip this gap
+
+                if orig_gap > 0:
+                    stretch = adj_gap / orig_gap
+                    stretch = max(0.0, min(100.0, stretch))
                     segment_data.append({
-                        "start": prev_end,
-                        "end": start,
-                        "stretch": 1.0,
+                        "start": gap_start,
+                        "end": gap_end,
+                        "stretch": stretch,
                         "is_subtitle": False
                     })
-                    cumulative_time += (start - prev_end)
 
-            # This subtitle segment
-            seg_duration = end - start
-            actual_stretch = max(1.0, stretch)
+            # Subtitle segment: stretch = adj_dur / orig_dur.
+            # We allow stretch < 1.0 (slight speed-up) so the video stays
+            # locked to the adjusted audio timing.  Extreme values are
+            # clamped to avoid obvious artifacts.
+            stretch = adj_dur / orig_dur if orig_dur > 0 else 1.0
+            stretch = max(0.1, min(10.0, stretch))
             segment_data.append({
-                "start": start,
-                "end": end,
-                "stretch": actual_stretch,
+                "start": orig_start,
+                "end": orig_end,
+                "stretch": stretch,
                 "is_subtitle": True
             })
-            cumulative_time += seg_duration * actual_stretch
 
-        # Trailing segment
+        # Trailing gap: from last subtitle's adjusted end to end of video.
         if segments:
-            last_sub_end = segments[-1]["orig_end"]
-            if last_sub_end < video_duration:
+            last_orig_end = segments[-1]["orig_end"]
+            last_adj_end  = segments[-1]["adj_end"]
+            if last_orig_end < video_duration:
+                # Keep trailing gap at 1× unless we have adjusted timing past
+                # the last subtitle (rare — usually the trailing gap is credits / silence).
                 segment_data.append({
-                    "start": last_sub_end,
+                    "start": last_orig_end,
                     "end": video_duration,
                     "stretch": 1.0,
                     "is_subtitle": False
                 })
 
-        # Compensate drift by adjusting subtitle segment stretch factors
+        # ── Validate total matches audio ────────────────────
+        total_duration = sum(
+            (s["end"] - s["start"]) * s["stretch"] for s in segment_data
+        )
         if segments:
-            adjusted_total = segments[-1]["adj_end"]
-            drift = cumulative_time - adjusted_total
-            if abs(drift) > 0.1:
-                print(f"Compensating drift: {drift:+.3f}s (video={cumulative_time:.2f}s, target={adjusted_total:.2f}s)")
-                subtitle_segments = [s for s in segment_data if s["is_subtitle"]]
-                total_stretched = sum((s["end"] - s["start"]) * s["stretch"] for s in subtitle_segments)
-                if total_stretched > 0:
-                    correction_factor = (total_stretched - drift) / total_stretched
-                    cumulative_time = 0.0
-                    for seg in segment_data:
-                        if seg["is_subtitle"]:
-                            seg["stretch"] = seg["stretch"] * correction_factor
-                        cumulative_time += (seg["end"] - seg["start"]) * seg["stretch"]
-                    print(f"  Applied correction factor: {correction_factor:.4f}, new total: {cumulative_time:.2f}s")
+            expected_end = segments[-1]["adj_end"]
+            drift = total_duration - expected_end
+            if abs(drift) > 1.0:
+                print(f"Warning: predicted video length {total_duration:.2f}s "
+                      f"differs from adjusted audio end {expected_end:.2f}s "
+                      f"by {drift:+.2f}s")
+            if abs(drift) <= 1.0 and abs(drift) > 0.01:
+                print(f"Timing check: video={total_duration:.2f}s  "
+                      f"audio-end={expected_end:.2f}s  drift={drift:+.3f}s")
 
-        # Process each segment - apply stretch filter and reset timestamps
-        for i, seg in enumerate(segment_data):
-            seg_duration = seg["end"] - seg["start"]
-            if seg_duration <= 0:
-                # Skip zero-duration segment (start == end)
-                continue
+        # ── Build filter-graph batches ──────────────────────
+        # Instead of one ffmpeg process per segment (1215× VAAPI init),
+        # we pack many segments into a single filter_complex.  Each batch
+        # feeds the source video once per segment with -ss/-to for
+        # keyframe-seeking, then trim+setpts → concat → hevc_vaapi encode.
+        # Result: ~29 ffmpeg processes instead of ~1215, with one VAAPI
+        # init per batch instead of one per segment.
+        MAX_BATCH_SEGMENTS = 42  # -ss/-to pairs + filter_complex ≈ 180 args, well under OS limits
 
-            output_seg = os.path.join(temp_dir, f"seg_{i:04d}.mp4")
+        batch_files = []
+        for batch_idx in range(0, len(segment_data), MAX_BATCH_SEGMENTS):
+            batch = segment_data[batch_idx:batch_idx + MAX_BATCH_SEGMENTS]
+            batch_out = os.path.join(temp_dir, f"batch_{batch_idx:04d}.mp4")
 
-            # Keyframe-seeking: -ss before -i for speed & correct stretch.
-            # The PTS-STARTPTS comes after the stretch to reset timestamps.
-            if seg["stretch"] != 1.0:
-                filter_str = f"setpts={seg['stretch']}*PTS,setpts=PTS-STARTPTS"
-            else:
-                filter_str = "setpts=PTS-STARTPTS"
+            # Build the command
+            cmd = ["ffmpeg", "-y", "-hwaccel_output_format", "nv12"]
+            for seg in batch:
+                cmd.extend(["-ss", str(seg["start"]), "-to", str(seg["end"]),
+                            "-i", video_file])
+            cmd.append("-vaapi_device")
+            cmd.append(VAAPI_DEVICE)
 
-            cmd = [
-                "ffmpeg", "-y",
-                "-ss", str(seg["start"]),
-                "-to", str(seg["end"]),
-                "-i", video_file,
-                "-vf", filter_str,
-                "-c:v", "libx265", "-crf", "23", "-preset", "fast",
-                "-an",
-                "-r", "24",
-                output_seg
-            ]
+            # Build filter_complex: setpts per input → concat → hwupload
+            # -hwaccel_output_format nv12 ensures the decoder outputs software
+            # nv12 frames that setpts can consume directly.
+            filter_parts = []
+            for i, seg in enumerate(batch):
+                stretch = seg["stretch"]
+                if stretch != 1.0:
+                    filter_parts.append(
+                        f"[{i}:v]setpts={stretch}*PTS,setpts=PTS-STARTPTS[v{i}]")
+                else:
+                    filter_parts.append(
+                        f"[{i}:v]setpts=PTS-STARTPTS[v{i}]")
+            n = len(batch)
+            concat_labels = "".join(f"[v{i}]" for i in range(n))
+            filter_parts.append(
+                f"{concat_labels}concat=n={n}:v=1:a=0[outv]")
+            filter_parts.append("[outv]format=nv12,hwupload[hw]")
 
-            result = subprocess.run(cmd, check=False, capture_output=True, text=True)
+            cmd.extend(["-filter_complex", ";".join(filter_parts)])
+            cmd.extend(["-map", "[hw]", "-c:v", "hevc_vaapi", "-qp", "23",
+                        "-r", "24", batch_out])
+
+            print(f"  Batch {batch_idx:04d}: {n} segments → single ffmpeg")
+            result = subprocess.run(cmd, check=False, capture_output=True, text=True,
+                                     timeout=3600)
             if result.returncode != 0:
-                print(f"FFmpeg error (seg {i}): {result.stderr[:50000]}", file=sys.stderr)
+                print(f"FFmpeg batch error: {result.stderr[:50000]}",
+                      file=sys.stderr)
                 result.check_returncode()
-            # Validate output has a video stream (ffmpeg can produce 0-frame files)
+
+            # Validate
             probe = subprocess.run(
                 ["ffprobe", "-v", "quiet", "-print_format", "json",
-                 "-show_streams", "-select_streams", "v", output_seg],
+                 "-show_streams", "-select_streams", "v", batch_out],
                 capture_output=True, text=True,
             )
             probe_data = json.loads(probe.stdout) if probe.stdout.strip() else {"streams": []}
             if not probe_data.get("streams"):
-                print(f"Warning: seg {i} has no video stream, skipping")
+                print(f"Warning: batch {batch_idx:04d} has no video stream, skipping")
                 continue
-            segment_files.append(output_seg)
+            batch_files.append(batch_out)
 
-        # Concatenate with complex filter in batches to avoid
-        # exceeding shell/OS argument length limits.
-        if len(segment_files) == 1:
-            shutil.copy(segment_files[0], output_file)
+        # ── Hierarchical concat of batch outputs ─────────────
+        if len(batch_files) == 1:
+            shutil.copy(batch_files[0], output_file)
         else:
-            # 42 inputs → ~85 args with filter_complex, well under any limit
-            MAX_CONCAT_INPUTS = 42
-
-            batch_list = segment_files
+            # Same MAX size, but now there are ~29 batches instead of 1215
+            batch_list = batch_files
             level = 0
             while len(batch_list) > 1:
                 level += 1
                 next_batch = []
-                for batch_idx in range(0, len(batch_list), MAX_CONCAT_INPUTS):
-                    group = batch_list[batch_idx:batch_idx + MAX_CONCAT_INPUTS]
+                for bi in range(0, len(batch_list), MAX_BATCH_SEGMENTS):
+                    group = batch_list[bi:bi + MAX_BATCH_SEGMENTS]
                     if len(group) == 1:
                         next_batch.append(group[0])
                         continue
-                    out_name = os.path.join(temp_dir, f"L{level}_batch{batch_idx:04d}.mp4")
+                    out_name = os.path.join(temp_dir, f"L{level}_batch{bi:04d}.mp4")
                     n = len(group)
-                    in_labels = "".join(f"[{i}:v]" for i in range(n))
-                    filter_str = f"{in_labels}concat=n={n}:v=1:a=0[outv];[outv]format=nv12,hwupload[hw]"
+                    concat_inputs = "".join(f"[{i}:v]" for i in range(n))
+                    if n > 1:
+                        filter_str = f"{concat_inputs}concat=n={n}:v=1:a=0[outv];[outv]format=nv12,hwupload[hw]"
+                    else:
+                        filter_str = f"[0:v]format=nv12,hwupload[hw]"
                     cmd = ["ffmpeg", "-y",
-                           "-vaapi_device", "/dev/dri/renderD128"]
+                           "-hwaccel_output_format", "nv12",
+                           "-vaapi_device", VAAPI_DEVICE]
                     for sf in group:
                         cmd.extend(["-i", sf])
                     cmd.extend([
                         "-filter_complex", filter_str,
                         "-map", "[hw]",
-                        #"-c:v", "libx265", "-crf", "23", "-preset", "fast",  # software (old)
                         "-c:v", "hevc_vaapi", "-qp", "23",
                         "-r", "24",
                         out_name,
                     ])
                     result = subprocess.run(cmd, check=False, capture_output=True, text=True)
                     if result.returncode != 0:
-                        print(f"FFmpeg error (L{level} batch {batch_idx}): {result.stderr[:50000]}", file=sys.stderr)
+                        print(f"FFmpeg error (L{level} batch {bi}): {result.stderr[:50000]}", file=sys.stderr)
                         result.check_returncode()
                     next_batch.append(out_name)
                 batch_list = next_batch
@@ -379,31 +438,48 @@ def main():
     final_output = output_file.replace("_modified.mp4", "_final.mp4")
     temp_output = output_file.replace("_modified.mp4", "_temp.mp4")
 
+    # Get exact audio duration so we can trim the video precisely.
+    # This is a safety net: the per-segment adjusted timing should already
+    # produce a video that matches the audio length, but ffmpeg frame
+    # rounding in the encoder can add up to ~1 frame per batch.
+    try:
+        audio_info = get_video_info(audio_wav)
+        audio_duration = audio_info["duration"]
+    except Exception:
+        audio_duration = None
+
     try:
         if args.blur:
             print("Applying delogo filter to blur Chinese text...")
-            subprocess.run([
+            blur_cmd = [
                 "ffmpeg", "-y",
                 "-i", output_file,
                 "-i", audio_wav,
-                "-vf", "delogo=x=100:y=600:w=1060:h=80:show=0",
-                "-c:v", "libx265", "-crf", "23", "-preset", "fast",
+                "-vf", "format=nv12,hwupload,delogo=x=100:y=600:w=1060:h=80:show=0",
+                "-vaapi_device", VAAPI_DEVICE,
+                "-c:v", "hevc_vaapi", "-qp", "23",
                 "-c:a", "aac", "-b:a", "192k",
                 "-map", "0:v", "-map", "1:a",
-                "-shortest",
-                temp_output
-            ], check=True)
+            ]
+            if audio_duration:
+                blur_cmd.extend(["-t", str(audio_duration)])
+            else:
+                blur_cmd.append("-shortest")
+            subprocess.run(blur_cmd, check=True)
         else:
-            subprocess.run([
+            mux_cmd = [
                 "ffmpeg", "-y",
                 "-i", output_file,
                 "-i", audio_wav,
                 "-c:v", "copy",
                 "-c:a", "aac", "-b:a", "192k",
                 "-map", "0:v", "-map", "1:a",
-                "-shortest",
-                temp_output
-            ], check=True)
+            ]
+            if audio_duration:
+                mux_cmd.extend(["-t", str(audio_duration)])
+            else:
+                mux_cmd.append("-shortest")
+            subprocess.run(mux_cmd, check=True)
 
         subprocess.run([
             "ffmpeg", "-y",
