@@ -466,9 +466,9 @@ def main():
                 "-c:a", "aac", "-b:a", "192k",
             ]
             if audio_duration:
-                blur_cmd.extend(["-t", str(audio_duration)])
+                blur_cmd.extend(["-t", str(audio_duration), temp_output])
             else:
-                blur_cmd.append("-shortest")
+                blur_cmd.extend(["-shortest", temp_output])
             subprocess.run(blur_cmd, check=True)
         else:
             mux_cmd = [
@@ -478,11 +478,9 @@ def main():
                 "-c:v", "copy",
                 "-c:a", "aac", "-b:a", "192k",
                 "-map", "0:v", "-map", "1:a",
+                "-shortest",
+                temp_output,
             ]
-            if audio_duration:
-                mux_cmd.extend(["-t", str(audio_duration)])
-            else:
-                mux_cmd.append("-shortest")
             subprocess.run(mux_cmd, check=True)
 
         subprocess.run([
