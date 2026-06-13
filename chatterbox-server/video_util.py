@@ -19,9 +19,11 @@ def _normalize_srt_timestamps(text: str) -> str:
     - trailing garbage like ``seconds`` after the end timestamp
     """
     # Normalize any non-comma millisecond separator (. or :) → comma
-    text = re.sub(r"(\d{2}:\d{2}:\d{2})[.:](\d{3})", r"\1,\2", text)
+    # \d{1,2} for h/m/s handles single-digit fields sometimes found in
+    # hand-written or tool-exported SRTs.
+    text = re.sub(r"(\d{1,2}:\d{1,2}:\d{1,2})[.:](\d{3})", r"\1,\2", text)
     # Fix single-dash arrow → triple-dash arrow in timestamp lines only
-    text = re.sub(r"(\d{2}:\d{2}:\d{2},\d{3})\s*->\s*(\d{2}:\d{2}:\d{2},\d{3})", r"\1 --> \2", text)
+    text = re.sub(r"(\d{1,2}:\d{1,2}:\d{1,2},\d{3})\s*->\s*(\d{1,2}:\d{1,2}:\d{1,2},\d{3})", r"\1 --> \2", text)
     return text
 
 

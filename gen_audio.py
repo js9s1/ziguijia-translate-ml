@@ -144,7 +144,7 @@ def load_subs(srt_path):
             idx = int(lines[0].strip())
         except ValueError:
             continue
-        ts_match = re.match(r"(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})", lines[1])
+        ts_match = re.match(r"(\d{1,2}:\d{1,2}:\d{1,2},\d{3})\s*-->\s*(\d{1,2}:\d{1,2}:\d{1,2},\d{3})", lines[1])
         if not ts_match:
             continue
         start = srt.srt_timestamp_to_timedelta(ts_match.group(1))
