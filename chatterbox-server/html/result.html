@@ -318,8 +318,8 @@
 
         let editedSrtFiles = [];
 
-        // output_adjusted.srt is the final generated output — not for manual editing.
-        const SRT_FILES = new Set(['ocr_screen.srt', 'whisper.srt', 'translated.srt']);
+        // Any .srt file is editable except output_adjusted.srt (the final generated output).
+        const isEditableSrt = name => name.toLowerCase().endsWith('.srt') && name !== 'output_adjusted.srt';
 
         function loadJobStatus() {
             if (!accessCode) {
@@ -484,14 +484,14 @@
                     const downloadPath = f => '/files/download?path=' + encodeURIComponent(outputDir + '/' + f.name);
                     const ext = f => f.name.split('.').pop().toLowerCase();
                     const playBtn = f => {
-                        if (SRT_FILES.has(f.name)) return '';
+                        if (isEditableSrt(f.name)) return '';
                         const e = ext(f);
                         if (e === 'wav') return `<button onclick="playAudio(this,'${downloadPath(f)}')" class="btn-play">播放</button>`;
                         if (e === 'mp4') return `<button onclick="playVideo('${downloadPath(f)}')" class="btn-play">播放</button>`;
                         return `<span class="btn-placeholder">播放</span>`;
                     };
                     const editBtn = (f) => {
-                        if (!SRT_FILES.has(f.name)) return '';
+                        if (!isEditableSrt(f.name)) return '';
                         const isEdited = editedSrtFiles.includes(f.name);
                         const label = isEdited ? '重新提交' : '编辑';
                         const cls = isEdited ? 'btn-edit resubmit' : 'btn-edit';
@@ -501,9 +501,9 @@
                         return `<button onclick="${onclick}" class="${cls}">${label}</button>`;
                     };
                     // Check if any SRT files exist — if so non-SRT files get 4-column grid
-                    const hasSrt = filteredFiles.some(f => SRT_FILES.has(f.name));
+                    const hasSrt = filteredFiles.some(f => isEditableSrt(f.name));
                     // SRT files use the same 4-column grid so all buttons have matching widths
-                    const actionsClass = f => SRT_FILES.has(f.name) || hasSrt ? 'file-actions editable' : 'file-actions';
+                    const actionsClass = f => isEditableSrt(f.name) || hasSrt ? 'file-actions editable' : 'file-actions';
                     document.getElementById('fileList').innerHTML = filteredFiles.map(file => `
                         <li>
                             <div class="file-info">
