@@ -119,9 +119,6 @@ def run_gen_audio_step(
     if missing:
         raise RuntimeError(f"gen_audio completed but output files missing: {', '.join(missing)}")
 
-    # Create a stable-named copy so users can always find the final SRT.
-    shutil.copy2(srt_path_out, os.path.join(output_dir, "output-final-modified.srt"))
-
     return {
         "output_srt_path": srt_path_out,
         "output_wav_path": wav_path_out,
@@ -291,5 +288,3 @@ def run_video_ckpt(
     # Copy the adjusted SRT to the output directory so it's visible
     # in the file browser without navigating into audio_tracks/.
     shutil.copy2(audio_out["output_srt_path"], output_dir)
-    # Also create a stable-named copy so users can always find the final SRT.
-    shutil.copy2(audio_out["output_srt_path"], os.path.join(output_dir, "output-final-modified.srt"))
