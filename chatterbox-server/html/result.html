@@ -318,7 +318,8 @@
 
         let editedSrtFiles = [];
 
-        const SRT_FILES = new Set(['ocr_screen.srt', 'whisper.srt', 'translated.srt', 'output_adjusted.srt']);
+        // output_adjusted.srt is the final generated output — not for manual editing.
+        const SRT_FILES = new Set(['ocr_screen.srt', 'whisper.srt', 'translated.srt']);
 
         function loadJobStatus() {
             if (!accessCode) {
