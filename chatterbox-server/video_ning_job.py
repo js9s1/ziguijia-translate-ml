@@ -65,6 +65,9 @@ def _run_video_job(job_data: dict):
         os.path.join(output_dir, "output_final.mp4"),
     ], label="宁视频翻译")
 
+    # Copy adjusted SRT to top-level so the user can access it
+    shutil.copy2(os.path.join(audio_dir, "output_adjusted.srt"), output_dir)
+
 
 def process_video_ning(number: str, srt_file, temperature: float, user_id: int = None, blur: str = "yes", target_language: str = "en", cfg_weight: float = 0.5, exaggeration: float = 0.5) -> dict:
     access_code = str(uuid.uuid4())[:8].upper()
