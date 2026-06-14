@@ -17,65 +17,63 @@ from video_util import read_srt_text
 CHANGED_THRESHOLD = 0.05
 
 
-# ── Per-segment cache helpers ────────────────────────────────
+# ── Per-job cache (single JSON, in-memory lookups) ────────────
+
+# One ``cache_meta.json`` per job (in ``tmp/``).  Maps segment index
+# to {content, chunks, duration} — just enough to know whether a
+# ``combined_segment_*.wav`` is still valid.
 
 
-def _segment_meta_path(output_dir, seg_idx):
-    return os.path.join(output_dir, "tmp", f"segment_{seg_idx}_meta.json")
+def _cache_meta_path(output_dir):
+    return os.path.join(output_dir, "tmp", "cache_meta.json")
 
 
 def _combined_seg_path(output_dir, seg_idx):
     return os.path.join(output_dir, "tmp", f"combined_segment_{seg_idx}.wav")
 
 
-def _check_segment_cache(output_dir, seg_idx, content, speaker, chunks,
-                         temperature, target_language, cfg_weight, exaggeration):
-    """Check if cached wav + metadata exist and match current segment.
-
-    Returns (is_cached: bool, wav_duration: float).
-    """
-    meta_path = _segment_meta_path(output_dir, seg_idx)
-    wav_path = _combined_seg_path(output_dir, seg_idx)
-
-    if not os.path.exists(wav_path) or not os.path.exists(meta_path):
-        return False, 0.0
-
+def _load_cache(output_dir):
+    """Return the in-memory cache dict, or an empty one."""
+    path = _cache_meta_path(output_dir)
+    if not os.path.exists(path):
+        return {}
     try:
-        with open(meta_path, "r", encoding="utf-8") as f:
-            meta = json.load(f)
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, KeyError):
+        return {}
 
-        # Compare current segment text + parameters with cached metadata
-        if (meta.get("content") == content
-                and meta.get("speaker") == speaker
-                and meta.get("chunks") == chunks
-                and abs(meta.get("temperature", 0.8) - temperature) < 0.001
-                and meta.get("target_language") == target_language
-                and abs(meta.get("cfg_weight", 0.5) - cfg_weight) < 0.001
-                and abs(meta.get("exaggeration", 0.5) - exaggeration) < 0.001):
-            return True, meta.get("wav_duration", 0.0)
-    except (json.JSONDecodeError, KeyError, TypeError):
-        pass
 
+def _save_cache(output_dir, cache):
+    """Write the cache dict to disk."""
+    path = _cache_meta_path(output_dir)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(cache, f, ensure_ascii=False, indent=2)
+
+
+def _check_cache(cache, seg_idx, clean_content, chunks, output_dir):
+    """In-memory cache lookup.  Returns (is_hit, wav_duration).
+
+    A hit requires the WAV file on disk *and* the content fingerprint
+    in the cache dict to match.
+    """
+    if not os.path.exists(_combined_seg_path(output_dir, seg_idx)):
+        return False, 0.0
+    seg_cache = cache.get(str(seg_idx))
+    if not seg_cache:
+        return False, 0.0
+    if (seg_cache.get("content") == clean_content
+            and seg_cache.get("chunks") == chunks):
+        return True, seg_cache.get("duration", 0.0)
     return False, 0.0
 
 
-def _save_segment_meta(output_dir, seg_idx, content, speaker, chunks,
-                       wav_duration, temperature, target_language,
-                       cfg_weight, exaggeration):
-    """Save metadata for a generated segment so it can be reused."""
-    meta_path = _segment_meta_path(output_dir, seg_idx)
-    meta = {
-        "content": content,
-        "speaker": speaker,
+def _set_cache(cache, seg_idx, clean_content, chunks, wav_duration):
+    cache[str(seg_idx)] = {
+        "content": clean_content,
         "chunks": chunks,
-        "wav_duration": wav_duration,
-        "temperature": temperature,
-        "target_language": target_language,
-        "cfg_weight": cfg_weight,
-        "exaggeration": exaggeration,
+        "duration": wav_duration,
     }
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False)
 
 
 # ── Processing ───────────────────────────────────────────────
@@ -202,6 +200,9 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
         print("No subtitles found in SRT file")
         return
 
+    # ── Load cache meta (single file → in-memory) ──
+    cache = _load_cache(output_dir)
+
     adjusted_subs = []
     segments_info = []
     changed_segments = []
@@ -225,10 +226,8 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
             # Empty segment — generate silence and preserve timing
             silence_wav = generate_silence(orig_duration, sample_rate)
             save_audio(seg_wav_path, silence_wav, sample_rate)
-            # Clear any stale metadata for empty segments
-            meta_path = _segment_meta_path(output_dir, i)
-            if os.path.exists(meta_path):
-                os.remove(meta_path)
+            # Remove stale cache entry for empty segments
+            cache.pop(str(i), None)
             adjusted_subs.append(
                 srt.Subtitle(index=i, start=timedelta(seconds=new_start),
                              end=timedelta(seconds=new_start + orig_duration),
@@ -242,9 +241,8 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
             continue
 
         # ── Check per-segment cache ──
-        cached, cached_duration = _check_segment_cache(
-            output_dir, i, clean_content, speaker, chunks,
-            temperature, target_language, cfg_weight, exaggeration)
+        cached, cached_duration = _check_cache(
+            cache, i, clean_content, chunks, output_dir)
 
         if cached:
             print(f"  ↪ segment {i} cached (duration: {cached_duration:.2f}s), skipping generation")
@@ -279,11 +277,8 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
 
             save_audio(seg_wav_path, combined_wav, sample_rate)
 
-            # Save metadata so this segment can be reused next time
-            _save_segment_meta(
-                output_dir, i, clean_content, speaker, chunks,
-                total_wav_duration, temperature, target_language,
-                cfg_weight, exaggeration)
+            # Update in-memory cache
+            _set_cache(cache, i, clean_content, chunks, total_wav_duration)
 
         new_start = orig_start + accumulated_offset
         duration_diff = total_wav_duration - orig_duration
@@ -327,6 +322,9 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
     combined_tensor = combine_audio_segments(
         segments_info, total_duration, sample_rate
     )
+
+    # Persist cache to disk so the next run can benefit from it
+    _save_cache(output_dir, cache)
 
     return combined_tensor, adjusted_subs, changed_segments, sample_rate, total_duration
 
