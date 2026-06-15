@@ -67,9 +67,10 @@ def calculate_segments(original_subs, adjusted_subs, changed_indices):
         orig_duration = (orig.end - orig.start).total_seconds()
         adj_duration = (adj.end - adj.start).total_seconds()
 
-        # Calculate stretch factor (adj_duration / orig_duration)
+        # Calculate stretch factor (adj_duration / orig_duration).
+        # Never squeeze — only stretch to accommodate longer audio.
         if orig_duration > 0:
-            stretch_factor = adj_duration / orig_duration
+            stretch_factor = max(1.0, adj_duration / orig_duration)
         else:
             stretch_factor = 1.0
 
