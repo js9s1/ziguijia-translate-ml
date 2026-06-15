@@ -167,11 +167,12 @@ def process_video(video_file, segments, output_file):
                     })
 
             # Subtitle segment: stretch = adj_dur / orig_dur.
-            # We allow stretch < 1.0 (slight speed-up) so the video stays
-            # locked to the adjusted audio timing.  Extreme values are
-            # clamped to avoid obvious artifacts.
+            # Never squeeze (stretch < 1.0) — only stretch to match
+            # longer audio.  gen_audio already pads shorter audio with
+            # silence so adj_dur ≥ orig_dur for non-empty segments.
+            # Extreme values are clamped to avoid obvious artifacts.
             stretch = adj_dur / orig_dur if orig_dur > 0 else 1.0
-            stretch = max(0.1, min(10.0, stretch))
+            stretch = max(1.0, min(10.0, stretch))
             segment_data.append({
                 "start": orig_start,
                 "end": orig_end,
