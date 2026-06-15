@@ -133,7 +133,7 @@ def backfill_one(output_dir: str, db_path: str, dry_run: bool = False):
     cfg_weight = params.get("cfg_weight", 0.5)
     exaggeration = params.get("exaggeration", 0.5)
 
-    # Build the single cache_meta.json (new format)
+    # Build the single cache_meta.json (index → duration only)
     cache = {}
     for w in wavs:
         idx = int(re.search(r"combined_segment_(\d+)\.wav", w).group(1))
@@ -144,15 +144,7 @@ def backfill_one(output_dir: str, db_path: str, dry_run: bool = False):
             print(f"  [ERROR] ffprobe failed for seg {idx}", file=sys.stderr)
             continue
 
-        content = srt_map.get(idx, "")
-        clean_content = _extract_speaker(content)[1]
-        chunks = _split_text(clean_content)
-
-        cache[str(idx)] = {
-            "content": clean_content,
-            "chunks": chunks,
-            "duration": dur,
-        }
+        cache[str(idx)] = dur
         created += 1
 
     cache_path = os.path.join(tmp_dir, "cache_meta.json")

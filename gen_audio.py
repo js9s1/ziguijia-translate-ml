@@ -20,8 +20,9 @@ CHANGED_THRESHOLD = 0.05
 # ── Per-job cache (single JSON, in-memory lookups) ────────────
 
 # One ``cache_meta.json`` per job (in ``tmp/``).  Maps segment index
-# to {content, chunks, duration} — just enough to know whether a
-# ``combined_segment_*.wav`` is still valid.
+# to the duration of ``combined_segment_*.wav``.  A WAV file on disk
+# is sufficient for a cache hit — the user edits only small portions
+# of the SRT between resubmits, so index‑based caching is enough.
 
 
 def _cache_meta_path(output_dir):
@@ -33,7 +34,7 @@ def _combined_seg_path(output_dir, seg_idx):
 
 
 def _load_cache(output_dir):
-    """Return the in-memory cache dict, or an empty one."""
+    """Return the in-memory cache dict (str(idx) → duration), or an empty one."""
     path = _cache_meta_path(output_dir)
     if not os.path.exists(path):
         return {}
@@ -51,29 +52,22 @@ def _save_cache(output_dir, cache):
         json.dump(cache, f, ensure_ascii=False, indent=2)
 
 
-def _check_cache(cache, seg_idx, clean_content, chunks, output_dir):
+def _check_cache(cache, seg_idx, output_dir):
     """In-memory cache lookup.  Returns (is_hit, wav_duration).
 
-    A hit requires the WAV file on disk *and* the content fingerprint
-    in the cache dict to match.
+    A hit requires only that the WAV file exists on disk and that
+    the cache records a duration for this index.
     """
     if not os.path.exists(_combined_seg_path(output_dir, seg_idx)):
         return False, 0.0
-    seg_cache = cache.get(str(seg_idx))
-    if not seg_cache:
-        return False, 0.0
-    if (seg_cache.get("content") == clean_content
-            and seg_cache.get("chunks") == chunks):
-        return True, seg_cache.get("duration", 0.0)
+    dur = cache.get(str(seg_idx))
+    if dur is not None:
+        return True, dur
     return False, 0.0
 
 
-def _set_cache(cache, seg_idx, clean_content, chunks, wav_duration):
-    cache[str(seg_idx)] = {
-        "content": clean_content,
-        "chunks": chunks,
-        "duration": wav_duration,
-    }
+def _set_cache(cache, seg_idx, wav_duration):
+    cache[str(seg_idx)] = wav_duration
 
 
 # ── Processing ───────────────────────────────────────────────
@@ -242,7 +236,7 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
 
         # ── Check per-segment cache ──
         cached, cached_duration = _check_cache(
-            cache, i, clean_content, chunks, output_dir)
+            cache, i, output_dir)
 
         if cached:
             print(f"  ↪ segment {i} cached (duration: {cached_duration:.2f}s), skipping generation")
@@ -278,7 +272,7 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
             save_audio(seg_wav_path, combined_wav, sample_rate)
 
             # Update in-memory cache
-            _set_cache(cache, i, clean_content, chunks, total_wav_duration)
+            _set_cache(cache, i, total_wav_duration)
 
         new_start = orig_start + accumulated_offset
         duration_diff = total_wav_duration - orig_duration
