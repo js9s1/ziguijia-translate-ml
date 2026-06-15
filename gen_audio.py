@@ -51,29 +51,81 @@ def _save_cache(output_dir, cache):
         json.dump(cache, f, ensure_ascii=False, indent=2)
 
 
-def _check_cache(cache, seg_idx, clean_content, chunks, output_dir):
+def _check_cache(cache, seg_idx, clean_content, output_dir):
     """In-memory cache lookup.  Returns (is_hit, wav_duration).
 
-    A hit requires the WAV file on disk *and* content + chunks to match
-    what was cached.
+    A hit requires the WAV file on disk *and* the content to match.
     """
     if not os.path.exists(_combined_seg_path(output_dir, seg_idx)):
         return False, 0.0
     seg_cache = cache.get(str(seg_idx))
     if not seg_cache:
         return False, 0.0
-    if (seg_cache.get("content") == clean_content
-            and seg_cache.get("chunks") == chunks):
+    if seg_cache.get("content") == clean_content:
         return True, seg_cache.get("duration", 0.0)
     return False, 0.0
 
 
-def _set_cache(cache, seg_idx, clean_content, chunks, wav_duration):
+def _set_cache(cache, seg_idx, clean_content, wav_duration):
     cache[str(seg_idx)] = {
         "content": clean_content,
-        "chunks": chunks,
         "duration": wav_duration,
     }
+
+
+def _migrate_cache(cache, new_subs, output_dir):
+    """Remap cache entries when SRT segment indices shift.
+
+    For each segment in *new_subs*, match by content against the old
+    *cache*.  If found at a different index, rename the corresponding
+    WAV file and move the cache entry.
+
+    Old entries with no match in the new SRT are discarded.
+    New segments with no match are left empty for regeneration.
+    """
+    if not cache:
+        return
+
+    # Build content → (old_idx, duration) from old cache
+    old_map = {}
+    for old_idx_str, entry in list(cache.items()):
+        old_idx = int(old_idx_str)
+        content = entry.get("content", "")
+        if content:
+            old_map[content] = (old_idx, entry.get("duration", 0.0))
+
+    # Match each new segment against old cache
+    for i, sub in enumerate(new_subs):
+        _, clean_content = extract_speaker(sub.content)
+        if not clean_content.strip():
+            continue
+
+        if clean_content in old_map:
+            old_idx, dur = old_map.pop(clean_content)
+            if old_idx != i:
+                old_wav = _combined_seg_path(output_dir, old_idx)
+                new_wav = _combined_seg_path(output_dir, i)
+                if os.path.exists(old_wav) and not os.path.exists(new_wav):
+                    os.rename(old_wav, new_wav)
+                    print(f"  ↪ cache: moved seg {old_idx} → seg {i} (same content)")
+                elif os.path.exists(new_wav):
+                    os.remove(old_wav)
+            cache[str(i)] = {"content": clean_content, "duration": dur}
+        else:
+            # No match — clear so it gets regenerated
+            cache.pop(str(i), None)
+
+    # Remove stale entries
+    for (old_idx, _) in old_map.values():
+        old_key = str(old_idx)
+        if old_key in cache:
+            stale_wav = _combined_seg_path(output_dir, old_idx)
+            if os.path.exists(stale_wav):
+                os.remove(stale_wav)
+            del cache[old_key]
+            print(f"  ↪ cache: removed stale seg {old_idx}")
+
+    _save_cache(output_dir, cache)
 
 
 # ── Processing ───────────────────────────────────────────────
@@ -202,6 +254,8 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
 
     # ── Load cache meta (single file → in-memory) ──
     cache = _load_cache(output_dir)
+    # Migrate cache when segment indices shifted (e.g. edited SRT timing)
+    _migrate_cache(cache, subs, output_dir)
 
     adjusted_subs = []
     segments_info = []
@@ -242,7 +296,7 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
 
         # ── Check per-segment cache ──
         cached, cached_duration = _check_cache(
-            cache, i, clean_content, chunks, output_dir)
+            cache, i, clean_content, output_dir)
 
         if cached:
             print(f"  ↪ segment {i} cached (duration: {cached_duration:.2f}s), skipping generation")
@@ -278,7 +332,7 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
             save_audio(seg_wav_path, combined_wav, sample_rate)
 
             # Update in-memory cache
-            _set_cache(cache, i, clean_content, chunks, total_wav_duration)
+            _set_cache(cache, i, clean_content, total_wav_duration)
 
         new_start = orig_start + accumulated_offset
         duration_diff = total_wav_duration - orig_duration
