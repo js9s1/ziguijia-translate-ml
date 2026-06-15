@@ -107,9 +107,10 @@ def process_video(video_file, segments, output_file):
         segment_data = []
 
         # ── Build segment list ──────────────────────────────
-        # Every entry maps a source time-range to the output with a stretch factor.
-        # We use *adjusted* start/end for placement so that cumulated time stays
-        # synchronised with the audio WAV.
+        # Track the output position explicitly so that gap stretching
+        # absorbs any drift introduced by the max(1.0, …) clamp on
+        # subtitle segments.
+        video_cumul = 0.0
 
         # Leading gap: from video start to the first subtitle's *adjusted* start.
         if segments:
@@ -123,6 +124,7 @@ def process_video(video_file, segments, output_file):
                     "stretch": stretch,
                     "is_subtitle": False
                 })
+                video_cumul += first_orig_start * stretch
 
         # Subtitle segments with inter-segment gaps
         for i, seg in enumerate(segments):
@@ -133,24 +135,23 @@ def process_video(video_file, segments, output_file):
             orig_dur   = seg["orig_duration"]
             adj_dur    = seg["adj_duration"]
 
-            # Gap before this subtitle (adjusted timing)
+            # Gap before this subtitle.
+            # The output duration of the gap fills whatever time is
+            # needed to reach *adj_start[i]* from the current video
+            # position (which already accounts for any overshoot from
+            # the max(1.0, …) clamp on the previous segment).
             if i > 0:
                 prev_orig_end  = segments[i-1]["orig_end"]
-                prev_adj_end   = segments[i-1]["adj_end"]
                 orig_gap = orig_start - prev_orig_end
-                adj_gap  = adj_start - prev_adj_end
+                # How far must this gap span in the output?
+                needed_gap = adj_start - video_cumul
 
                 # Determine source time-range for the gap.
-                # Normally the original video already has a gap between
-                # subtitles.  When the original segments are back-to-back
-                # but the adjusted audio inserts a pause, we steal the
-                # last frame of the previous segment as a freeze-frame
-                # and stretch it to fill the pause.
                 if orig_gap > 0.001:
                     gap_start = prev_orig_end
                     gap_end   = orig_start
-                elif adj_gap > 0.001:
-                    # No original gap — use the tail 1 frame of the prev segment.
+                elif needed_gap > 0.001:
+                    # No original gap — use the tail frame of the prev segment.
                     gap_start = max(0, prev_orig_end - 0.04)
                     gap_end   = prev_orig_end
                     orig_gap  = gap_end - gap_start
@@ -158,7 +159,7 @@ def process_video(video_file, segments, output_file):
                     orig_gap = 0.0  # skip this gap
 
                 if orig_gap > 0:
-                    stretch = adj_gap / orig_gap
+                    stretch = needed_gap / orig_gap
                     stretch = max(0.0, min(100.0, stretch))
                     segment_data.append({
                         "start": gap_start,
@@ -166,12 +167,11 @@ def process_video(video_file, segments, output_file):
                         "stretch": stretch,
                         "is_subtitle": False
                     })
+                    video_cumul += orig_gap * stretch
 
             # Subtitle segment: stretch = adj_dur / orig_dur.
             # Never squeeze (stretch < 1.0) — only stretch to match
-            # longer audio.  gen_audio already pads shorter audio with
-            # silence so adj_dur ≥ orig_dur for non-empty segments.
-            # Extreme values are clamped to avoid obvious artifacts.
+            # longer audio.
             stretch = adj_dur / orig_dur if orig_dur > 0 else 1.0
             stretch = max(1.0, min(10.0, stretch))
             segment_data.append({
@@ -180,6 +180,7 @@ def process_video(video_file, segments, output_file):
                 "stretch": stretch,
                 "is_subtitle": True
             })
+            video_cumul += orig_dur * stretch
 
         # Trailing gap: from last subtitle's adjusted end to end of video.
         if segments:
