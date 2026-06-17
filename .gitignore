@@ -21,4 +21,4 @@ graphify-out/
 
 # ── Generated / temporary files ────────────────────────────
 *.backup
-gpucore.*
+gpucore.*bash
