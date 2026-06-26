@@ -120,7 +120,7 @@ def _register_handlers():
     """Lazily populate the job handler registry on first import."""
     from audio_job import _run_gen_audio, _run_audio_segmentation_job
     from tts_job import _run_tts_job
-    from video_ning_job import _run_video_job, _run_video_ning_ocr_job
+    from video_ning_job import _run_video_job, _run_video_ning_ocr_job, _run_video_ning_ocr_translate_only_job
     from video_custom_job import _run_video_custom_job, _run_video_auto_job, _run_video_ocr_job
     from video_ocr_job import _run_ocr_only_job
     _JOB_HANDLERS.update({
@@ -132,6 +132,7 @@ def _register_handlers():
         "_run_audio_segmentation_job": _run_audio_segmentation_job,
         "_run_video_ocr_job": _run_video_ocr_job,
         "_run_video_ning_ocr_job": _run_video_ning_ocr_job,
+        "_run_video_ning_ocr_translate_only_job": _run_video_ning_ocr_translate_only_job,
         "_run_ocr_only_job": _run_ocr_only_job,
     })
 
@@ -145,6 +146,7 @@ _JOB_TYPE_LABELS: dict[str, str] = {
     "_run_audio_segmentation_job": "音频分段合成",
     "_run_video_ocr_job": "OCR翻译视频",
     "_run_video_ning_ocr_job": "宁视频OCR翻译",
+    "_run_video_ning_ocr_translate_only_job": "宁视频OCR仅翻译",
     "_run_ocr_only_job": "视频OCR提取字幕",
 }
 
@@ -341,9 +343,10 @@ class JobQueue:
         ).fetchone()
         prev_ckpt = existing_checkpoint[0] if existing_checkpoint else ""
 
+        now = _now_str()
         conn.execute("""
-            INSERT OR REPLACE INTO jobs (access_code, srt_path, output_dir, temperature, status, error, run_func_name, video_number, video_file, user_id, text, blur, target_language, cfg_weight, exaggeration, start_trim, end_trim, cached_path, filename, checkpoint, status_changed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO jobs (access_code, srt_path, output_dir, temperature, status, error, run_func_name, video_number, video_file, user_id, text, blur, target_language, cfg_weight, exaggeration, start_trim, end_trim, cached_path, filename, checkpoint, created_at, status_changed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             access_code,
             job_data.get("srt_path"),
@@ -365,7 +368,8 @@ class JobQueue:
             job_data.get("cached_path"),
             job_data.get("filename"),
             prev_ckpt,
-            _now_str(),
+            now,
+            now,
         ))
         conn.commit()
 
@@ -1045,8 +1049,8 @@ class JobQueue:
         # Mark as deleted without removing files or DB row
         now = _now_str()
         conn.execute(
-            "UPDATE jobs SET status = ?, error = ?, status_changed_at = ? WHERE access_code = ?",
-            (JobStatus.DELETED.value, "Deleted by user", now, access_code)
+            "UPDATE jobs SET status = ?, error = ?, deleted_at = ?, status_changed_at = ? WHERE access_code = ?",
+            (JobStatus.DELETED.value, "Deleted by user", now, now, access_code)
         )
         conn.commit()
 

@@ -10,13 +10,16 @@ import time
 import uuid
 from collections import defaultdict
 
+import valkey
+from cachelib.file import FileSystemCache
+
 import importlib
 from jobqueue import get_job_queue
 from auth import get_user_manager
 from config import AUDIO_TRACKS_DIR, VIDEO_DIR, FILENAME_TO_CHECKPOINT_STEP
 from redis_util import (
     InMemoryRateLimiter, is_available as redis_available,
-    cache_get, cache_set, get_redis, get_session_redis,
+    cache_get, cache_set, get_redis,
 )
 
 # ── Deferred imports ──────────────────────────────────────
@@ -74,10 +77,10 @@ def rate_limit(f):
                     logger.warning(f"Rate limit exceeded for IP {ip}")
                     return jsonify({"error": "请求过于频繁，请稍后再试"}), 429
                 return f(*args, **kwargs)
-            except redis.RedisError:
+            except valkey.ValkeyError:
                 pass  # fall through to in-memory
 
-        # In-memory fallback (Redis unavailable or errored)
+        # In-memory fallback (Valkey unavailable or errored)
         if not _ip_limiter.check(ip):
             logger.warning(f"Rate limit exceeded for IP {ip}")
             return jsonify({"error": "请求过于频繁，请稍后再试"}), 429
@@ -104,7 +107,7 @@ def email_rate_limit(email: str) -> tuple[bool, str]:
                 logger.warning(f"Email rate limit exceeded for {email}")
                 return False, "该邮箱的密码重置请求过于频繁，请稍后再试"
             return True, ""
-        except redis.RedisError:
+        except valkey.ValkeyError:
             pass  # fall through to in-memory
 
     # In-memory fallback
@@ -149,13 +152,15 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=86400 * 7,
 )
 
-# Use Redis for server-side sessions when available; otherwise Flask's
-# default signed-cookie session (no extra config needed).
+# Use cachelib for server-side sessions (survives restarts via disk);
+# otherwise Flask's default signed-cookie session (no extra config needed).
 if redis_available():
     from flask_session import Session
-    app.config["SESSION_TYPE"] = "redis"
-    app.config["SESSION_REDIS"] = get_session_redis()
-    app.config["SESSION_KEY_PREFIX"] = "session:"
+    app.config["SESSION_TYPE"] = "cachelib"
+    app.config["SESSION_CACHELIB"] = FileSystemCache(
+        cache_dir=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "flask_session"),
+        threshold=500,
+    )
     Session(app)
 
 
@@ -770,8 +775,9 @@ def video_ning_ocr_process():
             return jsonify({"error": "No video number provided"}), 400
 
         params = _parse_job_params(request.form)
-
-        process_video_ning_ocr = _lazy("video_ning_job", "process_video_ning_ocr")
+        mode = request.form.get("ocr_mode", "full")
+        process_video_ning_ocr = _lazy("video_ning_job",
+            "process_video_ning_ocr" if mode == "full" else "process_video_ning_ocr_translate_only")
         find_cached = _lazy("video_ning_job", "_find_cached_video")
         blur = request.form.get("blur", "yes")
         start_trim = request.form.get("start_trim", "12.25")

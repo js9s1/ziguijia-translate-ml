@@ -36,6 +36,7 @@
                 <select id="mode" name="mode">
                     <option value="srt">上传SRT字幕</option>
                     <option value="ocr">OCR识别翻译（RapidVideOCR + HY-MT）</option>
+                    <option value="ocr-translate-only">OCR识别并生成翻译字幕（不生成音频/视频）</option>
                 </select>
             </div>
 
@@ -78,6 +79,10 @@
             var srtSection = document.getElementById('srtSection');
             var trimSection = document.getElementById('trimSection');
             if (this.value === 'ocr') {
+                srtSection.classList.add('hidden');
+                document.getElementById('srt_file').removeAttribute('required');
+                trimSection.style.display = '';
+            } else if (this.value === 'ocr-translate-only') {
                 srtSection.classList.add('hidden');
                 document.getElementById('srt_file').removeAttribute('required');
                 trimSection.style.display = '';
@@ -179,6 +184,10 @@
             }
             var url;
             if (mode === 'ocr') {
+                formData.append('ocr_mode', 'full');
+                url = '/video/ning/ocr-process';
+            } else if (mode === 'ocr-translate-only') {
+                formData.append('ocr_mode', 'translate-only');
                 url = '/video/ning/ocr-process';
             } else {
                 formData.append('srt_file', document.getElementById('srt_file').files[0]);
