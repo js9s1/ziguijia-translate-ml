@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>字幕列表 - 🇨🇳🇬🇧 zh+en</title>
+    <link rel="stylesheet" href="/ning.css">
+    <style>
+        .srt-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 1px;
+            background: #222;
+            border: 1px solid #333;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .srt-cell {
+            padding: 6px 8px;
+            background: #1a1a2e;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .srt-cell a {
+            color: #ccc;
+            text-decoration: none;
+            font-family: monospace;
+            font-size: 0.95em;
+        }
+        .srt-cell:hover { background: #2a2a4a; }
+        .srt-cell:hover a { color: #fff; }
+        #searchBox:focus { border-color: #2196F3; }
+        #pageInfo { color: #888; font-size: 0.98em; }
+        .pager-btn {
+            display: inline-block;
+            padding: 4px 10px;
+            margin: 0 2px;
+            color: #2196F3;
+            text-decoration: none;
+            border: 1px solid #333;
+            border-radius: 3px;
+            font-size: 0.98em;
+            background: #1a1a2e;
+            cursor: pointer;
+        }
+        .pager-btn:hover { background: #2a2a4a; }
+        .pager-btn.active { background: #2196F3; color: #fff; border-color: #2196F3; }
+        .pager-btn.disabled { color: #555; cursor: default; pointer-events: none; }
+        .srt-lang-dropdown:hover .srt-lang-menu { display: block !important; }
+        .srt-lang-menu .srt-item { display:block;padding:6px 12px;color:#ccc;text-decoration:none;font-size:0.98em;white-space:nowrap; }
+        .srt-lang-menu .srt-item:hover { background:#333;color:#fff; }
+    </style>
+</head>
+<body>
+    <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="display:flex;align-items:center;gap:12px;">
+            <a href="/" class="back-link">&larr; 返回首页</a>
+            <div class="srt-lang-dropdown" style="position:relative;">
+                <a href="#" class="srt-lang-toggle" style="color:#2196F3;text-decoration:none;font-size:0.98em;cursor:pointer;">🇨🇳🇬🇧 zh+en ▾</a>
+                <div class="srt-lang-menu" style="display:none;position:absolute;top:100%;left:0;background:#1e1e2e;border:1px solid #444;border-radius:4px;min-width:90px;z-index:1000;box-shadow:0 2px 8px rgba(0,0,0,0.4);">
+
+                    <a href="/srt-zh.html" class="srt-item">🇨🇳 zh</a>
+
+                    <a href="/srt-en.html" class="srt-item">🇬🇧 en</a>
+
+                    <a href="/srt-zh+en.html" class="srt-item">🇨🇳🇬🇧 zh+en</a>
+
+                </div>
+            </div>
+        </div>
+        <div id="userArea" style="font-size:0.9em;"></div>
+    </div>
+    <div class="container">
+        <h1>字幕列表 - 🇨🇳🇬🇧 zh+en</h1>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+            <div id="pageInfo" style="color:#888;font-size:0.85em;"></div>
+            <div style="display:flex;align-items:stretch;gap:0;flex-shrink:0;">
+                <input type="text" id="searchBox" placeholder="输入编号过滤..." style="width:200px;height:32px;padding:0 10px;border:1px solid #555;border-right:none;border-radius:4px 0 0 4px;background:#1a1a2e;color:#ccc;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;">
+                <button id="downloadBtn" style="height:32px;padding:0 12px;border:1px solid #555;border-left:none;border-radius:0 4px 4px 0;background:#2196F3;color:#fff;cursor:pointer;font-size:13px;font-family:inherit;box-sizing:border-box;white-space:nowrap;">下载全部</button>
+            </div>
+        </div>
+        <div id="srtGrid"></div>
+        <div id="pager" style="text-align:center;margin-top:20px;"></div>
+    </div>
+    <script>
+    (function() {
+        var DATA = [{"name": "00110.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00110.zh+en.srt"}, {"name": "00069.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00069.zh+en.srt"}, {"name": "10182.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10182.zh+en.srt"}, {"name": "00005.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00005.zh+en.srt"}, {"name": "00066.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00066.zh+en.srt"}, {"name": "00021.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00021.zh+en.srt"}, {"name": "10703.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10703.zh+en.srt"}, {"name": "00111.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00111.zh+en.srt"}, {"name": "00182.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00182.zh+en.srt"}, {"name": "00102.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00102.zh+en.srt"}, {"name": "00186.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00186.zh+en.srt"}, {"name": "00023.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00023.zh+en.srt"}, {"name": "20004.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/20004.zh+en.srt"}, {"name": "10181.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10181.zh+en.srt"}, {"name": "00077.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00077.zh+en.srt"}, {"name": "00024.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00024.zh+en.srt"}, {"name": "00107.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00107.zh+en.srt"}, {"name": "00104.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00104.zh+en.srt"}, {"name": "00072.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00072.zh+en.srt"}, {"name": "00018.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00018.zh+en.srt"}, {"name": "00004.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00004.zh+en.srt"}, {"name": "10193.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10193.zh+en.srt"}, {"name": "00048.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00048.zh+en.srt"}, {"name": "00088.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00088.zh+en.srt"}, {"name": "00068.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00068.zh+en.srt"}, {"name": "00028.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00028.zh+en.srt"}, {"name": "00129.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00129.zh+en.srt"}, {"name": "00162.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00162.zh+en.srt"}, {"name": "00075.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00075.zh+en.srt"}, {"name": "00161.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00161.zh+en.srt"}, {"name": "00135.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00135.zh+en.srt"}, {"name": "00171.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00171.zh+en.srt"}, {"name": "00173.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00173.zh+en.srt"}, {"name": "00035.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00035.zh+en.srt"}, {"name": "10180.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10180.zh+en.srt"}, {"name": "00055.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00055.zh+en.srt"}, {"name": "00034.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00034.zh+en.srt"}, {"name": "00138.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00138.zh+en.srt"}, {"name": "10191.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10191.zh+en.srt"}, {"name": "00030.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00030.zh+en.srt"}, {"name": "00119.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00119.zh+en.srt"}, {"name": "00079.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00079.zh+en.srt"}, {"name": "20003.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/20003.zh+en.srt"}, {"name": "00002.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00002.zh+en.srt"}, {"name": "00172.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00172.zh+en.srt"}, {"name": "10185.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10185.zh+en.srt"}, {"name": "00164.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00164.zh+en.srt"}, {"name": "10177.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10177.zh+en.srt"}, {"name": "20006.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/20006.zh+en.srt"}, {"name": "00032.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00032.zh+en.srt"}, {"name": "00056.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00056.zh+en.srt"}, {"name": "00124.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00124.zh+en.srt"}, {"name": "20007.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/20007.zh+en.srt"}, {"name": "00003.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00003.zh+en.srt"}, {"name": "00141.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00141.zh+en.srt"}, {"name": "20001.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/20001.zh+en.srt"}, {"name": "20011.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/20011.zh+en.srt"}, {"name": "00184.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00184.zh+en.srt"}, {"name": "00082.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00082.zh+en.srt"}, {"name": "00137.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00137.zh+en.srt"}, {"name": "00076.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00076.zh+en.srt"}, {"name": "00163.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00163.zh+en.srt"}, {"name": "00083.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00083.zh+en.srt"}, {"name": "00096.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00096.zh+en.srt"}, {"name": "00108.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00108.zh+en.srt"}, {"name": "00010.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00010.zh+en.srt"}, {"name": "20009.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/20009.zh+en.srt"}, {"name": "20010.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/20010.zh+en.srt"}, {"name": "00016.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00016.zh+en.srt"}, {"name": "20008.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/20008.zh+en.srt"}, {"name": "00190.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00190.zh+en.srt"}, {"name": "10184.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10184.zh+en.srt"}, {"name": "10179.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10179.zh+en.srt"}, {"name": "00187.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00187.zh+en.srt"}, {"name": "00008.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00008.zh+en.srt"}, {"name": "00189.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00189.zh+en.srt"}, {"name": "20005.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/20005.zh+en.srt"}, {"name": "00134.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00134.zh+en.srt"}, {"name": "00085.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00085.zh+en.srt"}, {"name": "10178.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10178.zh+en.srt"}, {"name": "00160.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00160.zh+en.srt"}, {"name": "20002.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/20002.zh+en.srt"}, {"name": "00147.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00147.zh+en.srt"}, {"name": "00106.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00106.zh+en.srt"}, {"name": "00089.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00089.zh+en.srt"}, {"name": "00073.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00073.zh+en.srt"}, {"name": "00011.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00011.zh+en.srt"}, {"name": "00169.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00169.zh+en.srt"}, {"name": "00020.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00020.zh+en.srt"}, {"name": "10186.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10186.zh+en.srt"}, {"name": "00113.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00113.zh+en.srt"}, {"name": "10192.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10192.zh+en.srt"}, {"name": "00080.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00080.zh+en.srt"}, {"name": "00139.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00139.zh+en.srt"}, {"name": "00168.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00168.zh+en.srt"}, {"name": "00039.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00039.zh+en.srt"}, {"name": "00150.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00150.zh+en.srt"}, {"name": "10162.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10162.zh+en.srt"}, {"name": "00159.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00159.zh+en.srt"}, {"name": "00045.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00045.zh+en.srt"}, {"name": "00009.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00009.zh+en.srt"}, {"name": "00122.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00122.zh+en.srt"}, {"name": "00071.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00071.zh+en.srt"}, {"name": "00142.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00142.zh+en.srt"}, {"name": "00067.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00067.zh+en.srt"}, {"name": "00078.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00078.zh+en.srt"}, {"name": "00156.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00156.zh+en.srt"}, {"name": "00174.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00174.zh+en.srt"}, {"name": "00074.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00074.zh+en.srt"}, {"name": "00017.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00017.zh+en.srt"}, {"name": "00012.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00012.zh+en.srt"}, {"name": "00128.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00128.zh+en.srt"}, {"name": "00047.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00047.zh+en.srt"}, {"name": "00095.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00095.zh+en.srt"}, {"name": "00152.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00152.zh+en.srt"}, {"name": "00054.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00054.zh+en.srt"}, {"name": "00025.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00025.zh+en.srt"}, {"name": "00136.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00136.zh+en.srt"}, {"name": "00037.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00037.zh+en.srt"}, {"name": "00014.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00014.zh+en.srt"}, {"name": "00158.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00158.zh+en.srt"}, {"name": "00121.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00121.zh+en.srt"}, {"name": "00105.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00105.zh+en.srt"}, {"name": "00051.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00051.zh+en.srt"}, {"name": "00101.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00101.zh+en.srt"}, {"name": "00019.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00019.zh+en.srt"}, {"name": "00049.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00049.zh+en.srt"}, {"name": "00145.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00145.zh+en.srt"}, {"name": "00006.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00006.zh+en.srt"}, {"name": "00132.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00132.zh+en.srt"}, {"name": "00029.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00029.zh+en.srt"}, {"name": "00013.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00013.zh+en.srt"}, {"name": "00109.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00109.zh+en.srt"}, {"name": "00031.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00031.zh+en.srt"}, {"name": "00154.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00154.zh+en.srt"}, {"name": "00022.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00022.zh+en.srt"}, {"name": "00087.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00087.zh+en.srt"}, {"name": "00062.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00062.zh+en.srt"}, {"name": "00185.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00185.zh+en.srt"}, {"name": "00133.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00133.zh+en.srt"}, {"name": "00149.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00149.zh+en.srt"}, {"name": "00166.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00166.zh+en.srt"}, {"name": "00103.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00103.zh+en.srt"}, {"name": "00116.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00116.zh+en.srt"}, {"name": "00177.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00177.zh+en.srt"}, {"name": "00094.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00094.zh+en.srt"}, {"name": "00125.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00125.zh+en.srt"}, {"name": "00026.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00026.zh+en.srt"}, {"name": "00151.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00151.zh+en.srt"}, {"name": "00155.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00155.zh+en.srt"}, {"name": "00044.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00044.zh+en.srt"}, {"name": "00070.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00070.zh+en.srt"}, {"name": "00038.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00038.zh+en.srt"}, {"name": "10161.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10161.zh+en.srt"}, {"name": "00002.zh+en.srt", "path": "/home/js9s/子归家/batch/oldrun/_test_new_dir_/00002.zh+en.srt"}];
+        var PER_PAGE = 150;
+
+        var filtered = DATA;
+        var page = 1;
+
+        function filterData(term) {
+            if (!term) return DATA;
+            return DATA.filter(function(f) { return f.name.indexOf(term) !== -1; });
+        }
+
+        function render() {
+            var totalPages = Math.ceil(filtered.length / PER_PAGE) || 1;
+            if (page > totalPages) page = totalPages;
+            var start = (page - 1) * PER_PAGE;
+            var items = filtered.slice(start, start + PER_PAGE);
+
+            document.getElementById('pageInfo').textContent =
+                '共 ' + filtered.length + ' 个文件' +
+                (filtered.length !== DATA.length ? ' (已过滤，全部 ' + DATA.length + ' 个)' : '');
+
+            var grid = document.createElement('div');
+            grid.className = 'srt-grid';
+            for (var i = 0; i < PER_PAGE; i++) {
+                var cell = document.createElement('div');
+                cell.className = 'srt-cell';
+                if (i < items.length) {
+                    cell.innerHTML = '<a href="/srt-view?path=' + encodeURIComponent(items[i].path) + '" target="_blank">' + items[i].name + '</a>';
+                }
+                grid.appendChild(cell);
+            }
+            document.getElementById('srtGrid').innerHTML = '';
+            document.getElementById('srtGrid').appendChild(grid);
+            renderPager(totalPages);
+        }
+
+        function renderPager(totalPages) {
+            var pager = document.getElementById('pager');
+            if (totalPages <= 1) { pager.innerHTML = ''; return; }
+            var h = '';
+            h += '<span class="pager-btn' + (page <= 1 ? ' disabled' : '') + '" data-p="' + (page - 1) + '">上一页</span>';
+            var from = Math.max(1, page - 5), to = Math.min(totalPages, page + 5);
+            if (from > 1) { h += '<span class="pager-btn" data-p="1">1</span>'; if (from > 2) h += '<span class="pager-btn disabled">...</span>'; }
+            for (var p = from; p <= to; p++) {
+                h += '<span class="pager-btn' + (p === page ? ' active' : '') + '" data-p="' + p + '">' + p + '</span>';
+            }
+            if (to < totalPages) { if (to < totalPages-1) h += '<span class="pager-btn disabled">...</span>'; h += '<span class="pager-btn" data-p="' + totalPages + '">' + totalPages + '</span>'; }
+            h += '<span class="pager-btn' + (page >= totalPages ? ' disabled' : '') + '" data-p="' + (page + 1) + '">下一页</span>';
+            pager.innerHTML = h;
+        }
+
+        document.getElementById('searchBox').addEventListener('input', function() {
+            filtered = filterData(this.value);
+            page = 1;
+            render();
+            // Update download button text
+            var btn = document.getElementById('downloadBtn');
+            btn.textContent = this.value.trim() ? '下载过滤' : '下载全部';
+        });
+
+        document.getElementById('downloadBtn').addEventListener('click', function() {
+            var files = (filtered.length && filtered.length < DATA.length) ? filtered : DATA;
+            if (!files.length) return;
+            this.disabled = true;
+            this.textContent = '压缩中...';
+            fetch('/api/oldrun-srt/download', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({files: files})
+            }).then(function(r) {
+                if (!r.ok) throw new Error(r.statusText);
+                return r.blob();
+            }).then(function(blob) {
+                var a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = 'srts.zip';
+                a.click();
+                URL.revokeObjectURL(a.href);
+            }).catch(function(e) {
+                alert('下载失败: ' + e.message);
+            }).finally(function() {
+                this.textContent = filtered.length < DATA.length ? '下载过滤' : '下载全部';
+                this.disabled = false;
+            }.bind(this));
+        });
+
+        document.getElementById('pager').addEventListener('click', function(e) {
+            var btn = e.target.closest('.pager-btn');
+            if (!btn || btn.classList.contains('active') || btn.classList.contains('disabled')) return;
+            page = parseInt(btn.getAttribute('data-p'));
+            render();
+        });
+
+        var langToggle = document.querySelector('.srt-lang-toggle');
+        var langMenu = document.querySelector('.srt-lang-menu');
+        if (langToggle && langMenu) {
+            langToggle.addEventListener('click', function(e) {
+                e.preventDefault();
+                langMenu.style.display = langMenu.style.display === 'block' ? 'none' : 'block';
+            });
+            document.addEventListener('click', function(e) {
+                if (!e.target.closest('.srt-lang-dropdown')) langMenu.style.display = 'none';
+            });
+        }
+        render();
+    })();
+    </script>
+    <script src="/utils.js"></script>
+    <script src="/auth.js"></script>
+</body>
+</html>

@@ -3,6 +3,7 @@ from functools import wraps
 import json
 import logging
 import os
+import pickle as _pickle
 import secrets
 import subprocess
 import sys
@@ -10,6 +11,10 @@ import time
 import uuid
 from collections import defaultdict
 
+import io
+import zipfile
+
+import jinja2
 import valkey
 from cachelib.file import FileSystemCache
 
@@ -440,6 +445,7 @@ ALLOWED_FILE_DIRS = [
     os.path.realpath(BASE_DIR),
     os.path.realpath(AUDIO_TRACKS_DIR) if os.path.exists(AUDIO_TRACKS_DIR) else None,
     os.path.realpath(VIDEO_DIR) if VIDEO_DIR and os.path.exists(VIDEO_DIR) else None,
+    os.path.realpath(os.path.join(os.path.dirname(os.path.dirname(BASE_DIR)), "batch")) if os.path.exists(os.path.join(os.path.dirname(os.path.dirname(BASE_DIR)), "batch")) else None,
 ]
 ALLOWED_FILE_DIRS = [d for d in ALLOWED_FILE_DIRS if d]
 
@@ -692,6 +698,11 @@ def files_srt_resubmit(access_code):
 def srt_page():
     """Serve the SRT page"""
     return send_from_directory(HTML_DIR, "srt.html")
+
+
+@app.route("/srt-view", methods=["GET"])
+def srt_view_page():
+    return send_from_directory(HTML_DIR, "srt-view.html")
 
 
 @app.route("/srt/process", methods=["POST"])
@@ -1078,6 +1089,466 @@ def api_job_cancel(access_code):
 def api_job_delete(access_code):
     result = get_job_queue().delete_job(access_code)
     return jsonify(result)
+
+
+# ═══════════════════════════════════════════
+# Oldrun SRT list (cached as static HTML)
+# ═══════════════════════════════════════════
+
+OLDRUN_SRT_DIR = os.path.join(os.path.dirname(os.path.dirname(BASE_DIR)), "batch", "oldrun")
+OLDRUN_SRT_TIMESTAMP = os.path.join(os.path.dirname(os.path.dirname(BASE_DIR)), "batch", "list_updated.timestamp")
+
+
+def _load_index() -> dict | None:
+    """Load the incremental index from the timestamp file (pickle format).
+
+    Returns None if the file is missing, corrupt, or contains only pre-pickle
+    JSON (from an older version — so it gets rebuilt from scratch).
+    """
+    try:
+        with open(OLDRUN_SRT_TIMESTAMP, "rb") as f:
+            header = f.read(1)
+            if header == b"\x80":
+                # Pickle protocol 4/5 magic byte — fast path
+                f.seek(0)
+                data = _pickle.load(f)
+            elif header == b"{":
+                # Legacy JSON — ignore and rebuild
+                return None
+            else:
+                return None
+        if isinstance(data, dict) and "scanned_dirs" in data:
+            return data
+    except (OSError, _pickle.UnpicklingError, EOFError):
+        pass
+    return None
+
+
+def _save_index(index: dict):
+    """Atomically write the index into the timestamp file using pickle.
+
+    The file's mtime serves as the rebuild trigger; its content tracks
+    scanned directories and accumulated file entries.
+    """
+    tmp = OLDRUN_SRT_TIMESTAMP + ".tmp"
+    with open(tmp, "wb") as f:
+        _pickle.dump(index, f, protocol=_pickle.HIGHEST_PROTOCOL)
+    os.replace(tmp, OLDRUN_SRT_TIMESTAMP)
+
+
+def _scan_dir(dirpath: str) -> tuple[list[dict], list[dict], list[dict]]:
+    """Walk a single directory tree and return (zh_entries, en_entries, zh_en_entries)."""
+    zh, en, zh_en = [], [], []
+    for root, _, filenames in os.walk(dirpath):
+        for name in filenames:
+            if not name.lower().endswith(".srt"):
+                continue
+            entry = {"name": name, "path": os.path.join(root, name)}
+            low = name.lower()
+            if low.endswith(".zh+en.srt"):
+                zh_en.append(entry)
+            elif low.endswith(".en.srt"):
+                en.append(entry)
+            else:
+                zh.append(entry)
+    return zh, en, zh_en
+
+
+def _collect_incremental(force: bool = False) -> tuple[list[dict], list[dict], list[dict], bool]:
+    """Return (zh, en, zh_en, changed) — walks new dirs or full rescan if forced.
+
+    The timestamp file (``list_updated.timestamp``) stores a pickle index:
+    ``{"scanned_dirs": [...], "zh": [...], "en": [...], "zh_en": [...]}``.
+
+    When *force* is True, always do a full rescan of all directories and
+    rebuild the index from scratch.  Used when the mtime gate in
+    ``_build_all_static_srt`` detected an external trigger (timestamp touch).
+    """
+    index = _load_index()
+
+    if not os.path.isdir(OLDRUN_SRT_DIR):
+        return [], [], [], False
+    current_dirs = sorted({
+        os.path.join(OLDRUN_SRT_DIR, d)
+        for d in os.listdir(OLDRUN_SRT_DIR)
+        if os.path.isdir(os.path.join(OLDRUN_SRT_DIR, d))
+    })
+
+    if force or index is None:
+        # Full scan: either forced by mtime gate, or no index exists yet
+        zh, en, zh_en = [], [], []
+        for d in current_dirs:
+            z, e, ze = _scan_dir(d)
+            zh.extend(z)
+            en.extend(e)
+            zh_en.extend(ze)
+        _save_index({"zh": zh, "en": en, "zh_en": zh_en, "scanned_dirs": current_dirs})
+        return zh, en, zh_en, True
+
+    scanned = set(index["scanned_dirs"])
+    new_dirs = [d for d in current_dirs if d not in scanned]
+
+    if not new_dirs:
+        return index["zh"], index["en"], index.get("zh_en", []), False
+
+    # Incremental: scan only new dirs and merge into the index
+    zh = list(index["zh"])
+    en = list(index["en"])
+    zh_en = list(index.get("zh_en", []))
+    for d in new_dirs:
+        z, e, ze = _scan_dir(d)
+        zh.extend(z)
+        en.extend(e)
+        zh_en.extend(ze)
+
+    zh.sort(key=lambda x: x["name"])
+    en.sort(key=lambda x: x["name"])
+    zh_en.sort(key=lambda x: x["name"])
+
+    _save_index({"zh": zh, "en": en, "zh_en": zh_en, "scanned_dirs": current_dirs})
+    return zh, en, zh_en, True
+
+
+def _build_all_static_srt():
+    """Rebuild static SRT list pages — gated on list_updated.timestamp.
+
+    Called at startup and periodically (every 6 hours) via gunicorn_config.
+    Pages are served from disk by the catch-all static route.
+
+    The external system ``touch``-es ``list_updated.timestamp`` whenever
+    new directories are added to ``oldrun/``.  Only then do we check for
+    new dirs and rebuild.
+    """
+    # ── Quick guard: skip if timestamp isn't newer ───────────
+    try:
+        ts_mtime = os.path.getmtime(OLDRUN_SRT_TIMESTAMP)
+    except OSError:
+        ts_mtime = None
+
+    force_full = False
+    if ts_mtime is not None:
+        for lang in ("zh", "en", "zh+en"):
+            html_path = os.path.join(HTML_DIR, f"srt-{lang}.html")
+            if not os.path.isfile(html_path):
+                force_full = True
+                break  # HTML missing — need rebuild
+            if os.path.getmtime(html_path) < ts_mtime:
+                force_full = True
+                break  # timestamp newer — need rebuild
+        else:
+            return  # all HTML files are already up to date
+
+    # ── Incremental scan + rebuild ────────────────────────────
+    zh, en, zh_en, changed = _collect_incremental(force=force_full)
+    if not changed:
+        # Cache says nothing new, but HTML may be missing (first deploy)
+        for lang in ("zh", "en", "zh+en"):
+            if not os.path.isfile(os.path.join(HTML_DIR, f"srt-{lang}.html")):
+                changed = True
+                break
+    if not changed:
+        # We passed the mtime gate (timestamp was touched or HTML was
+        # missing), but _collect_incremental found no *new directories*
+        # and returned changed=False.  Still rewrite — the timestamp
+        # may have been touched to pick up new files inside already-
+        # scanned dirs, or the user explicitly forced a refresh.
+        logger.info("mtime gate triggered rebuild, but no new dirs — forcing HTML rewrite anyway")
+
+    _write_static_html("zh", zh)
+    _write_static_html("en", en)
+    _write_static_html("zh+en", zh_en)
+
+
+# Jinja2 template for the SRT list page.  See ``_write_static_html`` below.
+_SRT_LIST_TEMPLATE = jinja2.Template(r"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="/ning.css">
+    <style>
+        .srt-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 1px;
+            background: #222;
+            border: 1px solid #333;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .srt-cell {
+            padding: 6px 8px;
+            background: #1a1a2e;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .srt-cell a {
+            color: #ccc;
+            text-decoration: none;
+            font-family: monospace;
+            font-size: 0.95em;
+        }
+        .srt-cell:hover { background: #2a2a4a; }
+        .srt-cell:hover a { color: #fff; }
+        #searchBox:focus { border-color: #2196F3; }
+        #pageInfo { color: #888; font-size: 0.98em; }
+        .pager-btn {
+            display: inline-block;
+            padding: 4px 10px;
+            margin: 0 2px;
+            color: #2196F3;
+            text-decoration: none;
+            border: 1px solid #333;
+            border-radius: 3px;
+            font-size: 0.98em;
+            background: #1a1a2e;
+            cursor: pointer;
+        }
+        .pager-btn:hover { background: #2a2a4a; }
+        .pager-btn.active { background: #2196F3; color: #fff; border-color: #2196F3; }
+        .pager-btn.disabled { color: #555; cursor: default; pointer-events: none; }
+        .srt-lang-dropdown:hover .srt-lang-menu { display: block !important; }
+        .srt-lang-menu .srt-item { display:block;padding:6px 12px;color:#ccc;text-decoration:none;font-size:0.98em;white-space:nowrap; }
+        .srt-lang-menu .srt-item:hover { background:#333;color:#fff; }
+    </style>
+</head>
+<body>
+    <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="display:flex;align-items:center;gap:12px;">
+            <a href="/" class="back-link">&larr; 返回首页</a>
+            <div class="srt-lang-dropdown" style="position:relative;">
+                <a href="#" class="srt-lang-toggle" style="color:#2196F3;text-decoration:none;font-size:0.98em;cursor:pointer;">{{ flag }} {{ lang }} ▾</a>
+                <div class="srt-lang-menu" style="display:none;position:absolute;top:100%;left:0;background:#1e1e2e;border:1px solid #444;border-radius:4px;min-width:90px;z-index:1000;box-shadow:0 2px 8px rgba(0,0,0,0.4);">
+{% for opt in lang_options %}
+                    <a href="{{ opt.url }}" class="srt-item">{{ opt.flag }} {{ opt.label }}</a>
+{% endfor %}
+                </div>
+            </div>
+        </div>
+        <div id="userArea" style="font-size:0.9em;"></div>
+    </div>
+    <div class="container">
+        <h1>{{ title }}</h1>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+            <div id="pageInfo" style="color:#888;font-size:0.85em;"></div>
+            <div style="display:flex;align-items:stretch;gap:0;flex-shrink:0;">
+                <input type="text" id="searchBox" placeholder="输入编号过滤..." style="width:200px;height:32px;padding:0 10px;border:1px solid #555;border-right:none;border-radius:4px 0 0 4px;background:#1a1a2e;color:#ccc;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;">
+                <button id="downloadBtn" style="height:32px;padding:0 12px;border:1px solid #555;border-left:none;border-radius:0 4px 4px 0;background:#2196F3;color:#fff;cursor:pointer;font-size:13px;font-family:inherit;box-sizing:border-box;white-space:nowrap;">下载全部</button>
+            </div>
+        </div>
+        <div id="srtGrid"></div>
+        <div id="pager" style="text-align:center;margin-top:20px;"></div>
+    </div>
+    <script>
+    (function() {
+        var DATA = {{ data_json }};
+        var PER_PAGE = 150;
+
+        var filtered = DATA;
+        var page = 1;
+
+        function filterData(term) {
+            if (!term) return DATA;
+            return DATA.filter(function(f) { return f.name.indexOf(term) !== -1; });
+        }
+
+        function render() {
+            var totalPages = Math.ceil(filtered.length / PER_PAGE) || 1;
+            if (page > totalPages) page = totalPages;
+            var start = (page - 1) * PER_PAGE;
+            var items = filtered.slice(start, start + PER_PAGE);
+
+            document.getElementById('pageInfo').textContent =
+                '共 ' + filtered.length + ' 个文件' +
+                (filtered.length !== DATA.length ? ' (已过滤，全部 ' + DATA.length + ' 个)' : '');
+
+            var grid = document.createElement('div');
+            grid.className = 'srt-grid';
+            for (var i = 0; i < PER_PAGE; i++) {
+                var cell = document.createElement('div');
+                cell.className = 'srt-cell';
+                if (i < items.length) {
+                    cell.innerHTML = '<a href="/srt-view?path=' + encodeURIComponent(items[i].path) + '" target="_blank">' + items[i].name + '</a>';
+                }
+                grid.appendChild(cell);
+            }
+            document.getElementById('srtGrid').innerHTML = '';
+            document.getElementById('srtGrid').appendChild(grid);
+            renderPager(totalPages);
+        }
+
+        function renderPager(totalPages) {
+            var pager = document.getElementById('pager');
+            if (totalPages <= 1) { pager.innerHTML = ''; return; }
+            var h = '';
+            h += '<span class="pager-btn' + (page <= 1 ? ' disabled' : '') + '" data-p="' + (page - 1) + '">上一页</span>';
+            var from = Math.max(1, page - 5), to = Math.min(totalPages, page + 5);
+            if (from > 1) { h += '<span class="pager-btn" data-p="1">1</span>'; if (from > 2) h += '<span class="pager-btn disabled">...</span>'; }
+            for (var p = from; p <= to; p++) {
+                h += '<span class="pager-btn' + (p === page ? ' active' : '') + '" data-p="' + p + '">' + p + '</span>';
+            }
+            if (to < totalPages) { if (to < totalPages-1) h += '<span class="pager-btn disabled">...</span>'; h += '<span class="pager-btn" data-p="' + totalPages + '">' + totalPages + '</span>'; }
+            h += '<span class="pager-btn' + (page >= totalPages ? ' disabled' : '') + '" data-p="' + (page + 1) + '">下一页</span>';
+            pager.innerHTML = h;
+        }
+
+        document.getElementById('searchBox').addEventListener('input', function() {
+            filtered = filterData(this.value);
+            page = 1;
+            render();
+            // Update download button text
+            var btn = document.getElementById('downloadBtn');
+            btn.textContent = this.value.trim() ? '下载过滤' : '下载全部';
+        });
+
+        document.getElementById('downloadBtn').addEventListener('click', function() {
+            var files = (filtered.length && filtered.length < DATA.length) ? filtered : DATA;
+            if (!files.length) return;
+            this.disabled = true;
+            this.textContent = '压缩中...';
+            fetch('/api/oldrun-srt/download', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({files: files})
+            }).then(function(r) {
+                if (!r.ok) throw new Error(r.statusText);
+                return r.blob();
+            }).then(function(blob) {
+                var a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = 'srts.zip';
+                a.click();
+                URL.revokeObjectURL(a.href);
+            }).catch(function(e) {
+                alert('下载失败: ' + e.message);
+            }).finally(function() {
+                this.textContent = filtered.length < DATA.length ? '下载过滤' : '下载全部';
+                this.disabled = false;
+            }.bind(this));
+        });
+
+        document.getElementById('pager').addEventListener('click', function(e) {
+            var btn = e.target.closest('.pager-btn');
+            if (!btn || btn.classList.contains('active') || btn.classList.contains('disabled')) return;
+            page = parseInt(btn.getAttribute('data-p'));
+            render();
+        });
+
+        var langToggle = document.querySelector('.srt-lang-toggle');
+        var langMenu = document.querySelector('.srt-lang-menu');
+        if (langToggle && langMenu) {
+            langToggle.addEventListener('click', function(e) {
+                e.preventDefault();
+                langMenu.style.display = langMenu.style.display === 'block' ? 'none' : 'block';
+            });
+            document.addEventListener('click', function(e) {
+                if (!e.target.closest('.srt-lang-dropdown')) langMenu.style.display = 'none';
+            });
+        }
+        render();
+    })();
+    </script>
+    <script src="/utils.js"></script>
+    <script src="/auth.js"></script>
+</body>
+</html>""")
+
+
+def _write_static_html(lang, files):
+    """Write a static HTML file to HTML_DIR with embedded data and search.
+
+    Uses a Jinja2 template (module-level constant ``_SRT_LIST_TEMPLATE``)
+    so the template is readable as plain HTML/CSS/JS — no double-brace
+    escaping or unicode-escape obfuscation.
+    """
+    flag = "\U0001F1E8\U0001F1F3" if lang == "zh" else ("\U0001F1EC\U0001F1E7" if lang == "en" else "\U0001F1E8\U0001F1F3\U0001F1EC\U0001F1E7")
+    title = f"字幕列表 - {flag} {lang}"
+
+    LANGUAGES = [
+        ("zh",  "\U0001F1E8\U0001F1F3",                     "zh"),
+        ("en",  "\U0001F1EC\U0001F1E7",                     "en"),
+        ("zh+en", "\U0001F1E8\U0001F1F3\U0001F1EC\U0001F1E7", "zh+en"),
+    ]
+    lang_options = [
+        {"url": f"/srt-{l}.html", "flag": f, "label": lb, "active": l == lang}
+        for l, f, lb in LANGUAGES
+    ]
+
+    html = _SRT_LIST_TEMPLATE.render(
+        title=title,
+        flag=flag,
+        lang=lang,
+        lang_options=lang_options,
+        data_json=json.dumps(files, ensure_ascii=False),
+    )
+
+    filepath = os.path.join(HTML_DIR, f"srt-{lang}.html")
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(html)
+    logger.info("Wrote static srt list: %s (%d files)", filepath, len(files))
+
+
+@app.route("/api/oldrun-srt", methods=["GET"])
+def api_oldrun_srt():
+    """Serve the oldrun SRT list as JSON (programmatic access).
+
+    Query param: lang=zh|en|zh+en
+    """
+    lang = request.args.get("lang", "zh")
+    try:
+        zh, en, zh_en, _changed = _collect_incremental()
+        if lang == "en":
+            files = en
+        elif lang == "zh+en":
+            files = zh_en
+        else:
+            files = zh
+        return jsonify({"files": files})
+    except Exception as e:
+        logger.error(f"Error listing oldrun srt: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/oldrun-srt/download", methods=["POST"])
+def api_oldrun_srt_download():
+    """Zip up selected SRT files and serve as a download.
+
+    POST with JSON body:
+        { "files": [{"path": "/abs/path/to/file.srt", "name": "file.srt"}, ...] }
+    """
+    try:
+        body = request.get_json(silent=True) or {}
+        file_list = body.get("files", [])
+        if not file_list:
+            return jsonify({"error": "No files specified"}), 400
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for entry in file_list:
+                path = entry.get("path", "")
+                name = entry.get("name", os.path.basename(path))
+                # Safety: only allow files under OLDRUN_SRT_DIR
+                real = os.path.realpath(path)
+                if not real.startswith(os.path.realpath(OLDRUN_SRT_DIR) + "/"):
+                    logger.warning("Blocked download path outside oldrun: %s", real)
+                    continue
+                if not os.path.isfile(real):
+                    logger.warning("Skipping missing SRT: %s", real)
+                    continue
+                zf.write(real, name)
+
+        buf.seek(0)
+        return send_file(
+            buf,
+            mimetype="application/zip",
+            as_attachment=True,
+            download_name="srts.zip",
+        )
+    except Exception as e:
+        logger.error(f"Error downloading SRTs: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
 
 
 # ═══════════════════════════════════════════

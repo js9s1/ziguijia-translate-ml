@@ -22,3 +22,6 @@ graphify-out/
 # ── Generated / temporary files ────────────────────────────
 *.backup
 gpucore.*bash
+flask_session/
+gpucore.*
+regenerate_srt_pages.py

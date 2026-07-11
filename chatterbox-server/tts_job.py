@@ -26,7 +26,7 @@ def _run_tts_job(job_data: dict):
     log_file = os.path.join(output_dir, "job.log")
     with open(log_file, "a") as lf:
         with redirect_stdout(lf):
-            wav_data = NingAudio().text_to_wave(text, temperature=temperature, target_language=target_language, cfg_weight=cfg_weight, exaggeration=exaggeration)
+            wav_data = NingAudio().text_to_wave_with_silence(text, temperature=temperature, target_language=target_language, cfg_weight=cfg_weight, exaggeration=exaggeration)
 
     output_path = os.path.join(output_dir, filename)
     with open(output_path, "wb") as f:

@@ -66,6 +66,7 @@ _TYPE_MAP = {
     "_run_audio_segmentation_job": "音频文件合成",
     "_run_video_ocr_job": "OCR翻译视频",
     "_run_video_ning_ocr_job": "宁视频OCR翻译",
+    "_run_video_ning_ocr_translate_only_job": "宁视频OCR仅翻译",
     "_run_ocr_only_job": "视频OCR提取字幕",
 }
 _STATUS_STYLE_MAP = {
@@ -168,7 +169,7 @@ def load_jobs(limit: int = MAX_LOAD_JOBS, offset: int = 0, search: str = "") -> 
         ).fetchone()[0]
         rows = conn.execute(
             "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at, "
-            "temperature, cfg_weight, exaggeration, start_trim, end_trim, text "
+            "temperature, cfg_weight, exaggeration, start_trim, end_trim, text, target_language "
             "FROM jobs WHERE access_code LIKE ? " + order_clause + " LIMIT ? OFFSET ?",
             (pattern, limit, offset),
         ).fetchall()
@@ -176,7 +177,7 @@ def load_jobs(limit: int = MAX_LOAD_JOBS, offset: int = 0, search: str = "") -> 
         total = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
         rows = conn.execute(
             "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at, "
-            "temperature, cfg_weight, exaggeration, start_trim, end_trim, text "
+            "temperature, cfg_weight, exaggeration, start_trim, end_trim, text, target_language "
             "FROM jobs " + order_clause + " LIMIT ? OFFSET ?",
             (limit, offset),
         ).fetchall()
@@ -193,7 +194,7 @@ def get_job(code: str) -> Job | None:
     conn = get_conn()
     r = conn.execute(
         "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at, "
-        "temperature, cfg_weight, exaggeration, start_trim, end_trim, text "
+        "temperature, cfg_weight, exaggeration, start_trim, end_trim, text, target_language "
         "FROM jobs WHERE access_code = ?",
         (code.upper(),),
     ).fetchone()
@@ -219,6 +220,7 @@ def cancel_job(code: str) -> str:
     if status not in ("pending", "processing"):
         conn.close()
         return f"任务 {code} 已经是 {status}，无法取消"
+    now = time.strftime('%Y-%m-%d %H:%M:%S')
     if output_dir and status == "processing":
         try:
             for proc in psutil.process_iter(["pid", "cmdline"]):
@@ -230,8 +232,8 @@ def cancel_job(code: str) -> str:
         except Exception:
             pass
     conn.execute(
-        "UPDATE jobs SET status = ?, error = ?, status_changed_at = ? WHERE access_code = ?",
-        ("cancelled", "用户取消", time.strftime('%Y-%m-%d %H:%M:%S'), code),
+        "UPDATE jobs SET status = ?, error = ?, cancelled_at = ?, status_changed_at = ? WHERE access_code = ?",
+        ("cancelled", "用户取消", now, now, code),
     )
     conn.commit()
     conn.close()
@@ -399,8 +401,8 @@ def delete_job(code: str) -> str:
     # Soft delete: mark as deleted, consistent with the web server
     now = time.strftime('%Y-%m-%d %H:%M:%S')
     conn.execute(
-        "UPDATE jobs SET status = ?, error = ?, status_changed_at = ? WHERE access_code = ?",
-        ("deleted", "用户删除", now, code),
+        "UPDATE jobs SET status = ?, error = ?, deleted_at = ?, status_changed_at = ? WHERE access_code = ?",
+        ("deleted", "用户删除", now, now, code),
     )
     conn.commit()
     conn.close()
@@ -968,7 +970,7 @@ def load_user_jobs(user_id: int) -> list[Job]:
     conn = get_conn()
     rows = conn.execute(
         "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at, "
-        "text "
+        "text, target_language "
         "FROM jobs WHERE user_id = ?"
         " ORDER BY"
         "   CASE WHEN status = 'processing' THEN 0 ELSE 1 END,"

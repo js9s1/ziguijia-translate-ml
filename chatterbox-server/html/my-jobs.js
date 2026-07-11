@@ -62,6 +62,7 @@
           statusLabel +
           '</span></td><td style="font-size:0.9em;color:#666;">' +
           (job.status_changed_at || job.created_at || '') +
+          ' <span style="color:#999;">(' + Intl.DateTimeFormat().resolvedOptions().timeZone + ')</span>' +
           '</td><td style="white-space:nowrap;">' +
           actions +
           '</td></tr>';

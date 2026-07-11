@@ -115,6 +115,17 @@ def _migrate_jobs_table(conn: sqlite3.Connection):
     add_column_if_missing(conn, "jobs", "cached_path", "TEXT")
     add_column_if_missing(conn, "jobs", "filename", "TEXT")
 
+    # Fix legacy UTC created_at vs local status_changed_at mismatch.
+    # created_at was set by CURRENT_TIMESTAMP (UTC) while status_changed_at
+    # used local time.  Align created_at to status_changed_at when available.
+    conn.execute("""
+        UPDATE jobs
+        SET created_at = status_changed_at
+        WHERE status_changed_at IS NOT NULL
+          AND created_at IS NOT NULL
+          AND created_at != status_changed_at
+    """)
+
 
 # ── users table (used by auth.UserManager) ──────────────────────
 

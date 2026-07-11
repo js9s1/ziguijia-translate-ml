@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>字幕列表 - 🇨🇳 zh</title>
+    <link rel="stylesheet" href="/ning.css">
+    <style>
+        .srt-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 1px;
+            background: #222;
+            border: 1px solid #333;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .srt-cell {
+            padding: 6px 8px;
+            background: #1a1a2e;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .srt-cell a {
+            color: #ccc;
+            text-decoration: none;
+            font-family: monospace;
+            font-size: 0.95em;
+        }
+        .srt-cell:hover { background: #2a2a4a; }
+        .srt-cell:hover a { color: #fff; }
+        #searchBox:focus { border-color: #2196F3; }
+        #pageInfo { color: #888; font-size: 0.98em; }
+        .pager-btn {
+            display: inline-block;
+            padding: 4px 10px;
+            margin: 0 2px;
+            color: #2196F3;
+            text-decoration: none;
+            border: 1px solid #333;
+            border-radius: 3px;
+            font-size: 0.98em;
+            background: #1a1a2e;
+            cursor: pointer;
+        }
+        .pager-btn:hover { background: #2a2a4a; }
+        .pager-btn.active { background: #2196F3; color: #fff; border-color: #2196F3; }
+        .pager-btn.disabled { color: #555; cursor: default; pointer-events: none; }
+        .srt-lang-dropdown:hover .srt-lang-menu { display: block !important; }
+        .srt-lang-menu .srt-item { display:block;padding:6px 12px;color:#ccc;text-decoration:none;font-size:0.98em;white-space:nowrap; }
+        .srt-lang-menu .srt-item:hover { background:#333;color:#fff; }
+    </style>
+</head>
+<body>
+    <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="display:flex;align-items:center;gap:12px;">
+            <a href="/" class="back-link">&larr; 返回首页</a>
+            <div class="srt-lang-dropdown" style="position:relative;">
+                <a href="#" class="srt-lang-toggle" style="color:#2196F3;text-decoration:none;font-size:0.98em;cursor:pointer;">🇨🇳 zh ▾</a>
+                <div class="srt-lang-menu" style="display:none;position:absolute;top:100%;left:0;background:#1e1e2e;border:1px solid #444;border-radius:4px;min-width:90px;z-index:1000;box-shadow:0 2px 8px rgba(0,0,0,0.4);">
+
+                    <a href="/srt-zh.html" class="srt-item">🇨🇳 zh</a>
+
+                    <a href="/srt-en.html" class="srt-item">🇬🇧 en</a>
+
+                    <a href="/srt-zh+en.html" class="srt-item">🇨🇳🇬🇧 zh+en</a>
+
+                </div>
+            </div>
+        </div>
+        <div id="userArea" style="font-size:0.9em;"></div>
+    </div>
+    <div class="container">
+        <h1>字幕列表 - 🇨🇳 zh</h1>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+            <div id="pageInfo" style="color:#888;font-size:0.85em;"></div>
+            <div style="display:flex;align-items:stretch;gap:0;flex-shrink:0;">
+                <input type="text" id="searchBox" placeholder="输入编号过滤..." style="width:200px;height:32px;padding:0 10px;border:1px solid #555;border-right:none;border-radius:4px 0 0 4px;background:#1a1a2e;color:#ccc;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;">
+                <button id="downloadBtn" style="height:32px;padding:0 12px;border:1px solid #555;border-left:none;border-radius:0 4px 4px 0;background:#2196F3;color:#fff;cursor:pointer;font-size:13px;font-family:inherit;box-sizing:border-box;white-space:nowrap;">下载全部</button>
+            </div>
+        </div>
+        <div id="srtGrid"></div>
+        <div id="pager" style="text-align:center;margin-top:20px;"></div>
+    </div>
+    <script>
+    (function() {
+        var DATA = [{"name": "00016.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00016.srt"}, {"name": "00030.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00030.srt"}, {"name": "00034.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00034.srt"}, {"name": "00137.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00137.srt"}, {"name": "10182.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10182.srt"}, {"name": "00102.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00102.srt"}, {"name": "00104.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00104.srt"}, {"name": "20002.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/20002.srt"}, {"name": "20011.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/20011.srt"}, {"name": "00187.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00187.srt"}, {"name": "00024.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00024.srt"}, {"name": "10192.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10192.srt"}, {"name": "00089.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00089.srt"}, {"name": "00169.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00169.srt"}, {"name": "00056.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00056.srt"}, {"name": "00138.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00138.srt"}, {"name": "00162.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00162.srt"}, {"name": "00096.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00096.srt"}, {"name": "00186.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00186.srt"}, {"name": "00023.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00023.srt"}, {"name": "10181.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10181.srt"}, {"name": "00005.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00005.srt"}, {"name": "00147.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00147.srt"}, {"name": "00134.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00134.srt"}, {"name": "00075.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00075.srt"}, {"name": "00088.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00088.srt"}, {"name": "00003.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00003.srt"}, {"name": "00020.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00020.srt"}, {"name": "00160.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00160.srt"}, {"name": "00184.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00184.srt"}, {"name": "00163.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00163.srt"}, {"name": "00028.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00028.srt"}, {"name": "20003.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/20003.srt"}, {"name": "00189.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00189.srt"}, {"name": "10703.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10703.srt"}, {"name": "00182.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00182.srt"}, {"name": "00164.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00164.srt"}, {"name": "10179.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10179.srt"}, {"name": "20001.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/20001.srt"}, {"name": "20005.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/20005.srt"}, {"name": "10178.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10178.srt"}, {"name": "20010.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/20010.srt"}, {"name": "00073.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00073.srt"}, {"name": "00077.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00077.srt"}, {"name": "00161.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00161.srt"}, {"name": "00069.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00069.srt"}, {"name": "00066.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00066.srt"}, {"name": "00035.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00035.srt"}, {"name": "00072.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00072.srt"}, {"name": "00108.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00108.srt"}, {"name": "20009.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/20009.srt"}, {"name": "00021.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00021.srt"}, {"name": "00048.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00048.srt"}, {"name": "00141.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00141.srt"}, {"name": "00002.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00002.srt"}, {"name": "00106.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00106.srt"}, {"name": "00124.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00124.srt"}, {"name": "00055.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00055.srt"}, {"name": "00068.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00068.srt"}, {"name": "20004.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/20004.srt"}, {"name": "10180.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10180.srt"}, {"name": "00083.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00083.srt"}, {"name": "10185.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10185.srt"}, {"name": "00011.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00011.srt"}, {"name": "00018.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00018.srt"}, {"name": "20008.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/20008.srt"}, {"name": "00082.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00082.srt"}, {"name": "10191.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10191.srt"}, {"name": "10193.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10193.srt"}, {"name": "00004.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00004.srt"}, {"name": "10186.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10186.srt"}, {"name": "00076.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00076.srt"}, {"name": "00107.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00107.srt"}, {"name": "00171.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00171.srt"}, {"name": "20006.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/20006.srt"}, {"name": "00172.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00172.srt"}, {"name": "00085.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00085.srt"}, {"name": "00129.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00129.srt"}, {"name": "00111.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00111.srt"}, {"name": "00110.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00110.srt"}, {"name": "00135.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00135.srt"}, {"name": "00010.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00010.srt"}, {"name": "00008.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00008.srt"}, {"name": "00119.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00119.srt"}, {"name": "00173.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00173.srt"}, {"name": "00079.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00079.srt"}, {"name": "00032.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00032.srt"}, {"name": "10184.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10184.srt"}, {"name": "00190.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00190.srt"}, {"name": "10177.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/10177.srt"}, {"name": "20007.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/20007.srt"}, {"name": "00113.srt", "path": "/home/js9s/子归家/batch/oldrun/1   run_20260703_115744/srts/00113.srt"}, {"name": "00013.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00013.srt"}, {"name": "00031.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00031.srt"}, {"name": "00047.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00047.srt"}, {"name": "00154.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00154.srt"}, {"name": "10706.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10706.srt"}, {"name": "10209.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10209.srt"}, {"name": "00128.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00128.srt"}, {"name": "00062.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00062.srt"}, {"name": "00136.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00136.srt"}, {"name": "10217.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10217.srt"}, {"name": "10163.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10163.srt"}, {"name": "00025.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00025.srt"}, {"name": "00006.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00006.srt"}, {"name": "10710.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10710.srt"}, {"name": "10211.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10211.srt"}, {"name": "00074.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00074.srt"}, {"name": "10709.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10709.srt"}, {"name": "20013.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/20013.srt"}, {"name": "10189.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10189.srt"}, {"name": "10161.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10161.srt"}, {"name": "10201.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10201.srt"}, {"name": "00145.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00145.srt"}, {"name": "00029.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00029.srt"}, {"name": "10190.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10190.srt"}, {"name": "00158.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00158.srt"}, {"name": "00152.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00152.srt"}, {"name": "00150.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00150.srt"}, {"name": "00070.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00070.srt"}, {"name": "00067.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00067.srt"}, {"name": "00132.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00132.srt"}, {"name": "00133.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00133.srt"}, {"name": "00103.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00103.srt"}, {"name": "10713.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10713.srt"}, {"name": "10210.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10210.srt"}, {"name": "10199.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10199.srt"}, {"name": "10213.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10213.srt"}, {"name": "00009.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00009.srt"}, {"name": "10206.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10206.srt"}, {"name": "00022.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00022.srt"}, {"name": "00049.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00049.srt"}, {"name": "00054.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00054.srt"}, {"name": "00142.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00142.srt"}, {"name": "00109.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00109.srt"}, {"name": "10196.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10196.srt"}, {"name": "10205.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10205.srt"}, {"name": "00039.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00039.srt"}, {"name": "00166.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00166.srt"}, {"name": "00095.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00095.srt"}, {"name": "00149.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00149.srt"}, {"name": "10194.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10194.srt"}, {"name": "00185.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00185.srt"}, {"name": "10204.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10204.srt"}, {"name": "00087.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00087.srt"}, {"name": "00105.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00105.srt"}, {"name": "00177.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00177.srt"}, {"name": "00156.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00156.srt"}, {"name": "00094.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00094.srt"}, {"name": "00155.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00155.srt"}, {"name": "10198.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10198.srt"}, {"name": "20014.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/20014.srt"}, {"name": "00045.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00045.srt"}, {"name": "10708.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10708.srt"}, {"name": "10188.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10188.srt"}, {"name": "00125.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00125.srt"}, {"name": "20015.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/20015.srt"}, {"name": "00159.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00159.srt"}, {"name": "10218.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10218.srt"}, {"name": "00038.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00038.srt"}, {"name": "10187.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10187.srt"}, {"name": "00012.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00012.srt"}, {"name": "00044.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00044.srt"}, {"name": "10712.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10712.srt"}, {"name": "10704.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10704.srt"}, {"name": "00151.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00151.srt"}, {"name": "00017.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00017.srt"}, {"name": "10711.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10711.srt"}, {"name": "00168.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00168.srt"}, {"name": "00174.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00174.srt"}, {"name": "00019.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00019.srt"}, {"name": "00026.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00026.srt"}, {"name": "10705.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10705.srt"}, {"name": "00122.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00122.srt"}, {"name": "00051.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00051.srt"}, {"name": "10195.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10195.srt"}, {"name": "10714.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10714.srt"}, {"name": "10707.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10707.srt"}, {"name": "10162.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10162.srt"}, {"name": "00080.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00080.srt"}, {"name": "00121.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00121.srt"}, {"name": "10200.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10200.srt"}, {"name": "00071.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00071.srt"}, {"name": "00014.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00014.srt"}, {"name": "00116.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00116.srt"}, {"name": "00139.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00139.srt"}, {"name": "00101.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00101.srt"}, {"name": "00078.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00078.srt"}, {"name": "10216.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/10216.srt"}, {"name": "20017.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/20017.srt"}, {"name": "00037.srt", "path": "/home/js9s/子归家/batch/oldrun/2 run_20260703_214637/srts/00037.srt"}, {"name": "00002.srt", "path": "/home/js9s/子归家/batch/oldrun/_test_new_dir_/00002.srt"}, {"name": "test_new.srt", "path": "/home/js9s/子归家/batch/oldrun/_test_new_dir_/test_new.srt"}];
+        var PER_PAGE = 150;
+
+        var filtered = DATA;
+        var page = 1;
+
+        function filterData(term) {
+            if (!term) return DATA;
+            return DATA.filter(function(f) { return f.name.indexOf(term) !== -1; });
+        }
+
+        function render() {
+            var totalPages = Math.ceil(filtered.length / PER_PAGE) || 1;
+            if (page > totalPages) page = totalPages;
+            var start = (page - 1) * PER_PAGE;
+            var items = filtered.slice(start, start + PER_PAGE);
+
+            document.getElementById('pageInfo').textContent =
+                '共 ' + filtered.length + ' 个文件' +
+                (filtered.length !== DATA.length ? ' (已过滤，全部 ' + DATA.length + ' 个)' : '');
+
+            var grid = document.createElement('div');
+            grid.className = 'srt-grid';
+            for (var i = 0; i < PER_PAGE; i++) {
+                var cell = document.createElement('div');
+                cell.className = 'srt-cell';
+                if (i < items.length) {
+                    cell.innerHTML = '<a href="/srt-view?path=' + encodeURIComponent(items[i].path) + '" target="_blank">' + items[i].name + '</a>';
+                }
+                grid.appendChild(cell);
+            }
+            document.getElementById('srtGrid').innerHTML = '';
+            document.getElementById('srtGrid').appendChild(grid);
+            renderPager(totalPages);
+        }
+
+        function renderPager(totalPages) {
+            var pager = document.getElementById('pager');
+            if (totalPages <= 1) { pager.innerHTML = ''; return; }
+            var h = '';
+            h += '<span class="pager-btn' + (page <= 1 ? ' disabled' : '') + '" data-p="' + (page - 1) + '">上一页</span>';
+            var from = Math.max(1, page - 5), to = Math.min(totalPages, page + 5);
+            if (from > 1) { h += '<span class="pager-btn" data-p="1">1</span>'; if (from > 2) h += '<span class="pager-btn disabled">...</span>'; }
+            for (var p = from; p <= to; p++) {
+                h += '<span class="pager-btn' + (p === page ? ' active' : '') + '" data-p="' + p + '">' + p + '</span>';
+            }
+            if (to < totalPages) { if (to < totalPages-1) h += '<span class="pager-btn disabled">...</span>'; h += '<span class="pager-btn" data-p="' + totalPages + '">' + totalPages + '</span>'; }
+            h += '<span class="pager-btn' + (page >= totalPages ? ' disabled' : '') + '" data-p="' + (page + 1) + '">下一页</span>';
+            pager.innerHTML = h;
+        }
+
+        document.getElementById('searchBox').addEventListener('input', function() {
+            filtered = filterData(this.value);
+            page = 1;
+            render();
+            // Update download button text
+            var btn = document.getElementById('downloadBtn');
+            btn.textContent = this.value.trim() ? '下载过滤' : '下载全部';
+        });
+
+        document.getElementById('downloadBtn').addEventListener('click', function() {
+            var files = (filtered.length && filtered.length < DATA.length) ? filtered : DATA;
+            if (!files.length) return;
+            this.disabled = true;
+            this.textContent = '压缩中...';
+            fetch('/api/oldrun-srt/download', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({files: files})
+            }).then(function(r) {
+                if (!r.ok) throw new Error(r.statusText);
+                return r.blob();
+            }).then(function(blob) {
+                var a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = 'srts.zip';
+                a.click();
+                URL.revokeObjectURL(a.href);
+            }).catch(function(e) {
+                alert('下载失败: ' + e.message);
+            }).finally(function() {
+                this.textContent = filtered.length < DATA.length ? '下载过滤' : '下载全部';
+                this.disabled = false;
+            }.bind(this));
+        });
+
+        document.getElementById('pager').addEventListener('click', function(e) {
+            var btn = e.target.closest('.pager-btn');
+            if (!btn || btn.classList.contains('active') || btn.classList.contains('disabled')) return;
+            page = parseInt(btn.getAttribute('data-p'));
+            render();
+        });
+
+        var langToggle = document.querySelector('.srt-lang-toggle');
+        var langMenu = document.querySelector('.srt-lang-menu');
+        if (langToggle && langMenu) {
+            langToggle.addEventListener('click', function(e) {
+                e.preventDefault();
+                langMenu.style.display = langMenu.style.display === 'block' ? 'none' : 'block';
+            });
+            document.addEventListener('click', function(e) {
+                if (!e.target.closest('.srt-lang-dropdown')) langMenu.style.display = 'none';
+            });
+        }
+        render();
+    })();
+    </script>
+    <script src="/utils.js"></script>
+    <script src="/auth.js"></script>
+</body>
+</html>

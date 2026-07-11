@@ -1,7 +1,40 @@
 import json
 import logging
+import threading
+import time
 
 import flask.globals as flask_globals
+
+# ── Oldrun SRT cache rebuild interval ─────────────────────────
+_SRT_REBUILD_SEC = 6 * 3600   # 6 hours
+
+
+def _start_srt_rebuilder(post_fork_logger=None):
+    """Rebuild static SRT list pages now, then every _SRT_REBUILD_SEC.
+
+    Runs in a daemon thread so it doesn't block process shutdown.
+    Called from ``post_fork`` once per worker.
+    """
+    log = (post_fork_logger or logging.getLogger("gunicorn.error"))
+    try:
+        from chatterbox_server import _build_all_static_srt
+        _build_all_static_srt()
+        log.info("Static SRT list pages built at startup")
+    except Exception as e:
+        log.warning("Failed to build static SRT pages at startup: %s", e)
+
+    def _loop():
+        while True:
+            time.sleep(_SRT_REBUILD_SEC)
+            try:
+                from chatterbox_server import _build_all_static_srt
+                _build_all_static_srt()
+                log.info("Static SRT list pages rebuilt (periodic)")
+            except Exception as e:
+                log.warning("Failed to rebuild static SRT pages: %s", e)
+
+    t = threading.Thread(target=_loop, daemon=True, name="srt-rebuilder")
+    t.start()
 
 
 class JSONFormatter(logging.Formatter):
@@ -49,6 +82,8 @@ def post_fork(server, worker):
     structured JSON logging on gunicorn's existing handler."""
     from jobqueue import JobQueue
     JobQueue.clear()
+
+    _start_srt_rebuilder(post_fork_logger=server.log)
 
     fmt = JSONFormatter()
     req_filter = RequestIDFilter()

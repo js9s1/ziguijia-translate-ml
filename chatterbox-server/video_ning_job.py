@@ -120,10 +120,18 @@ def _run_video_ning_ocr_job(job_data: dict):
             else:
                 job_log(access_code, output_dir, "Downloading original video...")
                 download_script = os.path.join(PROJECT_ROOT, "..", "pre-process", "download_orig.py")
-                subprocess.run(
-                    [PYTHON_BIN, download_script, video_number, output_dir],
-                    stdout=proc_log, stderr=proc_log, timeout=3600,
-                )
+                max_attempts = 3
+                for attempt in range(1, max_attempts + 1):
+                    result = subprocess.run(
+                        [PYTHON_BIN, download_script, video_number, output_dir],
+                        stdout=proc_log, stderr=proc_log, timeout=3600,
+                    )
+                    video_path = os.path.join(output_dir, f"{video_number}.mp4")
+                    if result.returncode == 0 and os.path.exists(video_path):
+                        break
+                    if attempt < max_attempts:
+                        job_log(access_code, output_dir, f"Download failed, retrying ({attempt}/{max_attempts})...")
+                        time.sleep(20)
             video_path = os.path.join(output_dir, f"{video_number}.mp4")
             if not os.path.exists(video_path):
                 raise RuntimeError(f"Downloaded video not found: {video_path}")
@@ -283,10 +291,18 @@ def _run_video_ning_ocr_translate_only_job(job_data: dict):
             else:
                 job_log(access_code, output_dir, "Downloading original video...")
                 download_script = os.path.join(PROJECT_ROOT, "..", "pre-process", "download_orig.py")
-                subprocess.run(
-                    [PYTHON_BIN, download_script, video_number, output_dir],
-                    stdout=proc_log, stderr=proc_log, timeout=3600,
-                )
+                max_attempts = 3
+                for attempt in range(1, max_attempts + 1):
+                    result = subprocess.run(
+                        [PYTHON_BIN, download_script, video_number, output_dir],
+                        stdout=proc_log, stderr=proc_log, timeout=3600,
+                    )
+                    video_path = os.path.join(output_dir, f"{video_number}.mp4")
+                    if result.returncode == 0 and os.path.exists(video_path):
+                        break
+                    if attempt < max_attempts:
+                        job_log(access_code, output_dir, f"Download failed, retrying ({attempt}/{max_attempts})...")
+                        time.sleep(20)
             video_path = os.path.join(output_dir, f"{video_number}.mp4")
             if not os.path.exists(video_path):
                 raise RuntimeError(f"Downloaded video not found: {video_path}")

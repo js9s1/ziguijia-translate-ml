@@ -97,8 +97,11 @@
         initLanguageSelect('langSelectContainer');
         initResultSection('resultSection', 'checkProgressLink');
 
-        function showCachedPrompt(data) {
+         var _cachedMode = null;
+
+         function showCachedPrompt(data) {
             var overlay = document.getElementById('loadingOverlay');
+            _cachedMode = document.getElementById('mode').value;
             // Create a modal dialog
             var dialog = document.createElement('div');
             dialog.id = 'cachedDialog';
@@ -121,6 +124,8 @@
                 overlay.classList.add('active');
                 var fd = new FormData(document.getElementById('videoForm'));
                 fd.set('no_cache_check', 'true');
+                if (_cachedMode === 'ocr') { fd.set('ocr_mode', 'full'); }
+                else if (_cachedMode === 'ocr-translate-only') { fd.set('ocr_mode', 'translate-only'); }
                 fetch('/video/ning/ocr-process', { method: 'POST', body: fd })
                 .then(function(r) { return r.json(); })
                 .then(function(d) {
@@ -139,6 +144,8 @@
                 overlay.classList.add('active');
                 var fd = new FormData(document.getElementById('videoForm'));
                 fd.set('cached_path', data.paths[0]);
+                if (_cachedMode === 'ocr') { fd.set('ocr_mode', 'full'); }
+                else if (_cachedMode === 'ocr-translate-only') { fd.set('ocr_mode', 'translate-only'); }
                 fetch('/video/ning/ocr-process', { method: 'POST', body: fd })
                 .then(function(r) { return r.json(); })
                 .then(function(d) {

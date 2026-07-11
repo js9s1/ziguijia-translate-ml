@@ -196,6 +196,56 @@ class NingAudio:
         num_frames = int(duration_sec * sample_rate)
         return torch.zeros(1, num_frames)
 
+    def text_to_wave_with_silence(
+        self,
+        text: str,
+        temperature: float = 0.6,
+        target_language: str = "en",
+        cfg_weight: float = 0.5,
+        exaggeration: float = 0.5,
+    ) -> io.BytesIO:
+        import re
+        self.setup()
+        sample_rate = self.model.sr
+        pattern = r'<(\d+(?:\.\d+)?)>\s*'
+        parts = re.split(pattern, text)
+
+        segments = []
+        first_text = parts[0].strip() if parts and parts[0].strip() else ""
+        if first_text:
+            segments.append((0, first_text))
+
+        i = 1
+        while i < len(parts) - 1:
+            silence_sec = float(parts[i])
+            seg_text = parts[i + 1].strip()
+            if seg_text:
+                segments.append((silence_sec, seg_text))
+            i += 2
+
+        if not segments:
+            return self.text_to_wave(text, temperature=temperature,
+                                     target_language=target_language,
+                                     cfg_weight=cfg_weight,
+                                     exaggeration=exaggeration)
+
+        all_parts = []
+        for silence_sec, seg_text in segments:
+            wav_bytes = self.text_to_wave(seg_text, temperature=temperature,
+                                          target_language=target_language,
+                                          cfg_weight=cfg_weight,
+                                          exaggeration=exaggeration)
+            wav, sr = ta.load(wav_bytes)
+            if wav.dim() == 1:
+                wav = wav.unsqueeze(0)
+            all_parts.append(wav)
+            if silence_sec > 0:
+                silence = self.generate_silence(silence_sec, sample_rate)
+                all_parts.append(silence)
+
+        combined = torch.cat(all_parts, dim=1)
+        return self.wav_to_bytes(combined, sample_rate)
+
     def load_subs(self, srt_path):
         return list(srt.parse(read_srt_text(srt_path)))
 

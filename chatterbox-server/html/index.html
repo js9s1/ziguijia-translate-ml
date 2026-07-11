@@ -15,11 +15,32 @@
     </div>
 
     <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;">
-        <div>
+        <div style="display:flex;align-items:center;gap:12px;">
             <a href="/web-ui-presentation.html" style="color:#ffc107;text-decoration:none;font-size:0.9em;">📖 使用指南</a>
+            <div class="nav-dropdown">
+                <a href="#" class="nav-dropdown-toggle">字幕 ▾</a>
+                <div class="nav-dropdown-menu">
+                    <a href="/srt-zh.html" class="nav-dropdown-item">🇨🇳 zh</a>
+                    <a href="/srt-en.html" class="nav-dropdown-item">🇬🇧 en</a>
+                    <a href="/srt-zh+en.html" class="nav-dropdown-item">🇨🇳+🇬🇧 zh+en</a>
+                </div>
+            </div>
         </div>
         <div id="userArea" style="font-size:0.9em;"></div>
     </div>
+    <script>
+    (function() {
+        var toggle = document.querySelector('.nav-dropdown-toggle');
+        var menu = document.querySelector('.nav-dropdown-menu');
+        toggle.addEventListener('click', function(e) {
+            e.preventDefault();
+            menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+        });
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('.nav-dropdown')) menu.style.display = 'none';
+        });
+    })();
+    </script>
 
     <div class="container">
         <div class="hero">
@@ -28,12 +49,13 @@
         </div>
 
         <div class="menu-grid">
+		<!--
             <a href="/video/ocr" class="menu-item">
                 <div class="icon">📄</div>
                 <h2>从视频提取字幕</h2>
                 <p>上传视频文件，通过OCR提取字幕并生成SRT文件</p>
             </a>
-
+		-->
             <a href="/video/custom" class="menu-item">
                 <div class="icon">🌐</div>
                 <h2>翻译自定义视频</h2>

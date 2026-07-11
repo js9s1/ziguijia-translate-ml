@@ -58,18 +58,35 @@ for OLD_PID in $(lsof -ti :5600 2>/dev/null || true); do
 done
 sleep 1
 
-# Start Redis if not already running
-if ! redis-cli ping > /dev/null 2>&1; then
-    echo "Starting Redis..."
-    redis-server --daemonize yes --loglevel warning
-    sleep 1
-    if redis-cli ping > /dev/null 2>&1; then
-        echo "Redis started"
+# Start Valkey if not already running
+# Load password from .env
+if [ -f "${HOME}/子归家/code_ml/.env" ]; then
+    set -a; source "${HOME}/子归家/code_ml/.env"; set +a
+fi
+VALKEYPW="${VALKEY_PASSWORD:-}"
+
+if ! valkey-cli -a "$VALKEYPW" --no-auth-warning ping > /dev/null 2>&1; then
+    echo "Starting Valkey..."
+    if [ -n "$VALKEYPW" ]; then
+        valkey-server --daemonize yes --loglevel warning --requirepass "$VALKEYPW"
     else
-        echo "Warning: Redis failed to start — server will use in-memory fallbacks"
+        valkey-server --daemonize yes --loglevel warning
+    fi
+    # Clean up stale dump files that can crash valkey on startup
+    rm -f dump.rdb /home/js9s/子归家/code_ml/dump.rdb
+    # Wait for valkey to be ready (may take a few seconds)
+    for i in 1 2 3 4 5; do
+        sleep 1
+        if valkey-cli -a "$VALKEYPW" --no-auth-warning ping > /dev/null 2>&1; then
+            echo "Valkey started"
+            break
+        fi
+    done
+    if ! valkey-cli -a "$VALKEYPW" --no-auth-warning ping > /dev/null 2>&1; then
+        echo "Warning: Valkey failed to start — server will use in-memory fallbacks"
     fi
 else
-    echo "Redis already running"
+    echo "Valkey already running"
 fi
 
 echo "Starting chatterbox server..."

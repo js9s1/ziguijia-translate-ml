@@ -290,6 +290,51 @@ audio {
     display: none;
 }
 
+/* ── Navigation dropdown (e.g. 字幕 ▾ on index page) ──────── */
+.nav-dropdown {
+    position: relative;
+}
+.nav-dropdown-toggle {
+    display: inline-block;
+    padding: 8px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-white);
+    color: var(--color-text-dark);
+    text-decoration: none;
+    font-size: inherit;
+    cursor: pointer;
+    box-sizing: border-box;
+}
+.nav-dropdown-menu {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background: var(--color-bg-white);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    min-width: 100px;
+    z-index: 1000;
+    box-shadow: var(--shadow-card);
+}
+.nav-dropdown:hover .nav-dropdown-menu,
+.nav-dropdown-menu:hover {
+    display: block;
+}
+.nav-dropdown-item {
+    display: block;
+    padding: 4px 12px;
+    color: var(--color-text-dark);
+    text-decoration: none;
+    font-size: 0.85em;
+    line-height: 1.8;
+    white-space: nowrap;
+}
+.nav-dropdown-item:hover {
+    background: var(--color-bg);
+}
+
 .info-text {
     color: var(--color-text-light);
     font-size: 0.9em;

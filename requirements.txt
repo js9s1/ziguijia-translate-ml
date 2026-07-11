@@ -1,9 +1,12 @@
 # Core server
 flask>=2.3
+flask-session>=0.5
 gunicorn>=20
 requests>=2.31
 psutil>=5
 werkzeug>=2.3
+valkey>=5.0
+cachelib>=0.9
 
 # ML / Audio
 torch>=2.0
