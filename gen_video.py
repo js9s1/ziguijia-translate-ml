@@ -112,22 +112,42 @@ def process_video(video_file, segments, output_file):
         # subtitle segments.
         video_cumul = 0.0
 
+        # ── Filter segments past video end ──────────────────
+        # SRT timestamps may extend beyond the actual video duration
+        # (e.g. user uploads a 4:30 SRT for a 2:46 video).
+        # Clamp / discard segments accordingly instead of crashing ffmpeg.
+        valid_segments = []
+        for seg in segments:
+            if seg["orig_start"] >= video_duration:
+                break  # past end — stop here
+            if seg["orig_end"] > video_duration:
+                # Clamp the segment to video end
+                excess = seg["orig_end"] - video_duration
+                seg = dict(seg)
+                seg["orig_end"] = video_duration
+                seg["orig_duration"] = seg["orig_end"] - seg["orig_start"]
+                seg["adj_end"] = max(seg["adj_start"],
+                    seg["adj_end"] - excess * seg.get("stretch_factor", 1.0))
+                seg["adj_duration"] = seg["adj_end"] - seg["adj_start"]
+            valid_segments.append(seg)
+
+        # ── Leading gap ────────────────────────────────────
         # Leading gap: from video start to the first subtitle's *adjusted* start.
-        if segments:
-            first_adj_start = segments[0]["adj_start"]
-            first_orig_start = segments[0]["orig_start"]
+        if valid_segments:
+            first_adj_start = valid_segments[0]["adj_start"]
+            first_orig_start = valid_segments[0]["orig_start"]
             if first_adj_start > 0 and first_orig_start > 0:
                 stretch = first_adj_start / first_orig_start
                 segment_data.append({
                     "start": 0,
-                    "end": first_orig_start,
+                    "end": min(first_orig_start, video_duration),
                     "stretch": stretch,
                     "is_subtitle": False
                 })
                 video_cumul += first_orig_start * stretch
 
-        # Subtitle segments with inter-segment gaps
-        for i, seg in enumerate(segments):
+        # ── Subtitle segments with inter-segment gaps ──────
+        for i, seg in enumerate(valid_segments):
             orig_start = seg["orig_start"]
             orig_end   = seg["orig_end"]
             adj_start  = seg["adj_start"]
@@ -136,24 +156,17 @@ def process_video(video_file, segments, output_file):
             adj_dur    = seg["adj_duration"]
 
             # Gap before this subtitle.
-            # The output duration of the gap fills whatever time is
-            # needed to reach *adj_start[i]* from the current video
-            # position (which already accounts for any overshoot from
-            # the max(1.0, …) clamp on the previous segment).
             if i > 0:
-                prev_orig_end  = segments[i-1]["orig_end"]
+                prev_orig_end  = valid_segments[i-1]["orig_end"]
                 orig_gap = orig_start - prev_orig_end
-                # How far must this gap span in the output?
                 needed_gap = adj_start - video_cumul
 
-                # Determine source time-range for the gap.
                 if orig_gap > 0.001:
                     gap_start = prev_orig_end
-                    gap_end   = orig_start
+                    gap_end   = min(orig_start, video_duration)
                 elif needed_gap > 0.001:
-                    # No original gap — use the tail frame of the prev segment.
                     gap_start = max(0, prev_orig_end - 0.04)
-                    gap_end   = prev_orig_end
+                    gap_end   = min(prev_orig_end, video_duration)
                     orig_gap  = gap_end - gap_start
                 else:
                     orig_gap = 0.0  # skip this gap
@@ -169,26 +182,21 @@ def process_video(video_file, segments, output_file):
                     })
                     video_cumul += orig_gap * stretch
 
-            # Subtitle segment: stretch = adj_dur / orig_dur.
-            # Never squeeze (stretch < 1.0) — only stretch to match
-            # longer audio.
+            # Subtitle segment.
             stretch = adj_dur / orig_dur if orig_dur > 0 else 1.0
             stretch = max(1.0, min(10.0, stretch))
             segment_data.append({
                 "start": orig_start,
-                "end": orig_end,
+                "end": min(orig_end, video_duration),
                 "stretch": stretch,
                 "is_subtitle": True
             })
             video_cumul += orig_dur * stretch
 
-        # Trailing gap: from last subtitle's adjusted end to end of video.
-        if segments:
-            last_orig_end = segments[-1]["orig_end"]
-            last_adj_end  = segments[-1]["adj_end"]
+        # ── Trailing gap ───────────────────────────────────
+        if valid_segments:
+            last_orig_end = valid_segments[-1]["orig_end"]
             if last_orig_end < video_duration:
-                # Keep trailing gap at 1× unless we have adjusted timing past
-                # the last subtitle (rare — usually the trailing gap is credits / silence).
                 segment_data.append({
                     "start": last_orig_end,
                     "end": video_duration,
@@ -200,8 +208,8 @@ def process_video(video_file, segments, output_file):
         total_duration = sum(
             (s["end"] - s["start"]) * s["stretch"] for s in segment_data
         )
-        if segments:
-            expected_end = segments[-1]["adj_end"]
+        if valid_segments:
+            expected_end = valid_segments[-1]["adj_end"]
             drift = total_duration - expected_end
             if abs(drift) > 1.0:
                 print(f"Warning: predicted video length {total_duration:.2f}s "
