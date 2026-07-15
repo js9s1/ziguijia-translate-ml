@@ -24,6 +24,74 @@ DB_FILE = os.path.join(BASE_DIR, "jobs.db")
 logger = logging.getLogger(__name__)
 
 
+def _extract_failure_reason(output_dir: str | None) -> str | None:
+    """Read ``job.log`` from *output_dir* and extract a human-readable failure reason.
+
+    Returns a short error summary string, or None if no log is available.
+    """
+    if not output_dir:
+        return None
+    log_path = os.path.join(output_dir, "job.log")
+    if not os.path.isfile(log_path):
+        return None
+    try:
+        with open(log_path, "r", errors="replace") as f:
+            # Read the last ~8 KiB — enough for a traceback + surrounding context
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            start = max(0, size - 8192)
+            f.seek(start)
+            tail = f.read()
+    except OSError:
+        return None
+
+    lines = tail.splitlines()
+    # Walk backwards looking for error markers
+    captured: list[str] = []
+    in_traceback = False
+    for line in reversed(lines):
+        stripped = line.strip()
+        if not stripped:
+            if in_traceback:
+                continue
+            break  # blank line outside traceback → end of relevant section
+
+        is_tb = stripped.startswith("Traceback ") or stripped.startswith("  File ") or (
+            in_traceback and not stripped.startswith("---")
+        )
+        is_error = any(
+            marker in stripped
+            for marker in (
+                "Error:",
+                "error:",
+                "RuntimeError",
+                "CalledProcessError",
+                "Conversion failed!",
+                "No filtered frames",
+                "Invalid argument",
+                "cannot",
+                "failed",
+                "FAILED",
+                "missing:",
+            )
+        )
+        if is_tb or is_error:
+            in_traceback = True
+            captured.append(stripped)
+            continue
+        if in_traceback:
+            # We hit non-error/non-tb content — stop collecting
+            break
+
+    if captured:
+        # Reverse back to chronological order, take last few lines
+        captured.reverse()
+        # Keep the most relevant ~5 lines
+        keep = captured[-5:]
+        return "; ".join(keep)[:500]
+    return None
+
+
 def _reset_gpu_state():
     """Reset the ROCm/HIP GPU driver state between jobs.
 
@@ -650,12 +718,17 @@ class JobQueue:
 
                 now = _now_str()
                 sig = f" (exit {proc.exitcode})" if proc.exitcode is not None else ""
+                reason = _extract_failure_reason(output_dir)
+                if reason:
+                    error_msg = f"{reason}{sig}"
+                else:
+                    error_msg = f"Job process failed{sig}"
                 conn.execute(
                     "UPDATE jobs SET status = ?, error = ?, failed_at = ?, status_changed_at = ? WHERE access_code = ?",
-                    (JobStatus.FAILED.value, f"Job process failed{sig}", now, now, access_code)
+                    (JobStatus.FAILED.value, error_msg, now, now, access_code)
                 )
                 conn.commit()
-                publish_job_status(access_code, JobStatus.FAILED.value, error=f"Job process failed{sig}")
+                publish_job_status(access_code, JobStatus.FAILED.value, error=error_msg)
                 logger.warning(f"Job {access_code} failed with exit code {proc.exitcode}")
         except Exception as e:
             # Ensure the child process is cleaned up on unexpected errors
