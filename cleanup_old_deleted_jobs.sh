@@ -5,13 +5,14 @@
 # Default: jobs deleted more than 7 days ago.
 #
 # Usage:
-#   ./cleanup_old_deleted_jobs.sh [--days N] [--dry-run] [--verbose] [--force]
+#   ./cleanup_old_deleted_jobs.sh [--days N] [--dry-run] [--verbose] [--force] [--all]
 #
 # Options:
 #   --days N      Number of days to keep deleted jobs (default: 7)
 #   --dry-run     Show what would be removed without actually removing
 #   --verbose     Print detailed output
 #   --force       Remove ALL deleted jobs regardless of age
+#   --all         Remove ALL jobs (any status) older than N days
 #   --help        Show this help message
 #
 # Examples:
@@ -27,6 +28,9 @@
 #   # Force clean ALL deleted jobs (use with caution!)
 #   ./cleanup_old_deleted_jobs.sh --force
 #
+#   # Remove ALL jobs (any status) older than 14 days
+#   ./cleanup_old_deleted_jobs.sh --all --days 14
+#
 #   # Daily cleanup via cron (run at 2 AM daily):
 #   0 2 * * * /path/to/chatterbox-server/cleanup_old_deleted_jobs.sh --days 7 >> /var/log/job_cleanup.log 2>&1
 
@@ -41,6 +45,7 @@ DAYS_KEEP=7
 DRY_RUN=false
 VERBOSE=false
 FORCE_CLEAN=false
+ALL_STATUSES=false
 
 # ─── Color codes for output ───────────────────────────────────────
 RED='\033[0;31m'
@@ -90,6 +95,10 @@ parse_args() {
                 ;;
             --force)
                 FORCE_CLEAN=true
+                shift
+                ;;
+            --all)
+                ALL_STATUSES=true
                 shift
                 ;;
             --help)
@@ -145,6 +154,22 @@ get_cutoff_date() {
 find_old_deleted_jobs() {
     local cutoff_date="$1"
 
+    # If --all, return ALL jobs (any status) older than cutoff
+    if [[ "$ALL_STATUSES" == true ]]; then
+        sqlite3 -separator '|' "$DB_FILE" <<EOF
+SELECT access_code, output_dir, 
+       COALESCE(updated_at, created_at, 'unknown') as effective_date
+FROM jobs
+WHERE (
+    (created_at IS NOT NULL AND created_at < '${cutoff_date}')
+    OR
+    (created_at IS NULL)
+  )
+ORDER BY effective_date ASC;
+EOF
+        return
+    fi
+
     # If force clean, return all deleted jobs
     if [[ "$FORCE_CLEAN" == true ]]; then
         sqlite3 -separator '|' "$DB_FILE" <<EOF
@@ -177,9 +202,13 @@ ORDER BY effective_date ASC;
 EOF
 }
 
-# ─── Count total deleted jobs ────────────────────────────────────
+# ─── Count total jobs (filtered by ALL_STATUSES) ─────────────────
 count_all_deleted_jobs() {
-    sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM jobs WHERE status = 'deleted';"
+    if [[ "$ALL_STATUSES" == true ]]; then
+        sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM jobs;"
+    else
+        sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM jobs WHERE status = 'deleted';"
+    fi
 }
 
 # ─── Remove output directory ─────────────────────────────────────
@@ -231,13 +260,19 @@ main_cleanup() {
 
     local total_deleted
     total_deleted=$(count_all_deleted_jobs)
-    log_info "Total deleted jobs in database: $total_deleted"
-    log_info "Cutoff date (jobs deleted before): $cutoff_date"
-    log_info "Keeping deleted jobs for: $DAYS_KEEP days"
+    if [[ "$ALL_STATUSES" == true ]]; then
+        log_info "Total jobs in database: $total_deleted"
+        local scope_label="all jobs"
+    else
+        log_info "Total deleted jobs in database: $total_deleted"
+        local scope_label="deleted jobs"
+    fi
+    log_info "Cutoff date: $cutoff_date"
+    log_info "Removing $scope_label older than: $DAYS_KEEP days"
     echo ""
 
     if [[ "$total_deleted" -eq 0 ]]; then
-        log_info "No deleted jobs found in database."
+        log_info "No $scope_label found in database."
         return 0
     fi
 
@@ -246,14 +281,18 @@ main_cleanup() {
     jobs_data=$(find_old_deleted_jobs "$cutoff_date")
 
     if [[ -z "$jobs_data" ]]; then
-        log_info "No deleted jobs older than $DAYS_KEEP days found."
+        local label
+        [[ "$ALL_STATUSES" == true ]] && label="jobs" || label="deleted jobs"
+        log_info "No $label older than $DAYS_KEEP days found."
         return 0
     fi
 
     # Count jobs to process
     local job_count
     job_count=$(echo "$jobs_data" | wc -l)
-    log_info "Found $job_count deleted job(s) older than $DAYS_KEEP days"
+    local label
+    [[ "$ALL_STATUSES" == true ]] && label="job(s)" || label="deleted job(s)"
+    log_info "Found $job_count $label older than $DAYS_KEEP days"
     echo ""
 
     if [[ "$DRY_RUN" == true ]]; then
@@ -294,8 +333,10 @@ main_cleanup() {
         log_info "[DRY RUN] Would remove: $removed_count job(s)"
         [[ "$error_count" -gt 0 ]] && log_warn "[DRY RUN] Errors encountered: $error_count"
     else
+        local label
+        [[ "$ALL_STATUSES" == true ]] && label="Jobs" || label="Deleted jobs"
         log_info "Cleanup complete!"
-        log_info "Jobs removed: $removed_count"
+        log_info "$label removed: $removed_count"
         [[ "$error_count" -gt 0 ]] && log_warn "Errors encountered: $error_count"
     fi
 

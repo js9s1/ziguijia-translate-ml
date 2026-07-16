@@ -52,4 +52,12 @@ else
     /usr/bin/python3 ${HOME}/子归家/code_ml/gen_video.py "$VIDEO_FILE" "$SRT_FILE" "$ADJUSTED_SRT" "$CHANGED_JSON" --output "$OUTPUT_MODIFIED"
 fi
 if [ $? -ne 0 ]; then echo "Error: gen_video.py failed"; exit 1; fi
+echo "Step 4: Adjusting original zh audio..."
+/usr/bin/python3 -c "
+import sys
+sys.path.insert(0, '${SERVER_DIR}')
+sys.path.insert(0, '${BASE_DIR}')
+from pipeline import adjust_original_audio
+adjust_original_audio('${VIDEO_FILE}', '${SRT_FILE}', '${ADJUSTED_SRT}', '${OUTPUT_DIR}')
+" || echo "Warning: zh audio adjustment failed (non-fatal)"
 echo "Done! All files saved to: $OUTPUT_DIR"

@@ -7,7 +7,7 @@ import uuid
 from jobqueue import get_job_queue
 from log_utils import job_log
 from config import VIDEO_DIR, WHISPER_MODEL, WHISPER_OV_DEVICE, RAPID_VIDEOCR_PIPELINE_SCRIPT, LANG_MAP
-from pipeline import run_audio_ckpt, run_video_ckpt, run_gen_audio_step
+from pipeline import run_audio_ckpt, run_video_ckpt, run_gen_audio_step, adjust_original_audio
 from video_util import CheckpointHelper, translate_srt_file, open_proc_log
 
 
@@ -28,6 +28,14 @@ def _run_video_custom_job(job_data: dict):
     job_log(access_code, output_dir, "Step 2: Processing video")
     run_video_ckpt(video_file, srt_path, audio_out, output_dir, access_code,
                    output_filename="output_modified.mp4")
+
+    try:
+        adjust_original_audio(video_file, srt_path,
+                              audio_out["output_srt_path"], output_dir,
+                              access_code=access_code)
+    except Exception:
+        job_log(access_code, output_dir, "Warning: zh audio adjustment failed (non-fatal)")
+
     job_log(access_code, output_dir, "Done!")
 
 
@@ -126,6 +134,13 @@ def _run_video_auto_job(job_data: dict):
         run_video_ckpt(video_file, translated_srt, audio_out, output_dir, access_code,
                        ckpt=ckpt, output_filename="output_modified.mp4")
 
+        try:
+            adjust_original_audio(video_file, translated_srt,
+                                  audio_out["output_srt_path"], output_dir,
+                                  access_code=access_code)
+        except Exception:
+            job_log(access_code, output_dir, "Warning: zh audio adjustment failed (non-fatal)")
+
     job_log(access_code, output_dir, "Done!")
 
 
@@ -209,6 +224,13 @@ def _run_video_ocr_job(job_data: dict):
         # Step 4: Process video
         run_video_ckpt(video_file, translated_srt, audio_out, output_dir, access_code,
                        ckpt=ckpt, output_filename="output_modified.mp4")
+
+        try:
+            adjust_original_audio(video_file, translated_srt,
+                                  audio_out["output_srt_path"], output_dir,
+                                  access_code=access_code)
+        except Exception:
+            job_log(access_code, output_dir, "Warning: zh audio adjustment failed (non-fatal)")
 
     job_log(access_code, output_dir, "Done!")
 

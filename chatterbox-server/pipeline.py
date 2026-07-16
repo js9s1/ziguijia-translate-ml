@@ -9,9 +9,11 @@ path construction.  Every checkpoint-using job handler (``_run_video_auto_job``,
 instead of repeating the same boilerplate.
 """
 
+import json
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 
 from log_utils import job_log, job_log_lines
@@ -288,3 +290,213 @@ def run_video_ckpt(
     # Copy the adjusted SRT to the output directory so it's visible
     # in the file browser without navigating into audio_tracks/.
     shutil.copy2(audio_out["output_srt_path"], output_dir)
+
+
+# ── Original zh audio adjustment ────────────────────────────
+
+
+def _get_video_duration(video_path: str) -> float:
+    result = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-print_format", "json",
+         "-show_format", video_path],
+        capture_output=True, text=True,
+    )
+    info = json.loads(result.stdout)
+    return float(info["format"]["duration"])
+
+
+def _build_atempo_filter(stretch: float) -> str:
+    """Build an ffmpeg atempo filter chain for the given stretch factor.
+
+    atempo supports 0.5–2.0 per instance.  For larger factors we chain
+    multiple atempo=2.0 filters followed by the remainder.
+    """
+    if stretch <= 2.0:
+        return f"atempo={stretch:.6f}"
+    parts = []
+    remaining = stretch
+    while remaining > 2.0:
+        parts.append("atempo=2.0")
+        remaining /= 2.0
+    parts.append(f"atempo={remaining:.6f}")
+    return ",".join(parts)
+
+
+def adjust_original_audio(
+    video_path: str,
+    original_srt_path: str,
+    adjusted_srt_path: str,
+    output_dir: str,
+    access_code: str = "",
+    audio_offset: float = 0.0,
+):
+    """Extract original zh audio and stretch it to match the adjusted SRT timing.
+
+    Mirrors the same segment-stretch logic that ``gen_video.py`` applies to
+    the video track (leading gap, subtitle segments, inter-subtitle gaps,
+    trailing gap), but operates on the audio stream using the *atempo* filter
+    instead of *setpts*.
+
+    Parameters
+    ----------
+    video_path:
+        Source video file containing the original zh audio track.
+    original_srt_path:
+        Original SRT (input to gen_audio / the translated SRT).
+    adjusted_srt_path:
+        Adjusted SRT (output from gen_audio).
+    output_dir:
+        Directory where ``orig_zh_adjusted.wav`` will be written.
+    access_code:
+        Job access code for logging (optional).
+    audio_offset:
+        Seconds to skip from the start of *video_path* before extracting
+        audio (used when the video file has extra leading content that was
+        trimmed away before OCR runs, e.g. the ning-video intro trim).
+    """
+    import srt
+    from video_util import read_srt_text
+
+    job_log(access_code, output_dir, "Adjusting original zh audio...")
+
+    # ── Parse SRTs ───────────────────────────────────────────
+    orig_subs = list(srt.parse(read_srt_text(original_srt_path)))
+    adj_subs = list(srt.parse(read_srt_text(adjusted_srt_path)))
+
+    if len(orig_subs) != len(adj_subs):
+        job_log(access_code, output_dir,
+                f"Segment count mismatch ({len(orig_subs)} vs {len(adj_subs)}), "
+                f"skipping zh audio adjustment")
+        return
+
+    if not orig_subs:
+        return
+
+    # ── Extract audio from video ─────────────────────────────
+    orig_audio_path = os.path.join(output_dir, "orig_zh_full.wav")
+    extract_cmd = ["ffmpeg", "-y"]
+    if audio_offset > 0:
+        extract_cmd.extend(["-ss", str(audio_offset)])
+    extract_cmd.extend([
+        "-i", video_path,
+        "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+        orig_audio_path,
+    ])
+    subprocess.run(extract_cmd, check=True, capture_output=True)
+
+    if not os.path.exists(orig_audio_path):
+        job_log(access_code, output_dir, "Audio extraction produced no file, skipping")
+        return
+
+    # ── Build segment list (mirrors gen_video.py process_video) ──
+    video_duration = _get_video_duration(video_path) - audio_offset
+
+    seg_defs = []
+    video_cumul = 0.0
+
+    # Leading gap: video start → first subtitle
+    first_adj_start = adj_subs[0].start.total_seconds()
+    first_orig_start = orig_subs[0].start.total_seconds() - audio_offset
+    if first_adj_start > 0 and first_orig_start > 0:
+        stretch = first_adj_start / first_orig_start
+        seg_defs.append({
+            "start": 0,
+            "end": min(first_orig_start, video_duration),
+            "stretch": stretch,
+        })
+        video_cumul += first_orig_start * stretch
+
+    for i in range(len(orig_subs)):
+        orig_start = orig_subs[i].start.total_seconds() - audio_offset
+        orig_end = orig_subs[i].end.total_seconds() - audio_offset
+        adj_start = adj_subs[i].start.total_seconds()
+        adj_end = adj_subs[i].end.total_seconds()
+        orig_dur = orig_end - orig_start
+        adj_dur = adj_end - adj_start
+
+        if orig_start >= video_duration:
+            break
+        if orig_end > video_duration:
+            orig_end = video_duration
+            orig_dur = orig_end - orig_start
+
+        # Gap before this subtitle (stretch to fill adjusted timing gap)
+        if i > 0:
+            prev_orig_end = orig_subs[i - 1].end.total_seconds() - audio_offset
+            orig_gap = orig_start - prev_orig_end
+            needed_gap = adj_start - video_cumul
+            if orig_gap > 0.001:
+                gap_start, gap_end = prev_orig_end, min(orig_start, video_duration)
+            elif needed_gap > 0.001:
+                gap_start, gap_end = max(0, prev_orig_end - 0.04), min(prev_orig_end, video_duration)
+                orig_gap = gap_end - gap_start
+            else:
+                orig_gap = 0.0
+            if orig_gap > 0:
+                stretch = max(0.0, min(100.0, needed_gap / orig_gap))
+                seg_defs.append({
+                    "start": gap_start, "end": gap_end,
+                    "stretch": stretch,
+                })
+                video_cumul += orig_gap * stretch
+
+        # Subtitle segment (never squeeze, only stretch)
+        stretch = adj_dur / orig_dur if orig_dur > 0 else 1.0
+        stretch = max(1.0, min(10.0, stretch))
+        seg_defs.append({
+            "start": orig_start, "end": orig_end,
+            "stretch": stretch,
+        })
+        video_cumul += orig_dur * stretch
+
+    # Trailing gap
+    last_orig_end = orig_subs[-1].end.total_seconds() - audio_offset
+    if last_orig_end < video_duration:
+        seg_defs.append({
+            "start": last_orig_end, "end": video_duration,
+            "stretch": 1.0,
+        })
+
+    # ── Process audio segments ───────────────────────────────
+    tmp_dir = tempfile.mkdtemp(prefix="adj_zh_audio_")
+    try:
+        seg_files = []
+        for idx, seg in enumerate(seg_defs):
+            if seg["end"] - seg["start"] <= 0:
+                continue
+            seg_path = os.path.join(tmp_dir, f"seg_{idx:04d}.wav")
+            # atempo is INVERSE of setpts: atempo=2.0 → faster/shorter,
+            # setpts=2.0 → slower/longer.  We want audio to stretch the same
+            # way as video, so use 1/stretch for the atempo factor.
+            atempo = _build_atempo_filter(1.0 / seg["stretch"]) if seg["stretch"] > 0 else _build_atempo_filter(100.0)
+            subprocess.run([
+                "ffmpeg", "-y",
+                "-ss", str(seg["start"]), "-to", str(seg["end"]),
+                "-i", orig_audio_path,
+                "-af", atempo,
+                "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+                seg_path,
+            ], check=True, capture_output=True)
+            seg_files.append(seg_path)
+
+        if not seg_files:
+            job_log(access_code, output_dir, "No audio segments produced, skipping")
+            return
+
+        # ── Concatenate ───────────────────────────────────
+        concat_list = os.path.join(tmp_dir, "concat.txt")
+        with open(concat_list, "w") as f:
+            for sf in seg_files:
+                f.write(f"file '{sf}'\n")
+
+        out_path = os.path.join(output_dir, "orig_zh_adjusted.wav")
+        subprocess.run([
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+            "-i", concat_list, "-c", "copy",
+            out_path,
+        ], check=True, capture_output=True)
+
+        job_log(access_code, output_dir, f"  ✓ orig_zh_adjusted.wav saved ({len(seg_files)} segments)")
+
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)

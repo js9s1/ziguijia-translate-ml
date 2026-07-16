@@ -10,7 +10,7 @@ import uuid
 from jobqueue import get_job_queue, JobStatus
 from log_utils import job_log, job_log_lines
 from config import VIDEO_DIR, GEN_VIDEO_ORIG_SCRIPT, RAPID_VIDEOCR_PIPELINE_SCRIPT, PROJECT_ROOT, RAPID_VIDEOCR_BIN, PYTHON_BIN, LANG_MAP
-from pipeline import run_audio_ckpt, run_video_ckpt, validate_files
+from pipeline import run_audio_ckpt, run_video_ckpt, validate_files, adjust_original_audio
 from video_util import CheckpointHelper, translate_srt_file, open_proc_log
 
 
@@ -219,6 +219,15 @@ def _run_video_ning_ocr_job(job_data: dict):
         run_video_ckpt(trimmed_path, translated_srt, audio_out, output_dir,
                        access_code, ckpt=ckpt, output_filename="output_modified.mp4",
                        blur=(blur == "yes"))
+
+        # Adjust original zh audio to match video stretch
+        try:
+            adjust_original_audio(video_path, translated_srt,
+                                  audio_out["output_srt_path"], output_dir,
+                                  access_code=access_code,
+                                  audio_offset=float(job_data.get("start_trim", 12.25)))
+        except Exception:
+            job_log(access_code, output_dir, "Warning: zh audio adjustment failed (non-fatal)")
 
     validate_files([
         audio_out["output_srt_path"],

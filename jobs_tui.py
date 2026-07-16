@@ -69,6 +69,12 @@ _TYPE_MAP = {
     "_run_video_ning_ocr_translate_only_job": "宁视频OCR仅翻译",
     "_run_ocr_only_job": "视频OCR提取字幕",
 }
+
+_NING_VIDEO_TYPES = {
+    "_run_video_job",
+    "_run_video_ning_ocr_job",
+    "_run_video_ning_ocr_translate_only_job",
+}
 _STATUS_STYLE_MAP = {
     "pending": "yellow",
     "processing": "cyan bold",
@@ -933,9 +939,9 @@ def render_detail(job: Job, mode: str) -> Panel:
             param_lines.append(f"CFG权重: {job.cfg_weight}")
         if job.exaggeration is not None:
             param_lines.append(f"夸张度: {job.exaggeration}")
-        if job.start_trim is not None:
+        if job.start_trim is not None and job.run_func_name in _NING_VIDEO_TYPES:
             param_lines.append(f"开始裁剪: {job.start_trim}s")
-        if job.end_trim is not None:
+        if job.end_trim is not None and job.run_func_name in _NING_VIDEO_TYPES:
             param_lines.append(f"结束裁剪: {job.end_trim}s")
         if param_lines:
             lines.append("")

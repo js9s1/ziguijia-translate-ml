@@ -2,8 +2,11 @@ import argparse
 import json
 import os
 import re
+import signal
 import sys
+import time
 from datetime import timedelta
+from pathlib import Path
 
 import srt
 import torch
@@ -15,6 +18,63 @@ from config import ASSETS_DIR as CFG_ASSETS_DIR, AUDIO_PROMPT_PATH as CFG_AUDIO_
 from video_util import read_srt_text
 
 CHANGED_THRESHOLD = 0.05
+
+# Thermal protection — Renoir iGPU (gfx90c via ROCm) is prone to GPU hangs
+# under sustained load.  Pause between segments when the GPU gets too hot.
+GPU_TEMP_LIMIT = float(os.environ.get("GPU_TEMP_LIMIT", "80"))   # °C — pause if exceeded
+GPU_COOLDOWN_TARGET = float(os.environ.get("GPU_COOLDOWN_TARGET", "60"))  # °C — resume when below
+GPU_POLL_SECS = float(os.environ.get("GPU_POLL_SECS", "10"))
+_STOP_REQUESTED = False
+
+
+def _get_gpu_temp():
+    """Read AMD GPU (amdgpu) temperature in °C via hwmon. Returns float or None."""
+    try:
+        for card in Path("/sys/class/drm").glob("card*"):
+            hwmons = list(card.glob("device/hwmon/hwmon*"))
+            for hw in hwmons:
+                try:
+                    name = (hw / "name").read_text().strip()
+                    if name == "amdgpu":
+                        raw = int((hw / "temp1_input").read_text().strip())
+                        return raw / 1000.0
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return None
+
+
+def _signal_handler(signum, frame):
+    global _STOP_REQUESTED
+    sig_name = signal.Signals(signum).name
+    print(f"\n\n  ⏸ {sig_name} received — will stop after current segment. Press again to force-quit.",
+          file=sys.stderr)
+    if _STOP_REQUESTED:
+        print(f"\n  Second {sig_name} — forcing exit.", file=sys.stderr)
+        os._exit(1)
+    _STOP_REQUESTED = True
+
+
+def _thermal_check():
+    """Check GPU temp; pause and cool down if needed. Returns True to continue."""
+    global _STOP_REQUESTED
+    temp = _get_gpu_temp()
+    if temp is None:
+        return not _STOP_REQUESTED
+    if temp >= GPU_TEMP_LIMIT:
+        print(f"\n  ⚠ GPU temp {temp:.0f}°C ≥ limit {GPU_TEMP_LIMIT:.0f}°C — pausing for cooldown…")
+        while temp is not None and temp > GPU_COOLDOWN_TARGET:
+            if _STOP_REQUESTED:
+                return False
+            time.sleep(GPU_POLL_SECS)
+            temp = _get_gpu_temp()
+            if temp is not None:
+                print(f"\r  Cooling… GPU {temp:.0f}°C (target ≤{GPU_COOLDOWN_TARGET:.0f}°C)",
+                      end="", flush=True)
+        if temp is not None:
+            print(f"\n  ✓ GPU cooled to {temp:.0f}°C — resuming")
+    return not _STOP_REQUESTED
 
 
 # ── Per-job cache (single JSON, in-memory lookups) ────────────
@@ -304,6 +364,11 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
             # Advance seg_counter past chunk slots this segment would use
             seg_counter += len(chunks)
         else:
+            # ── GPU thermal check before heavy work ──
+            if not _thermal_check():
+                print(f"  → Stopped by signal")
+                raise SystemExit(1)
+
             prompt = get_speaker_prompt(speaker, audio_prompt, assets_dir)
 
             chunk_wavs = []
@@ -415,6 +480,18 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
     tmp_dir = os.path.join(args.output_dir, "tmp")
     os.makedirs(tmp_dir, exist_ok=True)
+
+    # Register signal handlers
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+
+    # Show GPU thermal status
+    gpu_temp = _get_gpu_temp()
+    if gpu_temp is not None:
+        print(f"GPU temp:   {gpu_temp:.0f}°C (limit: {GPU_TEMP_LIMIT:.0f}°C, cooldown target: {GPU_COOLDOWN_TARGET:.0f}°C)")
+    print(f"Stop:       Ctrl+C once for graceful stop per segment, twice to force-quit")
+    print(f"Env:        GPU_TEMP_LIMIT={GPU_TEMP_LIMIT}  GPU_COOLDOWN_TARGET={GPU_COOLDOWN_TARGET}  GPU_POLL_SECS={GPU_POLL_SECS}")
+    print()
 
     print("Using direct NingAudio (in-process)")
     result = process_with_direct(args.srt, args.audio_prompt, args.temperature, args.output_dir, args.assets_dir,
