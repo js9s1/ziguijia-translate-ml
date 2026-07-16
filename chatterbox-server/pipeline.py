@@ -308,16 +308,24 @@ def _get_video_duration(video_path: str) -> float:
 def _build_atempo_filter(stretch: float) -> str:
     """Build an ffmpeg atempo filter chain for the given stretch factor.
 
-    atempo supports 0.5–2.0 per instance.  For larger factors we chain
-    multiple atempo=2.0 filters followed by the remainder.
+    atempo supports 0.5–2.0 per instance.  For factors outside this range
+    we chain multiple instances:
+
+    - If *stretch* > 2.0: chain ``atempo=2.0`` filters then the remainder.
+    - If *stretch* < 0.5: chain ``atempo=0.5`` filters then the remainder.
     """
-    if stretch <= 2.0:
+    if 0.5 <= stretch <= 2.0:
         return f"atempo={stretch:.6f}"
     parts = []
     remaining = stretch
-    while remaining > 2.0:
-        parts.append("atempo=2.0")
-        remaining /= 2.0
+    if stretch > 2.0:
+        while remaining > 2.0:
+            parts.append("atempo=2.0")
+            remaining /= 2.0
+    else:  # stretch < 0.5
+        while remaining < 0.5:
+            parts.append("atempo=0.5")
+            remaining /= 0.5
     parts.append(f"atempo={remaining:.6f}")
     return ",".join(parts)
 
