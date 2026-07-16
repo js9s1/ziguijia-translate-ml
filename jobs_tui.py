@@ -1382,7 +1382,7 @@ def run_menu_screen(s: State, console: Console):
                         console.print(render_table(s))
                         console.print()
                         lines = [f"[bold yellow]重新提交任务 {job.access_code}[/]", ""]
-                        lines.append("[dim]选择从哪个步骤之后重新开始（选中步骤之后的将被清除）：[/]")
+                        lines.append("[dim]选择从哪个步骤重新开始（该步骤及之后将被清除）：[/]")
                         lines.append("")
                         for i, step in enumerate(steps):
                             lines.append(f"  {i+1}. {step}")
@@ -1403,7 +1403,7 @@ def run_menu_screen(s: State, console: Console):
                             if choice == 0:
                                 keep_steps = []
                             elif 1 <= choice <= len(steps):
-                                keep_steps = steps[:choice]
+                                keep_steps = steps[:choice-1]
                             else:
                                 continue
                             try:
@@ -1557,7 +1557,7 @@ def run_menu_screen(s: State, console: Console):
                         console.print(render_table(s))
                         console.print()
                         lines = [f"[bold yellow]重新提交任务 {job.access_code}[/]", ""]
-                        lines.append("[dim]选择从哪个步骤之后重新开始（选中步骤之后的将被清除）：[/]")
+                        lines.append("[dim]选择从哪个步骤重新开始（该步骤及之后将被清除）：[/]")
                         lines.append("")
                         for i, step in enumerate(steps):
                             lines.append(f"  {i+1}. {step}")
@@ -1578,7 +1578,7 @@ def run_menu_screen(s: State, console: Console):
                             if choice == 0:
                                 keep_steps = []
                             elif 1 <= choice <= len(steps):
-                                keep_steps = steps[:choice]
+                                keep_steps = steps[:choice-1]
                             else:
                                 continue
                             try:
