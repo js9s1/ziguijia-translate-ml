@@ -849,6 +849,18 @@ def video_custom_page():
     return send_from_directory(HTML_DIR, "userVideo.html")
 
 
+def _validate_video_upload(video_file):
+    """Check that an uploaded video file is not empty / corrupt.
+
+    Raises ValueError with a user-friendly message if the file is bad.
+    The stream position is preserved so the caller can still save it.
+    """
+    content = video_file.read()
+    video_file.seek(0)
+    if not content:
+        raise ValueError("Uploaded video file is empty (0 bytes). Please check the file and try again.")
+
+
 @app.route("/video/custom/process", methods=["POST"])
 @login_required
 def video_custom_process():
@@ -859,6 +871,7 @@ def video_custom_process():
             return jsonify({"error": "No SRT file uploaded"}), 400
 
         video_file = request.files["video_file"]
+        _validate_video_upload(video_file)
         srt_file = request.files["srt_file"]
         params = _parse_job_params(request.form)
 
@@ -879,6 +892,7 @@ def video_custom_auto_process():
             return jsonify({"error": "No video file uploaded"}), 400
 
         video_file = request.files["video_file"]
+        _validate_video_upload(video_file)
         params = _parse_job_params(request.form)
 
         process_video_auto = _lazy("video_custom_job", "process_video_auto")
@@ -908,6 +922,7 @@ def video_ocr_process():
             return jsonify({"error": "No video file uploaded"}), 400
 
         video_file = request.files["video_file"]
+        _validate_video_upload(video_file)
         process_ocr_only = _lazy("video_ocr_job", "process_ocr_only")
         result = process_ocr_only(video_file, session["user_id"])
         return jsonify(result)
@@ -924,6 +939,7 @@ def video_custom_ocr_process():
             return jsonify({"error": "No video file uploaded"}), 400
 
         video_file = request.files["video_file"]
+        _validate_video_upload(video_file)
         params = _parse_job_params(request.form)
 
         process_video_ocr = _lazy("video_custom_job", "process_video_ocr")

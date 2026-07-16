@@ -28,6 +28,10 @@ VAAPI_DEVICE = "/dev/dri/renderD128"
 
 def get_video_info(video_file):
     """Get video duration using ffprobe."""
+    # Reject empty files early with a clear error
+    file_size = os.path.getsize(video_file)
+    if file_size == 0:
+        raise ValueError(f"Video file is empty (0 bytes): {video_file}")
     result = subprocess.run(
         [
             "ffprobe", "-v", "quiet", "-print_format", "json",
@@ -37,6 +41,8 @@ def get_video_info(video_file):
         text=True,
     )
     data = json.loads(result.stdout)
+    if "format" not in data:
+        raise ValueError(f"Cannot read video file (ffprobe returned no format info): {video_file}")
     duration = float(data["format"]["duration"])
     width = height = None
     for stream in data.get("streams", []):
