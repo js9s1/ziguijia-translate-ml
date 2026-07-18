@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import pickle as _pickle
+import re
 import secrets
 import subprocess
 import sys
@@ -647,6 +648,11 @@ def files_save_srt():
         if not safe_path.lower().endswith(".srt"):
             return jsonify({"success": False, "error": "Only .srt files can be saved via this endpoint"}), 400
 
+        # Validate that the content has SRT timing lines
+        if not _SRT_TIMING_RE.search(content):
+            return jsonify({"success": False,
+                    "error": "Saved content does not appear to be valid SRT. Expected timing lines like '00:00:01,000 --> 00:00:03,000'."}), 400
+
         # Write the new content
         with open(safe_path, 'w', encoding='utf-8') as f:
             f.write(content)
@@ -854,8 +860,11 @@ def video_custom_page():
     return send_from_directory(HTML_DIR, "userVideo.html")
 
 
+_SRT_TIMING_RE = re.compile(r"\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,.]\d{3}")
+
+
 def _validate_file_upload(uploaded_file, label: str = "file"):
-    """Check that an uploaded file is not empty.
+    """Check that an uploaded file is not empty, and SRT files are valid.
 
     Raises ValueError with a user-friendly message if the file is bad.
     The stream position is preserved so the caller can still save it.
@@ -864,6 +873,17 @@ def _validate_file_upload(uploaded_file, label: str = "file"):
     uploaded_file.seek(0)
     if not content:
         raise ValueError(f"Uploaded {label} file is empty (0 bytes). Please check the file and try again.")
+
+    # SRT files: verify they contain proper timing lines (e.g. "00:00:01,000 --> 00:00:03,000")
+    if "srt" in label.lower():
+        try:
+            text = content.decode("utf-8", errors="replace")
+        except Exception:
+            text = ""
+        if not _SRT_TIMING_RE.search(text):
+            raise ValueError(
+                f"Uploaded {label} file does not appear to be a valid SRT file. "
+                f"Expected timing lines like '00:00:01,000 --> 00:00:03,000'.")
 
 
 @app.route("/video/custom/process", methods=["POST"])
