@@ -398,6 +398,17 @@ class JobQueue:
             return row[0], row[1]
         return None
 
+    def _find_failed_ning_job(self, video_number: str, user_id: int) -> Optional[tuple[str, str]]:
+        """Return (access_code, output_dir) of a failed ning SRT-translate job for the same video+user, if any."""
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT access_code, output_dir FROM jobs WHERE video_number = ? AND user_id = ? AND run_func_name = ? AND status = ? ORDER BY created_at DESC LIMIT 1",
+            (video_number, user_id, "_run_video_job", JobStatus.FAILED.value)
+        ).fetchone()
+        if row:
+            return row[0], row[1]
+        return None
+
     def add_job(self, job_data: dict, run_func: Callable[[dict], None], user_id: int = None) -> str:
         conn = self._get_conn()
         access_code = job_data.get("access_code") or self._generate_access_code()

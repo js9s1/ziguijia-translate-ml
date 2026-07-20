@@ -36,43 +36,89 @@ def _run_video_job(job_data: dict):
     access_code = job_data["access_code"]
     srt_path = job_data["srt_path"]
     output_dir = job_data["output_dir"]
+    temperature = job_data.get("temperature", 0.8)
+    target_language = job_data.get("target_language", "en")
+    cfg_weight = job_data.get("cfg_weight", 0.5)
+    exaggeration = job_data.get("exaggeration", 0.5)
     blur = job_data.get("blur", "yes")
+
     os.makedirs(output_dir, exist_ok=True)
     log_file = os.path.join(output_dir, "job.log")
 
     with open_proc_log(log_file) as (proc_log, _):
-        process = subprocess.Popen(
-            ["/usr/bin/bash", GEN_VIDEO_ORIG_SCRIPT, video_number, srt_path, output_dir,
-             str(job_data.get("temperature", 0.8)), blur,
-             str(job_data.get("target_language", "en")),
-             str(job_data.get("cfg_weight", 0.5)),
-             str(job_data.get("exaggeration", 0.5))],
-            stdout=proc_log, stderr=proc_log,
+        valid_steps = ["download", "audio", "video"]
+        ckpt = CheckpointHelper(access_code, output_dir, valid_steps)
+
+        # Step 1: Download original video
+        if not ckpt.done("download"):
+            job_log(access_code, output_dir, "Downloading original video...")
+            download_script = os.path.join(PROJECT_ROOT, "..", "pre-process", "download_orig.py")
+            max_attempts = 3
+            for attempt in range(1, max_attempts + 1):
+                result = subprocess.run(
+                    [PYTHON_BIN, download_script, video_number, output_dir],
+                    stdout=proc_log, stderr=proc_log, timeout=3600,
+                )
+                video_path = os.path.join(output_dir, f"{video_number}.mp4")
+                if result.returncode == 0 and os.path.exists(video_path):
+                    break
+                if attempt < max_attempts:
+                    job_log(access_code, output_dir, f"Download failed, retrying ({attempt}/{max_attempts})...")
+                    time.sleep(20)
+            video_path = os.path.join(output_dir, f"{video_number}.mp4")
+            if not os.path.exists(video_path):
+                raise RuntimeError(f"Downloaded video not found: {video_path}")
+            ckpt.mark("download")
+        else:
+            job_log(access_code, output_dir, "  ↪ download already done, skipping")
+            video_path = os.path.join(output_dir, f"{video_number}.mp4")
+
+        # Step 2: Generate audio from the user's SRT
+        audio_out = run_audio_ckpt(
+            srt_path, output_dir, temperature, access_code,
+            target_language=target_language,
+            cfg_weight=cfg_weight, exaggeration=exaggeration,
+            ckpt=ckpt,
+            audio_subdir="audio",
         )
-        start = time.monotonic()
-        while True:
-            try:
-                process.wait(timeout=30)
-                break
-            except subprocess.TimeoutExpired:
-                elapsed = int(time.monotonic() - start)
-                get_job_queue().update_job_progress(access_code, f"正在执行视频处理脚本... ({elapsed // 60}分{elapsed % 60}秒)")
+
+        # Step 3: Process video with stretched segments
+        run_video_ckpt(video_path, srt_path, audio_out, output_dir,
+                       access_code, ckpt=ckpt,
+                       output_filename="output_modified.mp4",
+                       blur=(blur == "yes"))
+
+        # Step 4: Adjust original zh audio (non-fatal)
+        try:
+            adjust_original_audio(video_path, srt_path,
+                                  audio_out["output_srt_path"], output_dir,
+                                  access_code=access_code)
+        except Exception:
+            job_log(access_code, output_dir, "Warning: zh audio adjustment failed (non-fatal)")
 
     audio_dir = os.path.join(output_dir, "audio")
     validate_files([
         os.path.join(audio_dir, "output_adjusted.srt"),
         os.path.join(audio_dir, "output.wav"),
-        os.path.join(output_dir, "output_final.mp4"),
+        os.path.join(output_dir, "output_modified.mp4"),
     ], label="宁视频翻译")
 
     # Copy adjusted SRT to top-level so the user can access it
     shutil.copy2(os.path.join(audio_dir, "output_adjusted.srt"), output_dir)
+    job_log(access_code, output_dir, "Done!")
 
 
 def process_video_ning(number: str, srt_file, temperature: float, user_id: int = None, blur: str = "yes", target_language: str = "en", cfg_weight: float = 0.5, exaggeration: float = 0.5) -> dict:
-    access_code = str(uuid.uuid4())[:8].upper()
-    output_dir = os.path.join(VIDEO_DIR, f"{number}-{access_code}")
-    os.makedirs(output_dir, exist_ok=True)
+    # Reuse an existing failed job for the same video+user so checkpoints carry over
+    jq = get_job_queue()
+    existing = jq._find_failed_ning_job(number, user_id)
+    if existing:
+        access_code, output_dir = existing
+        job_log_lines(access_code, output_dir, [f"--- resubmit (temperature={temperature}, lang={target_language}) ---"])
+    else:
+        access_code = str(uuid.uuid4())[:8].upper()
+        output_dir = os.path.join(VIDEO_DIR, f"{number}-{access_code}")
+        os.makedirs(output_dir, exist_ok=True)
 
     srt_path = os.path.join(output_dir, srt_file.filename)
     srt_file.save(srt_path)
@@ -89,8 +135,7 @@ def process_video_ning(number: str, srt_file, temperature: float, user_id: int =
         "exaggeration": exaggeration,
     }
 
-    job_access_code = get_job_queue().add_job(job_data, _run_video_job, user_id)
-
+    job_access_code = jq.add_job(job_data, _run_video_job, user_id)
     return {"access_code": job_access_code, "message": "Job queued successfully"}
 
 
