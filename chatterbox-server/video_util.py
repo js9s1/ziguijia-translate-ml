@@ -112,7 +112,9 @@ def translate_segment(text: str, target_language: str, source_has_cjk: bool = Tr
 
 
 def translate_srt_file(srt_path: str, output_path: str, access_code: str, output_dir: str,
-                       target_language_name: str, proc_log, log_file):
+                       target_language_name: str, proc_log, log_file,
+                       intro_marker: str | None = None,
+                       outro_marker: str | None = None):
     """Translate all subtitle blocks in an SRT file and write the result.
 
     Args:
@@ -123,6 +125,10 @@ def translate_srt_file(srt_path: str, output_path: str, access_code: str, output
         target_language_name: Full language name (e.g. "English").
         proc_log: Open file handle for subprocess logging.
         log_file: Path to the log file for redirect_logging_to_file.
+        intro_marker: If set, blocks up to and including the first block
+            containing this text will be left empty (header trimming).
+        outro_marker: If set, blocks from the first block containing this
+            text onward will be left empty (trailer trimming).
     """
     from contextlib import redirect_stdout, redirect_stderr
     from log_utils import redirect_logging_to_file
@@ -132,20 +138,43 @@ def translate_srt_file(srt_path: str, output_path: str, access_code: str, output
     with redirect_stdout(proc_log), redirect_stderr(proc_log), redirect_logging_to_file(log_file):
         content = read_srt_text(srt_path)
         blocks = re.split(r"\n\n", content.strip())
-        n_total = len([b for b in blocks if len(b.split("\n")) >= 3])
-        translated_blocks = []
-        count = 0
+
+        # Parse into (idx, time_range, text) tuples
+        parsed = []
         for block in blocks:
             lines = block.split("\n")
-            if len(lines) >= 3:
+            if len(lines) >= 2:
                 idx = lines[0]
                 time_range = lines[1]
-                text = "\n".join(lines[2:])
+                text = "\n".join(lines[2:]) if len(lines) >= 3 else ""
+                parsed.append((idx, time_range, text))
+
+        # Find header/trailer cutoff indices from markers in the OCR text
+        header_cut = None
+        trailer_cut = None
+        if intro_marker or outro_marker:
+            for i, (_, _, text) in enumerate(parsed):
+                if header_cut is None and intro_marker and intro_marker in text:
+                    header_cut = i  # empty this block and everything before it
+                if outro_marker and outro_marker in text:
+                    trailer_cut = i
+                    break  # trailer starts here, don't need to look further
+
+        n_total = len(parsed)
+        translated_blocks = []
+        for i, (idx, time_range, text) in enumerate(parsed):
+            # Header: empty (skip translation)
+            if header_cut is not None and i <= header_cut:
+                translated = ""
+            # Trailer: empty (skip translation)
+            elif trailer_cut is not None and i >= trailer_cut:
+                translated = ""
+            else:
                 translated = translate_segment(text, target_language_name)
-                translated_blocks.append(f"{idx}\n{time_range}\n{translated}")
-                count += 1
-                if count % 10 == 0 or count == n_total:
-                    job_log(access_code, output_dir, f"  翻译进度: {count}/{n_total}")
+            translated_blocks.append(f"{idx}\n{time_range}\n{translated}")
+            if (i + 1) % 10 == 0 or (i + 1) == n_total:
+                job_log(access_code, output_dir, f"  翻译进度: {i+1}/{n_total}")
+
         with open(output_path, "w", encoding="utf-8") as f:
             f.write("\n\n".join(translated_blocks) + "\n")
         hy_mt.unload_model()

@@ -802,15 +802,12 @@ def video_ning_ocr_process():
             "process_video_ning_ocr" if mode == "full" else "process_video_ning_ocr_translate_only")
         find_cached = _lazy("video_ning_job", "_find_cached_video")
         blur = request.form.get("blur", "yes")
-        start_trim = request.form.get("start_trim", "12.25")
-        end_trim = request.form.get("end_trim", "40.0")
 
         # Check if user already decided to use a cached file
         cached_path = request.form.get("cached_path", "")
         if cached_path:
             result = process_video_ning_ocr(number, params["temperature"], session["user_id"], blur,
                                             target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"],
-                                            start_trim=float(start_trim), end_trim=float(end_trim),
                                             cached_path=cached_path)
             return jsonify(result)
 
@@ -818,8 +815,7 @@ def video_ning_ocr_process():
         no_cache_check = request.form.get("no_cache_check", "false") == "true"
         if no_cache_check:
             result = process_video_ning_ocr(number, params["temperature"], session["user_id"], blur,
-                                            target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"],
-                                            start_trim=float(start_trim), end_trim=float(end_trim))
+                                            target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"])
             return jsonify(result)
 
         # First-time submission: check for cached video files
@@ -847,8 +843,7 @@ def video_ning_ocr_process():
 
         # No cached file found — proceed normally
         result = process_video_ning_ocr(number, params["temperature"], session["user_id"], blur,
-                                        target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"],
-                                        start_trim=float(start_trim), end_trim=float(end_trim))
+                                        target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"])
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error OCR processing ning video: {str(e)}", exc_info=True)

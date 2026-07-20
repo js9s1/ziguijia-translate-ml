@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -12,6 +13,11 @@ from log_utils import job_log, job_log_lines
 from config import VIDEO_DIR, GEN_VIDEO_ORIG_SCRIPT, RAPID_VIDEOCR_PIPELINE_SCRIPT, PROJECT_ROOT, RAPID_VIDEOCR_BIN, PYTHON_BIN, LANG_MAP
 from pipeline import run_audio_ckpt, run_video_ckpt, validate_files, adjust_original_audio
 from video_util import CheckpointHelper, translate_srt_file, open_proc_log
+
+
+# Markers used to auto-detect intro/outro boundaries in OCR SRT content
+_MARKER_INTRO = "杨宁随缘开示"
+_MARKER_OUTRO = "子归家全体编制人员"
 
 
 def _find_cached_video(number: str) -> str | None:
@@ -153,7 +159,7 @@ def _run_video_ning_ocr_job(job_data: dict):
     log_file = os.path.join(output_dir, "job.log")
 
     with open_proc_log(log_file) as (proc_log, _):
-        valid_steps = ["download", "trim", "ocr", "translate", "audio", "video"]
+        valid_steps = ["download", "ocr", "translate", "audio", "video"]
         ckpt = CheckpointHelper(access_code, output_dir, valid_steps)
 
         # Step 1: Download (or use cached) original video
@@ -185,51 +191,13 @@ def _run_video_ning_ocr_job(job_data: dict):
             job_log(access_code, output_dir, "  ↪ download already done, skipping")
             video_path = os.path.join(output_dir, f"{video_number}.mp4")
 
-        # Step 2: Trim video
-        trimmed_path = os.path.join(output_dir, f"{video_number}_trimmed.mp4")
-        if not ckpt.done("trim"):
-            start_trim = float(job_data.get("start_trim", 12.25))
-            end_trim = float(job_data.get("end_trim", 40.0))
-            job_log(access_code, output_dir, f"Trimming video (remove first {start_trim}s, last {end_trim}s)...")
-            result = subprocess.run(
-                ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", video_path],
-                capture_output=True, text=True, timeout=60,
-            )
-            info = json.loads(result.stdout)
-            orig_duration = float(info["format"]["duration"])
-            if orig_duration > start_trim + end_trim:
-                end_time = orig_duration - end_trim
-                subprocess.run(
-                    ["ffmpeg", "-y",
-                     "-ss", str(start_trim), "-to", str(end_time),
-                     "-i", video_path,
-                     "-c:v", "libx265", "-crf", "23", "-preset", "fast",
-                     "-an",
-                     "-r", "24",
-                     trimmed_path],
-                    stdout=proc_log, stderr=proc_log, timeout=3600,
-                )
-                if os.path.exists(trimmed_path):
-                    job_log(access_code, output_dir, f"Trimmed: {start_trim}s from start, {end_trim}s from end (was {orig_duration:.1f}s)")
-                else:
-                    job_log(access_code, output_dir, "Trim failed, using original video as-is")
-                    trimmed_path = video_path
-            else:
-                job_log(access_code, output_dir, f"Video too short ({orig_duration:.1f}s), skipping trim")
-                trimmed_path = video_path
-            ckpt.mark("trim")
-        else:
-            job_log(access_code, output_dir, "  ↪ trim already done, skipping")
-            if not os.path.exists(trimmed_path):
-                trimmed_path = video_path
-
-        # Step 3: Run rapid_videocr_pipeline.sh to generate OCR SRT
+        # Step 2: Run rapid_videocr_pipeline.sh on full video to generate OCR SRT
         ocr_srt = os.path.join(output_dir, "ocr_screen.srt")
         if not ckpt.done("ocr"):
             job_log(access_code, output_dir, "Running RapidVideOCR pipeline...")
             frames_dir = os.path.join(output_dir, "frames")
             subprocess.run(
-                ["/usr/bin/bash", RAPID_VIDEOCR_PIPELINE_SCRIPT, "-i", trimmed_path,
+                ["/usr/bin/bash", RAPID_VIDEOCR_PIPELINE_SCRIPT, "-i", video_path,
                  "-o", ocr_srt, "-d", frames_dir],
                 stdout=proc_log, stderr=proc_log, timeout=14400,
                 env={**os.environ, "RAPID_VIDEOCR_BIN": RAPID_VIDEOCR_BIN},
@@ -240,18 +208,19 @@ def _run_video_ning_ocr_job(job_data: dict):
         else:
             job_log(access_code, output_dir, "  ↪ OCR already done, skipping")
 
-        # Step 4: Translate OCR SRT via HY-MT
+        # Step 3: Translate OCR SRT via HY-MT (header/trailer auto-trimmed)
         translated_srt = os.path.join(output_dir, "translated.srt")
         if not ckpt.done("translate"):
-            job_log(access_code, output_dir, "Translating OCR subtitles...")
+            job_log(access_code, output_dir, "Translating OCR subtitles (intro/outro auto-detected)...")
             target_language_name = LANG_MAP.get(target_language, target_language)
             translate_srt_file(ocr_srt, translated_srt, access_code, output_dir,
-                               target_language_name, proc_log, log_file)
+                               target_language_name, proc_log, log_file,
+                               intro_marker=_MARKER_INTRO, outro_marker=_MARKER_OUTRO)
             ckpt.mark("translate")
         else:
             job_log(access_code, output_dir, "  ↪ translation already done, skipping")
 
-        # Step 5: Generate audio from translated SRT
+        # Step 4: Generate audio from translated SRT
         audio_out = run_audio_ckpt(
             translated_srt, output_dir, temperature, access_code,
             target_language=target_language,
@@ -260,8 +229,8 @@ def _run_video_ning_ocr_job(job_data: dict):
             audio_subdir="audio",
         )
 
-        # Step 6: Process video with stretched segments
-        run_video_ckpt(trimmed_path, translated_srt, audio_out, output_dir,
+        # Step 5: Process full video with stretched segments
+        run_video_ckpt(video_path, translated_srt, audio_out, output_dir,
                        access_code, ckpt=ckpt, output_filename="output_modified.mp4",
                        blur=(blur == "yes"))
 
@@ -269,8 +238,7 @@ def _run_video_ning_ocr_job(job_data: dict):
         try:
             adjust_original_audio(video_path, translated_srt,
                                   audio_out["output_srt_path"], output_dir,
-                                  access_code=access_code,
-                                  audio_offset=float(job_data.get("start_trim", 12.25)))
+                                  access_code=access_code)
         except Exception:
             job_log(access_code, output_dir, "Warning: zh audio adjustment failed (non-fatal)")
 
@@ -282,16 +250,16 @@ def _run_video_ning_ocr_job(job_data: dict):
     job_log(access_code, output_dir, "Done!")
 
 
-def process_video_ning_ocr(number: str, temperature: float, user_id: int = None, blur: str = "yes", target_language: str = "en", cfg_weight: float = 0.5, exaggeration: float = 0.5, start_trim: float = 12.25, end_trim: float = 40.0, cached_path: str | None = None) -> dict:
+def process_video_ning_ocr(number: str, temperature: float, user_id: int = None, blur: str = "yes", target_language: str = "en", cfg_weight: float = 0.5, exaggeration: float = 0.5, cached_path: str | None = None) -> dict:
     # Reuse an existing failed job for the same video+user so checkpoints carry over
     jq = get_job_queue()
     existing = jq._find_failed_ocr_job(number, user_id)
     if existing:
         access_code, output_dir = existing
-        # Invalidate checkpoints from "trim" onward so the job re-runs
-        # trimming with the (potentially new) start_trim/end_trim values.
+        # Invalidate checkpoints from "download" onward so job re-runs
+        # (old trim step is gone; download checkpoint stays for cached video reuse)
         jq.invalidate_checkpoints_after(access_code, "download")
-        job_log_lines(access_code, output_dir, [f"--- resubmit (temperature={temperature}, lang={target_language}, start_trim={start_trim}, end_trim={end_trim}) ---"])
+        job_log_lines(access_code, output_dir, [f"--- resubmit (temperature={temperature}, lang={target_language}) ---"])
     else:
         access_code = str(uuid.uuid4())[:8].upper()
         output_dir = os.path.join(VIDEO_DIR, f"{number}-{access_code}")
@@ -306,8 +274,6 @@ def process_video_ning_ocr(number: str, temperature: float, user_id: int = None,
         "target_language": target_language,
         "cfg_weight": cfg_weight,
         "exaggeration": exaggeration,
-        "start_trim": start_trim,
-        "end_trim": end_trim,
     }
 
     if cached_path:
@@ -317,10 +283,10 @@ def process_video_ning_ocr(number: str, temperature: float, user_id: int = None,
     return {"access_code": job_access_code, "message": "OCR translation job queued"}
 
 
-# ── OCR-only (download, trim, OCR, translate, then stop) ──────────
+# ── OCR-only (download, OCR, translate, then stop) ──────────
 
 def _run_video_ning_ocr_translate_only_job(job_data: dict):
-    """Download, trim, run OCR, translate — but stop after translate (no audio/video)."""
+    """Download, run OCR on full video, translate with marker trimming — stop after translate."""
     video_number = job_data["video_number"]
     access_code = job_data["access_code"]
     output_dir = job_data["output_dir"]
@@ -333,7 +299,7 @@ def _run_video_ning_ocr_translate_only_job(job_data: dict):
     log_file = os.path.join(output_dir, "job.log")
 
     with open_proc_log(log_file) as (proc_log, _):
-        valid_steps = ["download", "trim", "ocr", "translate"]
+        valid_steps = ["download", "ocr", "translate"]
         ckpt = CheckpointHelper(access_code, output_dir, valid_steps)
 
         # Step 1: Download
@@ -365,49 +331,13 @@ def _run_video_ning_ocr_translate_only_job(job_data: dict):
             job_log(access_code, output_dir, "  ↪ download already done, skipping")
             video_path = os.path.join(output_dir, f"{video_number}.mp4")
 
-        # Step 2: Trim video
-        trimmed_path = os.path.join(output_dir, f"{video_number}_trimmed.mp4")
-        if not ckpt.done("trim"):
-            start_trim = float(job_data.get("start_trim", 12.25))
-            end_trim = float(job_data.get("end_trim", 40.0))
-            job_log(access_code, output_dir, f"Trimming video (remove first {start_trim}s, last {end_trim}s)...")
-            result = subprocess.run(
-                ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", video_path],
-                capture_output=True, text=True, timeout=60,
-            )
-            info = json.loads(result.stdout)
-            orig_duration = float(info["format"]["duration"])
-            if orig_duration > start_trim + end_trim:
-                subprocess.run(
-                    ["ffmpeg", "-y",
-                     "-ss", str(start_trim), "-to", str(orig_duration - end_trim),
-                     "-i", video_path,
-                     "-c:v", "libx265", "-crf", "23", "-preset", "fast",
-                     "-an", "-r", "24",
-                     trimmed_path],
-                    stdout=proc_log, stderr=proc_log, timeout=3600,
-                )
-                if os.path.exists(trimmed_path):
-                    job_log(access_code, output_dir, f"Trimmed: {start_trim}s from start, {end_trim}s from end (was {orig_duration:.1f}s)")
-                else:
-                    job_log(access_code, output_dir, "Trim failed, using original")
-                    trimmed_path = video_path
-            else:
-                job_log(access_code, output_dir, f"Video too short ({orig_duration:.1f}s), skipping trim")
-                trimmed_path = video_path
-            ckpt.mark("trim")
-        else:
-            job_log(access_code, output_dir, "  ↪ trim already done, skipping")
-            if not os.path.exists(trimmed_path):
-                trimmed_path = video_path
-
-        # Step 3: OCR
+        # Step 2: OCR on full video
         ocr_srt = os.path.join(output_dir, "ocr_screen.srt")
         if not ckpt.done("ocr"):
             job_log(access_code, output_dir, "Running RapidVideOCR pipeline...")
             frames_dir = os.path.join(output_dir, "frames")
             subprocess.run(
-                ["/usr/bin/bash", RAPID_VIDEOCR_PIPELINE_SCRIPT, "-i", trimmed_path,
+                ["/usr/bin/bash", RAPID_VIDEOCR_PIPELINE_SCRIPT, "-i", video_path,
                  "-o", ocr_srt, "-d", frames_dir],
                 stdout=proc_log, stderr=proc_log, timeout=14400,
                 env={**os.environ, "RAPID_VIDEOCR_BIN": RAPID_VIDEOCR_BIN},
@@ -418,13 +348,14 @@ def _run_video_ning_ocr_translate_only_job(job_data: dict):
         else:
             job_log(access_code, output_dir, "  ↪ OCR already done, skipping")
 
-        # Step 4: Translate
+        # Step 3: Translate with intro/outro marker detection
         translated_srt = os.path.join(output_dir, "translated.srt")
         if not ckpt.done("translate"):
-            job_log(access_code, output_dir, "Translating OCR subtitles...")
+            job_log(access_code, output_dir, "Translating OCR subtitles (intro/outro auto-detected)...")
             target_language_name = LANG_MAP.get(target_language, target_language)
             translate_srt_file(ocr_srt, translated_srt, access_code, output_dir,
-                               target_language_name, proc_log, log_file)
+                               target_language_name, proc_log, log_file,
+                               intro_marker=_MARKER_INTRO, outro_marker=_MARKER_OUTRO)
             ckpt.mark("translate")
         else:
             job_log(access_code, output_dir, "  ↪ translation already done, skipping")
@@ -436,7 +367,7 @@ def _run_video_ning_ocr_translate_only_job(job_data: dict):
     job_log(access_code, output_dir, "Done! OCR → translation complete (audio/video skipped)")
 
 
-def process_video_ning_ocr_translate_only(number: str, temperature: float, user_id: int = None, blur: str = "yes", target_language: str = "en", cfg_weight: float = 0.5, exaggeration: float = 0.5, start_trim: float = 12.25, end_trim: float = 40.0, cached_path: str | None = None) -> dict:
+def process_video_ning_ocr_translate_only(number: str, temperature: float, user_id: int = None, blur: str = "yes", target_language: str = "en", cfg_weight: float = 0.5, exaggeration: float = 0.5, cached_path: str | None = None) -> dict:
     access_code = str(uuid.uuid4())[:8].upper()
     output_dir = os.path.join(VIDEO_DIR, f"{number}-{access_code}")
     os.makedirs(output_dir, exist_ok=True)
@@ -449,8 +380,6 @@ def process_video_ning_ocr_translate_only(number: str, temperature: float, user_
         "target_language": target_language,
         "cfg_weight": cfg_weight,
         "exaggeration": exaggeration,
-        "start_trim": start_trim,
-        "end_trim": end_trim,
     }
 
     if cached_path:

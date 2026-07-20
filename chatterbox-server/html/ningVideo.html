@@ -46,20 +46,6 @@
             </div>
 
 
-            <div class="form-row" id="trimSection" style="display:none;align-items:stretch;">
-                <label style="font-weight:bold;color:#e2b714;white-space:;align-self:left;">裁剪设置（OCR模式）</label>
-                <div style="display:flex;flex-direction:column;gap:4px;flex:1;">
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <label for="start_trim">开头裁剪 (秒)</label>
-                        <input type="number" id="start_trim" name="start_trim" min="0" step="0.01" value="12.25" style="width:120px;padding:6px;border:1px solid #555;border-radius:4px;background:#1e1e1e;color:#e0e0e0;">
-                    </div>
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <label for="end_trim">结尾裁剪 (秒)</label>
-                        <input type="number" id="end_trim" name="end_trim" min="0" step="0.01" value="40.0" style="width:120px;padding:6px;border:1px solid #555;border-radius:4px;background:#1e1e1e;color:#e0e0e0;">
-                    </div>
-                </div>
-            </div>
-
             <div class="form-row">
                 <label for="blur">模糊处理</label>
                 <select id="blur" name="blur">
@@ -77,19 +63,15 @@
     <script>
         document.getElementById('mode').addEventListener('change', function() {
             var srtSection = document.getElementById('srtSection');
-            var trimSection = document.getElementById('trimSection');
             if (this.value === 'ocr') {
                 srtSection.classList.add('hidden');
                 document.getElementById('srt_file').removeAttribute('required');
-                trimSection.style.display = '';
             } else if (this.value === 'ocr-translate-only') {
                 srtSection.classList.add('hidden');
                 document.getElementById('srt_file').removeAttribute('required');
-                trimSection.style.display = '';
             } else {
                 srtSection.classList.remove('hidden');
                 document.getElementById('srt_file').setAttribute('required', '');
-                trimSection.style.display = 'none';
             }
         });
 
@@ -181,14 +163,6 @@
             formData.append('exaggeration', document.getElementById('exaggeration').value);
 
             var mode = document.getElementById('mode').value;
-            if (mode === 'ocr') {
-                var startTrim = parseFloat(document.getElementById('start_trim').value);
-                var endTrim = parseFloat(document.getElementById('end_trim').value);
-                if (isNaN(startTrim) || startTrim < 0) { alert('请填写有效的开头裁剪秒数（≥0）'); overlay.classList.remove('active'); return; }
-                if (isNaN(endTrim) || endTrim < 0) { alert('请填写有效的结尾裁剪秒数（≥0）'); overlay.classList.remove('active'); return; }
-                formData.append('start_trim', startTrim);
-                formData.append('end_trim', endTrim);
-            }
             var url;
             if (mode === 'ocr') {
                 formData.append('ocr_mode', 'full');

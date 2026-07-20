@@ -939,10 +939,6 @@ def render_detail(job: Job, mode: str) -> Panel:
             param_lines.append(f"CFG权重: {job.cfg_weight}")
         if job.exaggeration is not None:
             param_lines.append(f"夸张度: {job.exaggeration}")
-        if job.start_trim is not None and job.run_func_name in _NING_VIDEO_TYPES:
-            param_lines.append(f"开始裁剪: {job.start_trim}s")
-        if job.end_trim is not None and job.run_func_name in _NING_VIDEO_TYPES:
-            param_lines.append(f"结束裁剪: {job.end_trim}s")
         if param_lines:
             lines.append("")
             lines.extend(param_lines)
