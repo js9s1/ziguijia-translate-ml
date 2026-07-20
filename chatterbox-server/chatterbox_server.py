@@ -904,9 +904,11 @@ def _validate_video_codec(content: bytes):
         if not streams:
             raise ValueError("No video stream found in uploaded file.")
         codec = streams[0].get("codec_name", "").lower()
-        if codec not in ("hevc", "h265"):
-            raise ValueError(
-                "Please convert the video encoding to HEVC (H.265) format before processing.")
+        # FIXME: Temporarily disabled HEVC requirement — some uploaded videos
+        # arrive as h264/avc1. The gen_video.py pipeline can handle them.
+        # if codec not in ("hevc", "h265"):
+        #     raise ValueError(
+        #         "Please convert the video encoding to HEVC (H.265) format before processing.")
         fps_str = streams[0].get("r_frame_rate", "0/1")
         try:
             num, den = fps_str.split("/")
