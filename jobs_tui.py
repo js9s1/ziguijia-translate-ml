@@ -166,7 +166,7 @@ def load_jobs(limit: int = MAX_LOAD_JOBS, offset: int = 0, search: str = "") -> 
     order_clause = """
         ORDER BY
             CASE WHEN status = 'processing' THEN 0 ELSE 1 END,
-            COALESCE(status_changed_at, created_at) DESC
+            created_at DESC
     """
     if search:
         pattern = f"%{search}%"
