@@ -37,6 +37,41 @@ def _find_cached_video(number: str) -> str | None:
     return None
 
 
+def _download_video(ckpt, job_data: dict, video_number: str,
+                    access_code: str, output_dir: str, proc_log) -> str:
+    """Download original video (or use cached copy). Returns path to the video."""
+    if ckpt.done("download"):
+        job_log(access_code, output_dir, "  ↪ download already done, skipping")
+        return os.path.join(output_dir, f"{video_number}.mp4")
+
+    cached_path = job_data.get("cached_path")
+    if cached_path and os.path.isfile(cached_path):
+        job_log(access_code, output_dir, f"Using cached video: {cached_path}")
+        shutil.copy2(cached_path, os.path.join(output_dir, f"{video_number}.mp4"))
+    else:
+        job_log(access_code, output_dir, "Downloading original video...")
+        download_script = os.path.join(PROJECT_ROOT, "..", "pre-process", "download_orig.py")
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            result = subprocess.run(
+                [PYTHON_BIN, download_script, video_number, output_dir],
+                stdout=proc_log, stderr=proc_log, timeout=3600,
+            )
+            video_path = os.path.join(output_dir, f"{video_number}.mp4")
+            if result.returncode == 0 and os.path.exists(video_path):
+                break
+            if attempt < max_attempts:
+                job_log(access_code, output_dir,
+                        f"Download failed, retrying ({attempt}/{max_attempts})...")
+                time.sleep(20)
+
+    video_path = os.path.join(output_dir, f"{video_number}.mp4")
+    if not os.path.exists(video_path):
+        raise RuntimeError(f"Downloaded video not found: {video_path}")
+    ckpt.mark("download")
+    return video_path
+
+
 def _run_video_job(job_data: dict):
     video_number = job_data["video_number"]
     access_code = job_data["access_code"]
@@ -55,29 +90,8 @@ def _run_video_job(job_data: dict):
         valid_steps = ["download", "audio", "video"]
         ckpt = CheckpointHelper(access_code, output_dir, valid_steps)
 
-        # Step 1: Download original video
-        if not ckpt.done("download"):
-            job_log(access_code, output_dir, "Downloading original video...")
-            download_script = os.path.join(PROJECT_ROOT, "..", "pre-process", "download_orig.py")
-            max_attempts = 3
-            for attempt in range(1, max_attempts + 1):
-                result = subprocess.run(
-                    [PYTHON_BIN, download_script, video_number, output_dir],
-                    stdout=proc_log, stderr=proc_log, timeout=3600,
-                )
-                video_path = os.path.join(output_dir, f"{video_number}.mp4")
-                if result.returncode == 0 and os.path.exists(video_path):
-                    break
-                if attempt < max_attempts:
-                    job_log(access_code, output_dir, f"Download failed, retrying ({attempt}/{max_attempts})...")
-                    time.sleep(20)
-            video_path = os.path.join(output_dir, f"{video_number}.mp4")
-            if not os.path.exists(video_path):
-                raise RuntimeError(f"Downloaded video not found: {video_path}")
-            ckpt.mark("download")
-        else:
-            job_log(access_code, output_dir, "  ↪ download already done, skipping")
-            video_path = os.path.join(output_dir, f"{video_number}.mp4")
+        # Step 1: Download (or use cached) original video
+        video_path = _download_video(ckpt, job_data, video_number, access_code, output_dir, proc_log)
 
         # Step 2: Generate audio from the user's SRT
         audio_out = run_audio_ckpt(
@@ -114,7 +128,7 @@ def _run_video_job(job_data: dict):
     job_log(access_code, output_dir, "Done!")
 
 
-def process_video_ning(number: str, srt_file, temperature: float, user_id: int = None, blur: str = "yes", target_language: str = "en", cfg_weight: float = 0.5, exaggeration: float = 0.5) -> dict:
+def process_video_ning(number: str, srt_file, temperature: float, user_id: int = None, blur: str = "yes", target_language: str = "en", cfg_weight: float = 0.5, exaggeration: float = 0.5, cached_path: str | None = None) -> dict:
     # Reuse an existing failed job for the same video+user so checkpoints carry over
     jq = get_job_queue()
     existing = jq._find_failed_ning_job(number, user_id)
@@ -141,6 +155,9 @@ def process_video_ning(number: str, srt_file, temperature: float, user_id: int =
         "exaggeration": exaggeration,
     }
 
+    if cached_path:
+        job_data["cached_path"] = cached_path
+
     job_access_code = jq.add_job(job_data, _run_video_job, user_id)
     return {"access_code": job_access_code, "message": "Job queued successfully"}
 
@@ -163,33 +180,7 @@ def _run_video_ning_ocr_job(job_data: dict):
         ckpt = CheckpointHelper(access_code, output_dir, valid_steps)
 
         # Step 1: Download (or use cached) original video
-        if not ckpt.done("download"):
-            cached_path = job_data.get("cached_path")
-            if cached_path and os.path.isfile(cached_path):
-                job_log(access_code, output_dir, f"Using cached video: {cached_path}")
-                shutil.copy2(cached_path, os.path.join(output_dir, f"{video_number}.mp4"))
-            else:
-                job_log(access_code, output_dir, "Downloading original video...")
-                download_script = os.path.join(PROJECT_ROOT, "..", "pre-process", "download_orig.py")
-                max_attempts = 3
-                for attempt in range(1, max_attempts + 1):
-                    result = subprocess.run(
-                        [PYTHON_BIN, download_script, video_number, output_dir],
-                        stdout=proc_log, stderr=proc_log, timeout=3600,
-                    )
-                    video_path = os.path.join(output_dir, f"{video_number}.mp4")
-                    if result.returncode == 0 and os.path.exists(video_path):
-                        break
-                    if attempt < max_attempts:
-                        job_log(access_code, output_dir, f"Download failed, retrying ({attempt}/{max_attempts})...")
-                        time.sleep(20)
-            video_path = os.path.join(output_dir, f"{video_number}.mp4")
-            if not os.path.exists(video_path):
-                raise RuntimeError(f"Downloaded video not found: {video_path}")
-            ckpt.mark("download")
-        else:
-            job_log(access_code, output_dir, "  ↪ download already done, skipping")
-            video_path = os.path.join(output_dir, f"{video_number}.mp4")
+        video_path = _download_video(ckpt, job_data, video_number, access_code, output_dir, proc_log)
 
         # Step 2: Run rapid_videocr_pipeline.sh on full video to generate OCR SRT
         ocr_srt = os.path.join(output_dir, "ocr_screen.srt")
@@ -303,33 +294,7 @@ def _run_video_ning_ocr_translate_only_job(job_data: dict):
         ckpt = CheckpointHelper(access_code, output_dir, valid_steps)
 
         # Step 1: Download
-        if not ckpt.done("download"):
-            cached_path = job_data.get("cached_path")
-            if cached_path and os.path.isfile(cached_path):
-                job_log(access_code, output_dir, f"Using cached video: {cached_path}")
-                shutil.copy2(cached_path, os.path.join(output_dir, f"{video_number}.mp4"))
-            else:
-                job_log(access_code, output_dir, "Downloading original video...")
-                download_script = os.path.join(PROJECT_ROOT, "..", "pre-process", "download_orig.py")
-                max_attempts = 3
-                for attempt in range(1, max_attempts + 1):
-                    result = subprocess.run(
-                        [PYTHON_BIN, download_script, video_number, output_dir],
-                        stdout=proc_log, stderr=proc_log, timeout=3600,
-                    )
-                    video_path = os.path.join(output_dir, f"{video_number}.mp4")
-                    if result.returncode == 0 and os.path.exists(video_path):
-                        break
-                    if attempt < max_attempts:
-                        job_log(access_code, output_dir, f"Download failed, retrying ({attempt}/{max_attempts})...")
-                        time.sleep(20)
-            video_path = os.path.join(output_dir, f"{video_number}.mp4")
-            if not os.path.exists(video_path):
-                raise RuntimeError(f"Downloaded video not found: {video_path}")
-            ckpt.mark("download")
-        else:
-            job_log(access_code, output_dir, "  ↪ download already done, skipping")
-            video_path = os.path.join(output_dir, f"{video_number}.mp4")
+        video_path = _download_video(ckpt, job_data, video_number, access_code, output_dir, proc_log)
 
         # Step 2: OCR on full video
         ocr_srt = os.path.join(output_dir, "ocr_screen.srt")

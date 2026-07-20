@@ -82,6 +82,10 @@ def post_fork(server, worker):
     structured JSON logging on gunicorn's existing handler."""
     from jobqueue import JobQueue
     JobQueue.clear()
+    # Eagerly initialise the JobQueue so the worker thread starts processing
+    # pending jobs immediately, without waiting for a web request.
+    from jobqueue import get_job_queue
+    get_job_queue()
 
     _start_srt_rebuilder(post_fork_logger=server.log)
 

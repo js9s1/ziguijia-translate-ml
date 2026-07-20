@@ -84,7 +84,6 @@
          function showCachedPrompt(data) {
             var overlay = document.getElementById('loadingOverlay');
             _cachedMode = document.getElementById('mode').value;
-            // Create a modal dialog
             var dialog = document.createElement('div');
             dialog.id = 'cachedDialog';
             dialog.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:2000;display:flex;align-items:center;justify-content:center;';
@@ -98,17 +97,13 @@
             var btnRow = document.createElement('div');
             btnRow.style.cssText = 'display:flex;gap:12px;justify-content:flex-end;';
 
-            var btnDownload = document.createElement('button');
-            btnDownload.textContent = '重新下载';
-            btnDownload.style.cssText = 'padding:10px 20px;border:none;border-radius:6px;cursor:pointer;font-size:0.95em;background:#555;color:#e0e0e0;';
-            btnDownload.onclick = function() {
-                document.body.removeChild(dialog);
-                overlay.classList.add('active');
+            function doResubmit(extraParams) {
                 var fd = new FormData(document.getElementById('videoForm'));
-                fd.set('no_cache_check', 'true');
+                for (var k in extraParams) { fd.set(k, extraParams[k]); }
+                var url = (_cachedMode === 'srt') ? '/video/ning/process' : '/video/ning/ocr-process';
                 if (_cachedMode === 'ocr') { fd.set('ocr_mode', 'full'); }
                 else if (_cachedMode === 'ocr-translate-only') { fd.set('ocr_mode', 'translate-only'); }
-                fetch('/video/ning/ocr-process', { method: 'POST', body: fd })
+                fetch(url, { method: 'POST', body: fd })
                 .then(function(r) { return r.json(); })
                 .then(function(d) {
                     overlay.classList.remove('active');
@@ -116,6 +111,15 @@
                     showResult(d.access_code, '/result?code=' + d.access_code, 'checkProgressLink');
                 })
                 .catch(function(err) { overlay.classList.remove('active'); alert('错误: ' + err.message); });
+            }
+
+            var btnDownload = document.createElement('button');
+            btnDownload.textContent = '重新下载';
+            btnDownload.style.cssText = 'padding:10px 20px;border:none;border-radius:6px;cursor:pointer;font-size:0.95em;background:#555;color:#e0e0e0;';
+            btnDownload.onclick = function() {
+                document.body.removeChild(dialog);
+                overlay.classList.add('active');
+                doResubmit({ 'no_cache_check': 'true' });
             };
 
             var btnUse = document.createElement('button');
@@ -124,18 +128,7 @@
             btnUse.onclick = function() {
                 document.body.removeChild(dialog);
                 overlay.classList.add('active');
-                var fd = new FormData(document.getElementById('videoForm'));
-                fd.set('cached_path', data.paths[0]);
-                if (_cachedMode === 'ocr') { fd.set('ocr_mode', 'full'); }
-                else if (_cachedMode === 'ocr-translate-only') { fd.set('ocr_mode', 'translate-only'); }
-                fetch('/video/ning/ocr-process', { method: 'POST', body: fd })
-                .then(function(r) { return r.json(); })
-                .then(function(d) {
-                    overlay.classList.remove('active');
-                    if (d.error) { alert('错误: ' + d.error); return; }
-                    showResult(d.access_code, '/result?code=' + d.access_code, 'checkProgressLink');
-                })
-                .catch(function(err) { overlay.classList.remove('active'); alert('错误: ' + err.message); });
+                doResubmit({ 'cached_path': data.paths[0] });
             };
 
             btnRow.appendChild(btnDownload);

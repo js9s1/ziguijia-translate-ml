@@ -474,9 +474,10 @@ def main():
             # then encode with software x265 — simpler and reliable.
             blur_cmd = [
                 "ffmpeg", "-y",
+                "-hwaccel", "none",
                 "-i", output_file,
                 "-i", audio_wav,
-                "-vf", "hwdownload,format=yuv420p,delogo=x=100:y=600:w=1060:h=80:show=0",
+                "-vf", "format=yuv420p,delogo=x=100:y=600:w=1060:h=80:show=0",
                 "-c:v", "libx265", "-crf", "23", "-preset", "fast",
                 "-c:a", "aac", "-b:a", "192k",
             ]

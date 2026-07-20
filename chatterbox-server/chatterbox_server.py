@@ -754,6 +754,36 @@ def srt_resubmit(access_code):
         return jsonify({"error": str(e)}), 500
 
 
+
+def _build_cached_response(find_cached_func, number) -> dict | None:
+    """Check for a cached video file and build a response dict.
+
+    Returns the response dict if a cached file is found, or None otherwise.
+    """
+    cached = find_cached_func(number)
+    if not cached:
+        return None
+    meta = _get_video_metadata(cached)
+    meta_parts = []
+    if meta.get("duration_str"):
+        meta_parts.append(f"时长 {meta['duration_str']}")
+    if meta.get("resolution"):
+        meta_parts.append(f"分辨率 {meta['resolution']}")
+    meta_str = "，".join(meta_parts) if meta_parts else ""
+    basename = os.path.basename(cached)
+    msg = f"已找到缓存的视频文件 ({basename})"
+    if meta_str:
+        msg += f"\n{meta_str}"
+    msg += "\n是否使用该已下载的版本？"
+    return {
+        "cached_found": True,
+        "paths": [cached],
+        "number": number,
+        "message": msg,
+        "metadata": meta,
+    }
+
+
 # ═══════════════════════════════════════════
 # Video pages and processing
 # ═══════════════════════════════════════════
@@ -767,19 +797,38 @@ def video_ning_page():
 @login_required
 def video_ning_process():
     try:
-        if "srt_file" not in request.files:
-            return jsonify({"error": "No file uploaded"}), 400
-
         number = request.form.get("number")
         if not number:
             return jsonify({"error": "No video number provided"}), 400
+
+        if "srt_file" not in request.files:
+            return jsonify({"error": "No file uploaded"}), 400
 
         srt_file = request.files["srt_file"]
         _validate_file_upload(srt_file, "SRT")
         params = _parse_job_params(request.form)
 
         process_video_ning = _lazy("video_ning_job", "process_video_ning")
+        find_cached = _lazy("video_ning_job", "_find_cached_video")
         blur = request.form.get("blur", "yes")
+
+        cached_path = request.form.get("cached_path", "")
+        if cached_path:
+            result = process_video_ning(number, srt_file, params["temperature"], session["user_id"], blur,
+                                        target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"],
+                                        cached_path=cached_path)
+            return jsonify(result)
+
+        no_cache_check = request.form.get("no_cache_check", "false") == "true"
+        if no_cache_check:
+            result = process_video_ning(number, srt_file, params["temperature"], session["user_id"], blur,
+                                        target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"])
+            return jsonify(result)
+
+        cached_resp = _build_cached_response(find_cached, number)
+        if cached_resp is not None:
+            return jsonify(cached_resp)
+
         result = process_video_ning(number, srt_file, params["temperature"], session["user_id"], blur,
                                     target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"])
         return jsonify(result)
@@ -819,27 +868,9 @@ def video_ning_ocr_process():
             return jsonify(result)
 
         # First-time submission: check for cached video files
-        cached = find_cached(number)
-        if cached:
-            meta = _get_video_metadata(cached)
-            meta_parts = []
-            if meta.get("duration_str"):
-                meta_parts.append(f"时长 {meta['duration_str']}")
-            if meta.get("resolution"):
-                meta_parts.append(f"分辨率 {meta['resolution']}")
-            meta_str = "，".join(meta_parts) if meta_parts else ""
-            basename = os.path.basename(cached)
-            msg = f"已找到缓存的视频文件 ({basename})"
-            if meta_str:
-                msg += f"\n{meta_str}"
-            msg += "\n是否使用该已下载的版本？"
-            return jsonify({
-                "cached_found": True,
-                "paths": [cached],
-                "number": number,
-                "message": msg,
-                "metadata": meta,
-            })
+        cached_resp = _build_cached_response(find_cached, number)
+        if cached_resp is not None:
+            return jsonify(cached_resp)
 
         # No cached file found — proceed normally
         result = process_video_ning_ocr(number, params["temperature"], session["user_id"], blur,
