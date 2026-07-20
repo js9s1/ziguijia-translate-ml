@@ -874,6 +874,9 @@ def _validate_file_upload(uploaded_file, label: str = "file"):
     if not content:
         raise ValueError(f"Uploaded {label} file is empty (0 bytes). Please check the file and try again.")
 
+    if "video" in label.lower():
+        _validate_video_codec(content)
+
     # SRT files: verify they contain proper timing lines (e.g. "00:00:01,000 --> 00:00:03,000")
     if "srt" in label.lower():
         try:
@@ -884,6 +887,74 @@ def _validate_file_upload(uploaded_file, label: str = "file"):
             raise ValueError(
                 f"Uploaded {label} file does not appear to be a valid SRT file. "
                 f"Expected timing lines like '00:00:01,000 --> 00:00:03,000'.")
+        _validate_srt_language(text)
+
+
+def _validate_video_codec(content: bytes):
+    import tempfile
+    import json
+    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+    try:
+        tmp.write(content)
+        tmp.close()
+        result = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json",
+             "-show_streams", "-select_streams", "v:0", tmp.name],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            raise ValueError("Cannot probe video codec — file may be corrupt.")
+        info = json.loads(result.stdout)
+        streams = info.get("streams", [])
+        if not streams:
+            raise ValueError("No video stream found in uploaded file.")
+        codec = streams[0].get("codec_name", "").lower()
+        if codec not in ("hevc", "h265"):
+            raise ValueError(
+                "Please convert the video encoding to HEVC (H.265) format before processing.")
+        fps_str = streams[0].get("r_frame_rate", "0/1")
+        try:
+            num, den = fps_str.split("/")
+            fps = float(num) / float(den) if float(den) != 0 else 0
+        except (ValueError, ZeroDivisionError):
+            fps = 0
+        if fps != 24:
+            raise ValueError(
+                "Please convert the video framerate to 24 fps before processing.")
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+
+
+def _validate_srt_language(text: str):
+    import re
+    scripts = {
+        "CJK": re.compile(r'[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]'),
+        "Latin": re.compile(r'[a-zA-Z]'),
+        "Cyrillic": re.compile(r'[\u0400-\u04ff]'),
+        "Arabic": re.compile(r'[\u0600-\u06ff]'),
+        "Devanagari": re.compile(r'[\u0900-\u097f]'),
+        "Thai": re.compile(r'[\u0e00-\u0e7f]'),
+    }
+    lines = text.splitlines()
+    found_scripts = set()
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if re.match(r'^\d+$', stripped):
+            continue
+        if '-->' in stripped:
+            continue
+        for name, pattern in scripts.items():
+            if pattern.search(stripped):
+                found_scripts.add(name)
+        if len(found_scripts) > 1:
+            raise ValueError(
+                "SRT file contains mixed languages. "
+                "Please upload an SRT file in a single language.")
 
 
 @app.route("/video/custom/process", methods=["POST"])

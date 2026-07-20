@@ -469,14 +469,14 @@ def main():
         if args.blur:
             print("Applying delogo filter to blur Chinese text...")
             # output_modified.mp4 is hevc_vaapi-encoded, so ffmpeg decodes
-            # to VAAPI surfaces.  hwdownload → nv12 → delogo (software)
-            # → hwupload → hevc_vaapi encode.
+            # to VAAPI surfaces.  hwdownload → nv12 → yuv420p → delogo
+            # (software, requires planar YUV) → nv12 → hwupload → hevc_vaapi encode.
             blur_cmd = [
                 "ffmpeg", "-y",
                 "-i", output_file,
                 "-i", audio_wav,
                 "-filter_complex",
-                "[0:v]hwdownload,format=nv12,delogo=x=100:y=600:w=1060:h=80:show=0,format=nv12,hwupload[outv]",
+                "[0:v]hwdownload,format=nv12,format=yuv420p,delogo=x=100:y=600:w=1060:h=80:show=0,format=nv12,hwupload[outv]",
                 "-vaapi_device", VAAPI_DEVICE,
                 "-map", "[outv]", "-map", "1:a",
                 "-c:v", "hevc_vaapi", "-qp", "23",
