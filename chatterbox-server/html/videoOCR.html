@@ -45,7 +45,7 @@ fetch('/auth/me').then(function(r) { return r.json(); }).then(function(data) {
 
 initResultSection('resultSection', 'checkLink');
 
-document.getElementById('ocrForm').addEventListener('submit', async function(e) {
+document.getElementById('ocrForm').addEventListener('submit', function(e) {
     e.preventDefault();
 
     if (!isAuthenticated) {
@@ -53,48 +53,16 @@ document.getElementById('ocrForm').addEventListener('submit', async function(e) 
         return;
     }
 
-    var overlay = document.getElementById('loadingOverlay');
-    overlay.classList.add('active');
-
     var fileInput = document.getElementById('videoFile');
     if (!fileInput.files || !fileInput.files[0]) {
         alert('请选择视频文件');
-        overlay.classList.remove('active');
         return;
     }
 
     var formData = new FormData();
     formData.append('video_file', fileInput.files[0]);
 
-    try {
-        var response = await fetch('/video/ocr/process', {
-            method: 'POST',
-            body: formData
-        });
-
-        if (response.status === 401) {
-            alert('请先登录后再使用此功能');
-            window.location.href = '/auth/login?next=' + encodeURIComponent('/video/ocr');
-            overlay.classList.remove('active');
-            return;
-        }
-
-        var data = await response.json();
-
-        if (!response.ok || data.error) {
-            alert('Error: ' + (data.error || 'Unknown error'));
-            overlay.classList.remove('active');
-            return;
-        }
-
-        overlay.classList.remove('active');
-        showResult(data.access_code, '/result?code=' + data.access_code, 'checkLink');
-
-    } catch (err) {
-        alert('请先登录后再使用此功能');
-        window.location.href = '/auth/login?next=' + encodeURIComponent('/video/ocr');
-        overlay.classList.remove('active');
-    }
+    submitJob('/video/ocr/process', formData, 'checkLink', '/video/ocr');
 });
     </script>
 </body>

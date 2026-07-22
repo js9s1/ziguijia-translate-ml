@@ -229,7 +229,7 @@ def process_video(video_file, segments, output_file):
         # Instead of one ffmpeg process per segment (1215× VAAPI init),
         # we pack many segments into a single filter_complex.  Each batch
         # feeds the source video once per segment with -ss/-to for
-        # keyframe-seeking, then trim+setpts → concat → hevc_vaapi encode.
+        # keyframe-seeking, then trim+setpts → concat → h264_vaapi encode.
         # Result: ~29 ffmpeg processes instead of ~1215, with one VAAPI
         # init per batch instead of one per segment.
         MAX_BATCH_SEGMENTS = 42  # -ss/-to pairs + filter_complex ≈ 180 args, well under OS limits
@@ -266,7 +266,7 @@ def process_video(video_file, segments, output_file):
             filter_parts.append("[outv]format=nv12,hwupload[hw]")
 
             cmd.extend(["-filter_complex", ";".join(filter_parts)])
-            cmd.extend(["-map", "[hw]", "-c:v", "hevc_vaapi", "-qp", "23",
+            cmd.extend(["-map", "[hw]", "-c:v", "h264_vaapi", "-qp", "23",
                         "-r", "24", batch_out])
 
             print(f"  Batch {batch_idx:04d}: {n} segments → single ffmpeg")
@@ -319,7 +319,7 @@ def process_video(video_file, segments, output_file):
                     cmd.extend([
                         "-filter_complex", filter_str,
                         "-map", "[hw]",
-                        "-c:v", "hevc_vaapi", "-qp", "23",
+                        "-c:v", "h264_vaapi", "-qp", "23",
                         "-r", "24",
                         out_name,
                     ])
@@ -478,7 +478,7 @@ def main():
                 "-i", output_file,
                 "-i", audio_wav,
                 "-vf", "format=yuv420p,delogo=x=100:y=600:w=1060:h=80:show=0",
-                "-c:v", "libx265", "-crf", "23", "-preset", "fast",
+                "-c:v", "libx264", "-crf", "23", "-preset", "fast",
                 "-c:a", "aac", "-b:a", "192k",
             ]
             if audio_duration:

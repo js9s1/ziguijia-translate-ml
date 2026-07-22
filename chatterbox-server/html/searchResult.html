@@ -410,7 +410,7 @@
         }
 
         function downloadVideo(videoNumber) {
-            window.location.href = `/video/download/${encodeURIComponent(videoNumber)}`;
+            downloadFile('/video/download/' + encodeURIComponent(videoNumber), videoNumber + '.mp4');
         }
 
         window.onload = loadResults;

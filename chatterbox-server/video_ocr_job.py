@@ -16,6 +16,8 @@ def _detect_srt_language(srt_path: str) -> str:
 
     Returns a language code (zh, ja, ko, ar, ru, el, he, hi, th, en) or 'en' as fallback.
     """
+    from language_utils import detect_dominant_script, is_srt_timing_line, is_srt_index_line
+
     try:
         content = read_srt_text(srt_path)
     except Exception:
@@ -25,61 +27,14 @@ def _detect_srt_language(srt_path: str) -> str:
     text_lines = []
     for line in content.splitlines():
         line = line.strip()
-        # Skip empty, numeric-only (index), and timestamp lines
-        if not line or line.isdigit() or "-->" in line:
+        if not line or is_srt_index_line(line) or is_srt_timing_line(line):
             continue
         text_lines.append(line)
     text = "\n".join(text_lines)
     if not text.strip():
         return "en"
 
-    # Count chars in each script range
-    scripts = {
-        "zh": 0,  # CJK Unified Ideographs (Chinese)
-        "ja": 0,  # Hiragana + Katakana
-        "ko": 0,  # Hangul
-        "ar": 0,  # Arabic
-        "ru": 0,  # Cyrillic
-        "el": 0,  # Greek
-        "he": 0,  # Hebrew
-        "hi": 0,  # Devanagari
-        "th": 0,  # Thai
-    }
-
-    for ch in text:
-        cp = ord(ch)
-        if 0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF:
-            scripts["zh"] += 1
-        elif 0x3040 <= cp <= 0x309F:  # Hiragana
-            scripts["ja"] += 1
-        elif 0x30A0 <= cp <= 0x30FF:  # Katakana
-            scripts["ja"] += 1
-        elif 0xAC00 <= cp <= 0xD7AF:  # Hangul
-            scripts["ko"] += 1
-        elif 0x0600 <= cp <= 0x06FF:  # Arabic
-            scripts["ar"] += 1
-        elif 0x0400 <= cp <= 0x04FF:  # Cyrillic
-            scripts["ru"] += 1
-        elif 0x0370 <= cp <= 0x03FF:  # Greek
-            scripts["el"] += 1
-        elif 0x0590 <= cp <= 0x05FF:  # Hebrew
-            scripts["he"] += 1
-        elif 0x0900 <= cp <= 0x097F:  # Devanagari
-            scripts["hi"] += 1
-        elif 0x0E00 <= cp <= 0x0E7F:  # Thai
-            scripts["th"] += 1
-
-    # Find the dominant non-zero script
-    best = max(scripts, key=scripts.get)
-    if scripts[best] == 0:
-        return "en"
-
-    # Special case: if only zh detected, that's probably correct
-    # If zh + ja both present, prefer ja since Hiragana/Katakana is more distinctive
-    if best == "ja" and scripts["zh"] > scripts["ja"] * 3:
-        return "zh"
-
-    return best
+    return detect_dominant_script(text)
 
 
 def _run_ocr_only_job(job_data: dict):

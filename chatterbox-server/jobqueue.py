@@ -4,6 +4,7 @@ import os
 import shutil
 import signal
 import sqlite3
+import sys as _sys
 import threading
 import time
 import uuid
@@ -13,6 +14,20 @@ from typing import Callable, Optional
 
 import psutil
 
+# ── Use "spawn" to avoid inheriting CUDA/ROCm state via fork ──
+# On Linux, multiprocessing defaults to "fork", which copies the parent's
+# entire virtual address space into every child.  When the parent has
+# PyTorch + ROCm loaded (11+ GiB virtual memory), each child inherits
+# that reservation.  With daemon=False children, orphan accumulation
+# after GPU hangs quickly leads to multiple 72 GiB processes.
+#
+# "spawn" creates a fresh Python interpreter with no inherited state,
+# so children start with a clean ~500 MiB footprint.
+try:
+    multiprocessing.set_start_method("spawn", force=True)
+except RuntimeError:
+    pass  # already set in a parent context
+
 from db_schema import init_jobs_schema, ConnectionManager, JOB_COLUMNS
 from redis_util import publish_job_status
 from singleton import singleton
@@ -20,6 +35,16 @@ from config import FILENAME_TO_CHECKPOINT_STEP, CHECKPOINT_ORDER
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(BASE_DIR, "jobs.db")
+
+_SKIP_QUEUE_INIT = False
+"""When True, ``_load_pending_jobs`` is a no-op (spawn child context).
+
+With ``fork`` the child inherits the parent's already-initialised
+JobQueue singleton so ``__init__`` never runs.  With ``spawn`` every
+module import creates a fresh instance, and we must **not** let the
+child tamper with job statuses or kill orphans that belong to the
+parent process.
+"""
 
 logger = logging.getLogger(__name__)
 
@@ -172,38 +197,23 @@ def _now_str() -> str:
 _WORKER_HEARTBEAT_STALE = 30
 
 
-_JOB_HANDLERS: dict[str, Callable] = {}
-
-
-class JobStatus(Enum):
-    PENDING = "pending"
-    PROCESSING = "processing"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-    DELETED = "deleted"
-
-
-def _register_handlers():
-    """Lazily populate the job handler registry on first import."""
-    from audio_job import _run_gen_audio, _run_audio_segmentation_job
-    from tts_job import _run_tts_job
-    from video_ning_job import _run_video_job, _run_video_ning_ocr_job, _run_video_ning_ocr_translate_only_job
-    from video_custom_job import _run_video_custom_job, _run_video_auto_job, _run_video_ocr_job
-    from video_ocr_job import _run_ocr_only_job
-    _JOB_HANDLERS.update({
-        "_run_gen_audio": _run_gen_audio,
-        "_run_video_job": _run_video_job,
-        "_run_video_custom_job": _run_video_custom_job,
-        "_run_tts_job": _run_tts_job,
-        "_run_video_auto_job": _run_video_auto_job,
-        "_run_audio_segmentation_job": _run_audio_segmentation_job,
-        "_run_video_ocr_job": _run_video_ocr_job,
-        "_run_video_ning_ocr_job": _run_video_ning_ocr_job,
-        "_run_video_ning_ocr_translate_only_job": _run_video_ning_ocr_translate_only_job,
-        "_run_ocr_only_job": _run_ocr_only_job,
-    })
-
+# ── Handler registry ────────────────────────────────────────
+# Each entry is ``(module_name, attr_name)`` so the import happens
+# lazily and only the *needed* handler module is loaded.  This keeps
+# the spawn child from importing PyTorch (audio_job.py) for every
+# job type and blowing up virtual memory for no reason.
+_HANDLER_MODULES: dict[str, tuple[str, str]] = {
+    "_run_gen_audio":                            ("audio_job",     "_run_gen_audio"),
+    "_run_audio_segmentation_job":               ("audio_job",     "_run_audio_segmentation_job"),
+    "_run_tts_job":                              ("tts_job",       "_run_tts_job"),
+    "_run_video_job":                            ("video_ning_job","_run_video_job"),
+    "_run_video_ning_ocr_job":                   ("video_ning_job","_run_video_ning_ocr_job"),
+    "_run_video_ning_ocr_translate_only_job":    ("video_ning_job","_run_video_ning_ocr_translate_only_job"),
+    "_run_video_custom_job":                     ("video_custom_job","_run_video_custom_job"),
+    "_run_video_auto_job":                       ("video_custom_job","_run_video_auto_job"),
+    "_run_video_ocr_job":                        ("video_custom_job","_run_video_ocr_job"),
+    "_run_ocr_only_job":                         ("video_ocr_job", "_run_ocr_only_job"),
+}
 
 _JOB_TYPE_LABELS: dict[str, str] = {
     "_run_gen_audio": "音频生成",
@@ -219,10 +229,29 @@ _JOB_TYPE_LABELS: dict[str, str] = {
 }
 
 
+class JobStatus(Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    DELETED = "deleted"
+
+
 def _get_run_func(name: str) -> Optional[Callable]:
-    if not _JOB_HANDLERS:
-        _register_handlers()
-    return _JOB_HANDLERS.get(name)
+    """Lazily import and return a single job handler function.
+
+    Uses ``importlib`` so only the module containing *name* is loaded.
+    This avoids pulling ``torch`` / ``ChatterboxMultilingualTTS`` into
+    every spawn child for job types that don't need them.
+    """
+    spec = _HANDLER_MODULES.get(name)
+    if spec is None:
+        return None
+    module_name, attr_name = spec
+    import importlib
+    mod = importlib.import_module(module_name)
+    return getattr(mod, attr_name)
 
 
 def _get_job_type_label(run_func_name: str) -> str:
@@ -232,26 +261,25 @@ def _get_job_type_label(run_func_name: str) -> str:
 def _job_process_wrapper(job_data: dict, run_func_name: str):
     """Entry point for a child process executing a single job.
 
-    Cleans up state inherited from the parent via fork (DB connection),
-    then runs the job handler. Exits with 0 on success, non-zero on failure.
-
     Creates its own process group so that all subprocesses spawned by the
     job handler can be killed as a group on cancellation.
+
+    Exits with 0 on success, non-zero on failure.
+
+    With ``spawn`` start method the child is a fresh Python interpreter
+    — no forked CUDA state, no inherited DB connection.  We set
+    ``_SKIP_QUEUE_INIT`` so that when the handler later calls
+    ``get_job_queue()`` the singleton skips the harmful startup
+    bookkeeping (orphan cleanup, status resets).
     """
-    import os
-    import sys
+    global _SKIP_QUEUE_INIT
+    _SKIP_QUEUE_INIT = True
 
-    # Create a new process group so the parent can kill the whole tree.
     os.setpgid(os.getpid(), os.getpid())
-
-    # Close any DB connection inherited from the parent process.
-    # The child opens its own connection when it needs one.
-    jq = get_job_queue()
-    jq._close_conn()
 
     run_func = _get_run_func(run_func_name)
     if run_func is None:
-        sys.exit(1)
+        _sys.exit(1)
     run_func(job_data)
 
 
@@ -270,12 +298,16 @@ class JobQueue:
         self._shutdown_done = threading.Event()  # set when worker finishes
         self._init_db()
         self._load_pending_jobs()
-        self._ensure_worker()
+        if not _SKIP_QUEUE_INIT:
+            self._ensure_worker()
 
     def _get_conn(self) -> sqlite3.Connection:
         return self._conn.get()
 
     def _load_pending_jobs(self):
+        if _SKIP_QUEUE_INIT:
+            return
+
         conn = self._get_conn()
 
         # Kill orphan subprocesses left behind by the dead server instance
@@ -555,8 +587,17 @@ class JobQueue:
 
     def _process_queue(self):
         import queue as std_queue
+        _last_orphan_check = time.monotonic()
+        _ORPHAN_CHECK_INTERVAL = 300  # every 5 minutes
         while self._running:
             self._heartbeat_ts = time.monotonic()
+
+            # Periodic orphan reaper — cleans up subprocesses that
+            # outlived their job (GPU hang, kill -9 on parent, etc.)
+            if time.monotonic() - _last_orphan_check > _ORPHAN_CHECK_INTERVAL:
+                _last_orphan_check = time.monotonic()
+                self._cleanup_orphan_processes()
+
             if self._graceful_shutdown:
                 # Don't dequeue new jobs — let the current one finish, then exit
                 if self._current_access_code is not None:

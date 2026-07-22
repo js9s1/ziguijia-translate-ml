@@ -431,4 +431,17 @@ audio {
         flex: 1;
         text-align: center;
     }
+
+    .jobs-table th,
+    .jobs-table td {
+        padding: 8px 10px;
+        font-size: 0.85em;
+    }
+
+    .btn-view,
+    .btn-cancel,
+    .btn-delete {
+        padding: 4px 10px;
+        font-size: 0.8em;
+    }
 }

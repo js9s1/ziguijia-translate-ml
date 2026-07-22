@@ -150,25 +150,16 @@
             if (!files.length) return;
             this.disabled = true;
             this.textContent = '压缩中...';
-            fetch('/api/oldrun-srt/download', {
+            downloadFile('/api/oldrun-srt/download', 'srts.zip', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({files: files})
-            }).then(function(r) {
-                if (!r.ok) throw new Error(r.statusText);
-                return r.blob();
-            }).then(function(blob) {
-                var a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                a.download = 'srts.zip';
-                a.click();
-                URL.revokeObjectURL(a.href);
-            }).catch(function(e) {
-                alert('下载失败: ' + e.message);
-            }).finally(function() {
-                this.textContent = filtered.length < DATA.length ? '下载过滤' : '下载全部';
-                this.disabled = false;
-            }.bind(this));
+            });
+            var btn = this;
+            setTimeout(function() {
+                btn.textContent = filtered.length < DATA.length ? '下载过滤' : '下载全部';
+                btn.disabled = false;
+            }, 1000);
         });
 
         document.getElementById('pager').addEventListener('click', function(e) {

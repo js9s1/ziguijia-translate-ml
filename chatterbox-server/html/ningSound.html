@@ -95,88 +95,45 @@ initFloatSliders('floatSliders');
 var langSelect = initLanguageSelect('langSelectContainer');
 initResultSection('resultSection', 'checkLink');
 
-var langNames = {
-    ar: 'Arabic', da: 'Danish', de: 'German', el: 'Greek',
-    en: 'English', es: 'Spanish', fi: 'Finnish', fr: 'French',
-    he: 'Hebrew', hi: 'Hindi', it: 'Italian', ja: 'Japanese',
-    ko: 'Korean', ms: 'Malay', nl: 'Dutch', no: 'Norwegian',
-    pl: 'Polish', pt: 'Portuguese', ru: 'Russian', sv: 'Swedish',
-    sw: 'Swahili', tr: 'Turkish', zh: 'Chinese',
-};
-
 langSelect.addEventListener('change', function() {
-    var lang = langNames[this.value] || 'English';
+    var lang = getLangName(this.value);
     document.getElementById('textLabel').innerHTML = lang + '文字 <span id="charCount" style="font-weight:normal;color:#999;font-size:0.85em;">0/500</span>';
 });
 
-document.getElementById('ttsForm').addEventListener('submit', async function(e) {
+document.getElementById('ttsForm').addEventListener('submit', function(e) {
     e.preventDefault();
-    var overlay = document.getElementById('loadingOverlay');
-    overlay.classList.add('active');
 
     var inputMode = document.getElementById('inputMode').value;
-    var temperature = document.getElementById('temperature').value;
-    var target_language = document.getElementById('target_language').value;
-    var cfg_weight = document.getElementById('cfg_weight').value;
-    var exaggeration = document.getElementById('exaggeration').value;
-    var filename = document.getElementById('filename').value || 'output.wav';
 
-    try {
-        var response;
-        if (inputMode === 'text') {
-            var text = document.getElementById('text').value;
-            if (!text) {
-                alert('请输入文字内容');
-                overlay.classList.remove('active');
-                return;
-            }
-            response = await fetch('/tts/process', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: text, filename: filename, temperature: temperature, target_language: target_language, cfg_weight: cfg_weight, exaggeration: exaggeration })
-            });
-        } else {
-            var fileInput = document.getElementById('file');
-            if (!fileInput.files || !fileInput.files[0]) {
-                alert('请选择要上传的文件');
-                overlay.classList.remove('active');
-                return;
-            }
-            var formData = new FormData();
-            formData.append('file', fileInput.files[0]);
-            formData.append('temperature', temperature);
-            formData.append('target_language', target_language);
-            formData.append('cfg_weight', cfg_weight);
-            formData.append('exaggeration', exaggeration);
-            formData.append('filename', filename);
-            response = await fetch('/audio/process', {
-                method: 'POST',
-                body: formData
-            });
+    if (inputMode === 'text') {
+        var text = document.getElementById('text').value;
+        if (!text) { alert('请输入文字内容'); return; }
+        submitJob('/tts/process', {
+            text: text,
+            filename: document.getElementById('filename').value || 'output.wav',
+            temperature: document.getElementById('temperature').value,
+            target_language: document.getElementById('target_language').value,
+            cfg_weight: document.getElementById('cfg_weight').value,
+            exaggeration: document.getElementById('exaggeration').value,
+        }, 'checkLink', '/tts');
+    } else {
+        var fileInput = document.getElementById('file');
+        if (!fileInput.files || !fileInput.files[0]) {
+            alert('请选择要上传的文件'); return;
         }
-
-        var data = await response.json();
-
-        if (response.status === 401) {
-            alert('请先登录后再使用语音合成功能');
-            window.location.href = '/auth/login?next=' + encodeURIComponent('/tts');
-            overlay.classList.remove('active');
-            return;
-        }
-
-        if (!response.ok || data.error) {
-            alert('Error: ' + (data.error || 'Unknown error'));
-            overlay.classList.remove('active');
-            return;
-        }
-
-        overlay.classList.remove('active');
-        showResult(data.access_code, '/result?code=' + data.access_code, 'checkLink');
-
-    } catch (err) {
-        alert('Error: ' + err.message);
-        overlay.classList.remove('active');
+        var fd = new FormData();
+        fd.append('file', fileInput.files[0]);
+        fd.append('temperature', document.getElementById('temperature').value);
+        fd.append('target_language', document.getElementById('target_language').value);
+        fd.append('cfg_weight', document.getElementById('cfg_weight').value);
+        fd.append('exaggeration', document.getElementById('exaggeration').value);
+        fd.append('filename', document.getElementById('filename').value || 'output.wav');
+        submitJob('/audio/process', fd, 'checkLink', '/tts');
     }
+
+    document.getElementById('downloadBtn').onclick = function() {
+        window.location.href = '/result?code=' + document.getElementById('accessCode').textContent;
+    };
 });
     </script>
 </body>

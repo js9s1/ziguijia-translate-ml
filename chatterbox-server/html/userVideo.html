@@ -72,8 +72,6 @@
 
         document.getElementById('videoForm').addEventListener('submit', function(e) {
             e.preventDefault();
-            var overlay = document.getElementById('loadingOverlay');
-            overlay.classList.add('active');
             var formData = new FormData();
             formData.append('video_file', document.getElementById('video_file').files[0]);
             formData.append('mode', document.getElementById('mode').value);
@@ -96,23 +94,7 @@
                 url = '/video/custom/process';
             }
 
-            fetch(url, { method: 'POST', body: formData })
-            .then(function(response) {
-                if (response.status === 401) {
-                    overlay.classList.remove('active');
-                    alert('请先登录');
-                    window.location.href = '/auth/login?next=' + encodeURIComponent('/video/custom');
-                    return;
-                }
-                return response.json();
-            })
-            .then(function(data) {
-                if (!data) return;
-                overlay.classList.remove('active');
-                if (data.error) { alert('错误: ' + data.error); return; }
-                showResult(data.access_code, '/result?code=' + data.access_code, 'checkProgressLink');
-            })
-            .catch(function(err) { overlay.classList.remove('active'); alert('错误: ' + err.message); });
+            submitJob(url, formData, 'checkProgressLink', '/video/custom');
         });
     </script>
     <script src="/auth.js"></script>

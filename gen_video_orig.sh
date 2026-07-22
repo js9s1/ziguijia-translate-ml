@@ -39,7 +39,7 @@ echo "Step 1: Generating audio from SRT..."
 PYTHONUNBUFFERED=1 ${HOME}/.pyenv/versions/3.11.14/bin/python3.11 ${HOME}/子归家/code_ml/gen_audio.py "$SRT_FILE" --audio_prompt ${HOME}/子归家/assets/std_ning.wav --output_dir "$AUDIO_DIR" --output_srt output_adjusted.srt --output_wav output.wav --changed_json changed_segments.json --temperature "$TEMPERATURE" --target_language "$TARGET_LANGUAGE" --cfg_weight "$CFG_WEIGHT" --exaggeration "$EXAGGERATION"
 if [ $? -ne 0 ]; then echo "Error: gen_audio.py failed"; exit 1; fi
 echo "Step 2: Downloading video..."
-/usr/bin/python3 ${HOME}/子归家/pre-process/download_orig.py "$NUMBER" "$OUTPUT_DIR"
+/usr/bin/python3 ${HOME}/子归家/pre-process/download_orig.py "$NUMBER" "$OUTPUT_DIR" --codec "${CODEC:-mp4}"
 if [ $? -ne 0 ]; then echo "Error: download_orig.py failed"; exit 1; fi
 echo "Step 3: Processing video with stretched segments..."
 VIDEO_FILE="$OUTPUT_DIR/${NUMBER}.mp4"

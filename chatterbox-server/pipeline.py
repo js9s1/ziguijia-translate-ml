@@ -2,11 +2,10 @@
 
 Checkpoint-aware wrappers
 -------------------------
-``run_audio_ckpt`` and ``run_video_ckpt`` combine the pipeline subprocess
-invocation with a ``CheckpointHelper`` check-skip-mark cycle and fallback
-path construction.  Every checkpoint-using job handler (``_run_video_auto_job``,
-``_run_video_ocr_job``, ``_run_video_ning_ocr_job``) delegates to these
-instead of repeating the same boilerplate.
+``run_audio_ckpt``, ``run_video_ckpt``, ``run_download_ckpt``, ``run_ocr_ckpt``,
+``run_translate_ckpt``, ``run_extract_audio_ckpt``, and ``run_whisper_ckpt``
+combine subprocess invocation with ``CheckpointHelper`` check-skip-mark cycles
+so every job handler delegates to these instead of repeating boilerplate.
 """
 
 import json
@@ -22,6 +21,12 @@ from config import (
     GEN_AUDIO_SCRIPT,
     GEN_VIDEO_SCRIPT,
     AUDIO_PROMPT_PATH,
+    PROJECT_ROOT,
+    RAPID_VIDEOCR_PIPELINE_SCRIPT,
+    RAPID_VIDEOCR_BIN,
+    WHISPER_MODEL,
+    WHISPER_OV_DEVICE,
+    LANG_MAP,
 )
 
 
@@ -40,6 +45,7 @@ def run_gen_audio_step(
     output_srt: str = "output_adjusted.srt",
     output_wav: str = "output.wav",
     changed_json: str = "changed_segments.json",
+    timeout: float = 86400,  # 24 h safety limit — GPU hangs should not block the queue forever
 ) -> dict[str, str]:
     """Run the gen_audio.py subprocess and return paths to generated files.
     Progress is updated every 30 seconds while waiting.
@@ -48,7 +54,7 @@ def run_gen_audio_step(
         dict with keys: output_srt_path, output_wav_path, changed_json_path
 
     Raises:
-        RuntimeError if the subprocess fails or output files are missing.
+        RuntimeError if the subprocess fails, times out, or output files are missing.
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -99,6 +105,13 @@ def run_gen_audio_step(
                 break
             except subprocess.TimeoutExpired:
                 elapsed = int(time.monotonic() - start)
+                if elapsed > timeout:
+                    process.kill()
+                    process.wait()
+                    raise RuntimeError(
+                        f"gen_audio timed out after {elapsed // 3600}h "
+                        f"(GPU may be hung — try restarting the server)"
+                    )
                 get_job_queue().update_job_progress(
                     access_code,
                     f"正在合成音频... ({elapsed // 60}分{elapsed % 60}秒)"
@@ -136,6 +149,7 @@ def run_gen_video_step(
     output_path: str,
     access_code: str,
     blur: bool = False,
+    timeout: float = 43200,  # 12 h safety limit
 ):
     """Run the gen_video.py subprocess to produce the final video.
 
@@ -180,6 +194,12 @@ def run_gen_video_step(
                 break
             except subprocess.TimeoutExpired:
                 elapsed = int(time.monotonic() - start)
+                if elapsed > timeout:
+                    process.kill()
+                    process.wait()
+                    raise RuntimeError(
+                        f"gen_video timed out after {elapsed // 3600}h"
+                    )
                 get_job_queue().update_job_progress(
                     access_code,
                     f"正在合成视频... ({elapsed // 60}分{elapsed % 60}秒)"
@@ -290,6 +310,206 @@ def run_video_ckpt(
     # Copy the adjusted SRT to the output directory so it's visible
     # in the file browser without navigating into audio_tracks/.
     shutil.copy2(audio_out["output_srt_path"], output_dir)
+
+
+# ── Download step ───────────────────────────────────────
+
+
+def run_download_ckpt(
+    video_number: str,
+    output_dir: str,
+    access_code: str,
+    ckpt,
+    proc_log,
+    job_data: dict,
+) -> str:
+    """Download original video (or use cached copy). Returns the video path.
+
+    Checkpoint-aware: skips if ``"download"`` is already marked.
+    """
+    video_path = os.path.join(output_dir, f"{video_number}.mp4")
+    if ckpt and ckpt.done("download"):
+        job_log(access_code, output_dir, "  ↪ download already done, skipping")
+        return video_path
+
+    cached_path = job_data.get("cached_path")
+    if cached_path and os.path.isfile(cached_path):
+        job_log(access_code, output_dir, f"Using cached video: {cached_path}")
+        shutil.copy2(cached_path, video_path)
+    else:
+        job_log(access_code, output_dir, "Downloading original video...")
+        download_script = os.path.join(PROJECT_ROOT, "..", "pre-process", "download_orig.py")
+        codec = job_data.get("codec", "mp4")
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            result = subprocess.run(
+                [PYTHON_BIN, download_script, video_number, output_dir, "--codec", codec],
+                stdout=proc_log, stderr=proc_log, timeout=3600,
+            )
+            if result.returncode == 0 and os.path.exists(video_path):
+                break
+            if attempt < max_attempts:
+                job_log(access_code, output_dir,
+                        f"Download failed, retrying ({attempt}/{max_attempts})...")
+                time.sleep(20)
+
+    if not os.path.exists(video_path):
+        raise RuntimeError(f"Downloaded video not found: {video_path}")
+    if ckpt:
+        ckpt.mark("download")
+    return video_path
+
+
+# ── OCR step ─────────────────────────────────────────────
+
+
+def run_ocr_ckpt(
+    video_path: str,
+    output_dir: str,
+    access_code: str,
+    ckpt,
+    proc_log,
+    ocr_srt_name: str = "ocr_screen.srt",
+) -> str:
+    """Run RapidVideOCR pipeline. Returns path to the generated SRT.
+
+    Checkpoint-aware: skips if ``"ocr"`` is already marked.
+    """
+    ocr_srt = os.path.join(output_dir, ocr_srt_name)
+    if ckpt and ckpt.done("ocr"):
+        job_log(access_code, output_dir, "  ↪ OCR already done, skipping")
+        return ocr_srt
+
+    job_log(access_code, output_dir, "Running RapidVideOCR pipeline...")
+    frames_dir = os.path.join(output_dir, "frames")
+    subprocess.run(
+        ["/usr/bin/bash", RAPID_VIDEOCR_PIPELINE_SCRIPT, "-i", video_path,
+         "-o", ocr_srt, "-d", frames_dir],
+        stdout=proc_log, stderr=proc_log, timeout=14400,
+        env={**os.environ, "RAPID_VIDEOCR_BIN": RAPID_VIDEOCR_BIN},
+    )
+    if not os.path.exists(ocr_srt):
+        raise RuntimeError("RapidVideOCR pipeline failed to generate SRT")
+    if ckpt:
+        ckpt.mark("ocr")
+    return ocr_srt
+
+
+# ── Translate step ───────────────────────────────────────
+
+
+def run_translate_ckpt(
+    input_srt: str,
+    output_dir: str,
+    access_code: str,
+    ckpt,
+    proc_log,
+    log_file: str,
+    target_language: str,
+    translated_name: str = "translated.srt",
+    intro_marker: str | None = None,
+    outro_marker: str | None = None,
+) -> str:
+    """Translate an SRT file via HY-MT. Returns path to translated SRT.
+
+    Checkpoint-aware: skips if ``"translate"`` is already marked.
+    """
+    translated_srt = os.path.join(output_dir, translated_name)
+    if ckpt and ckpt.done("translate"):
+        job_log(access_code, output_dir, "  ↪ translation already done, skipping")
+        return translated_srt
+
+    job_log(access_code, output_dir, "Translating subtitles..."
+            + (" (intro/outro auto-detected)" if intro_marker or outro_marker else ""))
+    target_language_name = LANG_MAP.get(target_language, target_language)
+
+    # Defer import to avoid circular dependency with video_util
+    from video_util import translate_srt_file
+    translate_srt_file(input_srt, translated_srt, access_code, output_dir,
+                       target_language_name, proc_log, log_file,
+                       intro_marker=intro_marker, outro_marker=outro_marker)
+    if ckpt:
+        ckpt.mark("translate")
+    return translated_srt
+
+
+# ── Extract-audio step ───────────────────────────────────
+
+
+def run_extract_audio_ckpt(
+    video_file: str,
+    output_dir: str,
+    access_code: str,
+    ckpt,
+    proc_log,
+    audio_name: str = "audio.wav",
+) -> str:
+    """Extract audio from a video file via ffmpeg. Returns path to the wav.
+
+    Checkpoint-aware: skips if ``"extract_audio"`` is already marked.
+    """
+    audio_path = os.path.join(output_dir, audio_name)
+    if ckpt and ckpt.done("extract_audio"):
+        job_log(access_code, output_dir, "  ↪ extract_audio already done, skipping")
+        return audio_path
+
+    job_log(access_code, output_dir, "Extracting audio from video...")
+    subprocess.run(
+        ["ffmpeg", "-i", video_file, "-vn", "-acodec", "pcm_s16le",
+         "-ar", "16000", "-ac", "1", audio_path, "-y"],
+        stdout=proc_log, stderr=proc_log, timeout=3600,
+    )
+    if ckpt:
+        ckpt.mark("extract_audio")
+    return audio_path
+
+
+# ── Whisper step ─────────────────────────────────────────
+
+
+def run_whisper_ckpt(
+    audio_path: str,
+    output_dir: str,
+    access_code: str,
+    ckpt,
+    proc_log,
+    whisper_srt_name: str = "whisper.srt",
+) -> str:
+    """Run whisper-cli speech recognition. Returns path to the generated SRT.
+
+    Checkpoint-aware: skips if ``"whisper"`` is already marked.
+    """
+    whisper_srt = os.path.join(output_dir, whisper_srt_name)
+    if ckpt and ckpt.done("whisper"):
+        job_log(access_code, output_dir, "  ↪ whisper already done, skipping")
+        return whisper_srt
+
+    job_log(access_code, output_dir,
+            f"Running whisper speech recognition (OpenVINO device={WHISPER_OV_DEVICE})...")
+    subprocess.run(
+        ["whisper-cli", "-m", WHISPER_MODEL, "-f", audio_path,
+         "-osrt", "-of", whisper_srt.replace(".srt", ""), "-l", "zh",
+         "-oved", WHISPER_OV_DEVICE],
+        stdout=proc_log, stderr=proc_log, timeout=7200,
+    )
+    if not os.path.exists(whisper_srt):
+        raise RuntimeError("Whisper failed to generate SRT")
+    if ckpt:
+        ckpt.mark("whisper")
+    return whisper_srt
+
+
+# ── adjust_original_audio helper ─────────────────────────
+
+
+def _adjust_original_audio_nonfatal(video_path, translated_srt, audio_out, output_dir, access_code):
+    """Call adjust_original_audio, logging a warning on failure (non-fatal)."""
+    try:
+        adjust_original_audio(video_path, translated_srt,
+                              audio_out["output_srt_path"], output_dir,
+                              access_code=access_code)
+    except Exception:
+        job_log(access_code, output_dir, "Warning: zh audio adjustment failed (non-fatal)")
 
 
 # ── Original zh audio adjustment ────────────────────────────
