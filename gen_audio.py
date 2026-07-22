@@ -115,15 +115,26 @@ def _check_cache(cache, seg_idx, clean_content, output_dir):
     """In-memory cache lookup.  Returns (is_hit, wav_duration).
 
     A hit requires the WAV file on disk *and* the content to match.
+
+    If a WAV exists but no cache entry (e.g. crash recovery), the WAV is
+    reused and a cache entry is created on the fly.
     """
-    if not os.path.exists(_combined_seg_path(output_dir, seg_idx)):
+    wav_path = _combined_seg_path(output_dir, seg_idx)
+    if not os.path.exists(wav_path):
         return False, 0.0
     seg_cache = cache.get(str(seg_idx))
-    if not seg_cache:
+    if seg_cache:
+        if seg_cache.get("content") == clean_content:
+            return True, seg_cache.get("duration", 0.0)
         return False, 0.0
-    if seg_cache.get("content") == clean_content:
-        return True, seg_cache.get("duration", 0.0)
-    return False, 0.0
+    # WAV exists but no cache entry — recover orphaned WAV from crash
+    try:
+        info = sf.info(wav_path)
+        _set_cache(cache, seg_idx, clean_content, info.duration)
+        _save_cache(output_dir, cache)
+        return True, info.duration
+    except Exception:
+        return False, 0.0
 
 
 def _set_cache(cache, seg_idx, clean_content, wav_duration):
@@ -396,8 +407,9 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
 
             save_audio(seg_wav_path, combined_wav, sample_rate)
 
-            # Update in-memory cache
+            # Update in-memory cache and persist immediately
             _set_cache(cache, i, clean_content, total_wav_duration)
+            _save_cache(output_dir, cache)
 
         new_start = orig_start + accumulated_offset
         duration_diff = total_wav_duration - orig_duration

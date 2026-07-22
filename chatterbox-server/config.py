@@ -115,3 +115,6 @@ CHECKPOINT_ORDER = [
     "download", "decompress", "trim", "extract_audio",
     "whisper", "ocr", "translate", "audio", "video",
 ]
+
+MARKER_INTRO = "杨宁随缘开示"
+MARKER_OUTRO = "子归家全体编制人员"

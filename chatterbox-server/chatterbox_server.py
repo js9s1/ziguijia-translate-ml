@@ -64,6 +64,25 @@ _ip_limiter = InMemoryRateLimiter(RATE_LIMIT_MAX, RATE_LIMIT_WINDOW)
 _email_limiter = InMemoryRateLimiter(EMAIL_RATE_LIMIT_MAX, EMAIL_RATE_LIMIT_WINDOW)
 
 
+def _check_rate_limit(key: str, max_count: int, window: int, limiter: InMemoryRateLimiter) -> bool:
+    """Check a rate limit: tries Redis first, falls back to in-memory.
+
+    Returns True if the request is within the limit, False if exceeded.
+    """
+    r = get_redis()
+    if r is not None:
+        try:
+            pipe = r.pipeline()
+            pipe.incr(key)
+            pipe.expire(key, window)
+            count, _ = pipe.execute()
+            return count <= max_count
+        except valkey.ValkeyError:
+            pass  # fall through to in-memory
+
+    return limiter.check(key)
+
+
 def rate_limit(f):
     """Rate limiter: uses Redis when available, in-memory fallback otherwise."""
     @wraps(f)
@@ -71,23 +90,7 @@ def rate_limit(f):
         ip = request.remote_addr or "unknown"
         key = f"rl:ip:{ip}"
 
-        # Try Redis first
-        r = get_redis()
-        if r is not None:
-            try:
-                pipe = r.pipeline()
-                pipe.incr(key)
-                pipe.expire(key, RATE_LIMIT_WINDOW)
-                count, _ = pipe.execute()
-                if count > RATE_LIMIT_MAX:
-                    logger.warning(f"Rate limit exceeded for IP {ip}")
-                    return jsonify({"error": "请求过于频繁，请稍后再试"}), 429
-                return f(*args, **kwargs)
-            except valkey.ValkeyError:
-                pass  # fall through to in-memory
-
-        # In-memory fallback (Valkey unavailable or errored)
-        if not _ip_limiter.check(ip):
+        if not _check_rate_limit(key, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW, _ip_limiter):
             logger.warning(f"Rate limit exceeded for IP {ip}")
             return jsonify({"error": "请求过于频繁，请稍后再试"}), 429
         return f(*args, **kwargs)
@@ -95,29 +98,10 @@ def rate_limit(f):
 
 
 def email_rate_limit(email: str) -> tuple[bool, str]:
-    """Check per-email rate limit for password reset. Returns (allowed, error_message).
-
-    Tries Redis first, falls back to in-memory when Redis is down.
-    """
+    """Check per-email rate limit for password reset. Returns (allowed, error_message)."""
     key = f"rl:email:{email}"
 
-    # Try Redis first
-    r = get_redis()
-    if r is not None:
-        try:
-            pipe = r.pipeline()
-            pipe.incr(key)
-            pipe.expire(key, EMAIL_RATE_LIMIT_WINDOW)
-            count, _ = pipe.execute()
-            if count > EMAIL_RATE_LIMIT_MAX:
-                logger.warning(f"Email rate limit exceeded for {email}")
-                return False, "该邮箱的密码重置请求过于频繁，请稍后再试"
-            return True, ""
-        except valkey.ValkeyError:
-            pass  # fall through to in-memory
-
-    # In-memory fallback
-    if not _email_limiter.check(email):
+    if not _check_rate_limit(key, EMAIL_RATE_LIMIT_MAX, EMAIL_RATE_LIMIT_WINDOW, _email_limiter):
         logger.warning(f"Email rate limit exceeded for {email}")
         return False, "该邮箱的密码重置请求过于频繁，请稍后再试"
 
@@ -784,6 +768,38 @@ def _build_cached_response(find_cached_func, number) -> dict | None:
     }
 
 
+def _video_process_with_cache(
+    number: str, find_cached_func, process_func,
+    blur: str, extra_process_kwargs: dict | None = None,
+):
+    """Handle the cached-video check → process flow, used by ning video endpoints.
+
+    Returns a Flask response (jsonify dict) ready to return from the route.
+    """
+    cached_path = request.form.get("cached_path", "")
+    if cached_path:
+        kwargs = {"cached_path": cached_path}
+        if extra_process_kwargs:
+            kwargs.update(extra_process_kwargs)
+        return process_func(**kwargs)
+
+    no_cache_check = request.form.get("no_cache_check", "false") == "true"
+    if no_cache_check:
+        kwargs = {}
+        if extra_process_kwargs:
+            kwargs.update(extra_process_kwargs)
+        return process_func(**kwargs)
+
+    cached_resp = _build_cached_response(find_cached_func, number)
+    if cached_resp is not None:
+        return cached_resp
+
+    kwargs = {}
+    if extra_process_kwargs:
+        kwargs.update(extra_process_kwargs)
+    return process_func(**kwargs)
+
+
 # ═══════════════════════════════════════════
 # Video pages and processing
 # ═══════════════════════════════════════════
@@ -812,26 +828,15 @@ def video_ning_process():
         find_cached = _lazy("video_ning_job", "_find_cached_video")
         blur = request.form.get("blur", "yes")
 
-        cached_path = request.form.get("cached_path", "")
-        if cached_path:
-            result = process_video_ning(number, srt_file, params["temperature"], session["user_id"], blur,
-                                        target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"],
-                                        cached_path=cached_path)
-            return jsonify(result)
+        def _process(**kwargs):
+            return jsonify(process_video_ning(
+                number, srt_file, params["temperature"], session["user_id"], blur,
+                target_language=params["target_language"],
+                cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"],
+                **kwargs,
+            ))
 
-        no_cache_check = request.form.get("no_cache_check", "false") == "true"
-        if no_cache_check:
-            result = process_video_ning(number, srt_file, params["temperature"], session["user_id"], blur,
-                                        target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"])
-            return jsonify(result)
-
-        cached_resp = _build_cached_response(find_cached, number)
-        if cached_resp is not None:
-            return jsonify(cached_resp)
-
-        result = process_video_ning(number, srt_file, params["temperature"], session["user_id"], blur,
-                                    target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"])
-        return jsonify(result)
+        return _video_process_with_cache(number, find_cached, _process, blur)
     except Exception as e:
         logger.error(f"Error processing video: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -852,30 +857,15 @@ def video_ning_ocr_process():
         find_cached = _lazy("video_ning_job", "_find_cached_video")
         blur = request.form.get("blur", "yes")
 
-        # Check if user already decided to use a cached file
-        cached_path = request.form.get("cached_path", "")
-        if cached_path:
-            result = process_video_ning_ocr(number, params["temperature"], session["user_id"], blur,
-                                            target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"],
-                                            cached_path=cached_path)
-            return jsonify(result)
+        def _process(**kwargs):
+            return jsonify(process_video_ning_ocr(
+                number, params["temperature"], session["user_id"], blur,
+                target_language=params["target_language"],
+                cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"],
+                **kwargs,
+            ))
 
-        # Check if user explicitly said to ignore cache
-        no_cache_check = request.form.get("no_cache_check", "false") == "true"
-        if no_cache_check:
-            result = process_video_ning_ocr(number, params["temperature"], session["user_id"], blur,
-                                            target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"])
-            return jsonify(result)
-
-        # First-time submission: check for cached video files
-        cached_resp = _build_cached_response(find_cached, number)
-        if cached_resp is not None:
-            return jsonify(cached_resp)
-
-        # No cached file found — proceed normally
-        result = process_video_ning_ocr(number, params["temperature"], session["user_id"], blur,
-                                        target_language=params["target_language"], cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"])
-        return jsonify(result)
+        return _video_process_with_cache(number, find_cached, _process, blur)
     except Exception as e:
         logger.error(f"Error OCR processing ning video: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -946,9 +936,11 @@ def _validate_video_codec(content: bytes):
             fps = float(num) / float(den) if float(den) != 0 else 0
         except (ValueError, ZeroDivisionError):
             fps = 0
-        if fps != 24:
-            raise ValueError(
-                "Please convert the video framerate to 24 fps before processing.")
+        # FIXME: Temporarily disabled 24 fps requirement — some uploaded videos
+        # have non-standard framerates. The gen_video.py pipeline can handle them.
+        # if fps != 24:
+        #     raise ValueError(
+        #         "Please convert the video framerate to 24 fps before processing.")
     finally:
         try:
             os.unlink(tmp.name)
@@ -957,26 +949,22 @@ def _validate_video_codec(content: bytes):
 
 
 def _validate_srt_language(text: str):
-    import re
-    scripts = {
-        "CJK": re.compile(r'[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]'),
-        "Latin": re.compile(r'[a-zA-Z]'),
-        "Cyrillic": re.compile(r'[\u0400-\u04ff]'),
-        "Arabic": re.compile(r'[\u0600-\u06ff]'),
-        "Devanagari": re.compile(r'[\u0900-\u097f]'),
-        "Thai": re.compile(r'[\u0e00-\u0e7f]'),
-    }
+    """Validate that an SRT file is not mixed-language.
+
+    Uses shared Unicode script ranges from language_utils.
+    """
+    from language_utils import UNICODE_SCRIPTS
     lines = text.splitlines()
     found_scripts = set()
     for line in lines:
         stripped = line.strip()
         if not stripped:
             continue
-        if re.match(r'^\d+$', stripped):
+        if stripped.isdigit():
             continue
         if '-->' in stripped:
             continue
-        for name, pattern in scripts.items():
+        for name, pattern in UNICODE_SCRIPTS.items():
             if pattern.search(stripped):
                 found_scripts.add(name)
         if len(found_scripts) > 1:
@@ -1197,6 +1185,48 @@ def auth_reset_password_confirm():
         return jsonify({"success": False, "error": "请填写所有字段"})
     result = get_user_manager().reset_password(email, code, new_password)
     return jsonify(result)
+
+
+# ═══════════════════════════════════════════
+# Shared API endpoints
+# ═══════════════════════════════════════════
+
+@app.route("/api/languages", methods=["GET"])
+def api_languages():
+    """Return available target languages (consolidated from config.LANG_MAP)."""
+    from config import LANG_MAP
+
+    # Sort by language code for deterministic output
+    return jsonify({
+        "languages": [
+            {"code": code, "name": name}
+            for code, name in sorted(LANG_MAP.items())
+        ],
+    })
+
+
+@app.route("/api/jobs/<access_code>/status", methods=["GET"])
+def api_job_status(access_code):
+    """Generic job status lookup — replaces /tts/status/<code> and /srt/status/<code>."""
+    status = get_job_queue().get_status(access_code)
+    if not status:
+        return jsonify({"error": "Job not found"}), 404
+    return jsonify(status)
+
+
+@app.route("/api/jobs/<access_code>/resubmit", methods=["POST"])
+@login_required
+@csrf_required
+def api_job_resubmit(access_code):
+    """Generic job resubmit endpoint."""
+    try:
+        result = get_job_queue().resubmit_job(access_code)
+        if result["success"]:
+            return jsonify(result)
+        return jsonify(result), 400
+    except Exception as e:
+        logger.error(f"Error resubmitting job {access_code}: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
 
 
 # ═══════════════════════════════════════════
@@ -1549,25 +1579,16 @@ _SRT_LIST_TEMPLATE = jinja2.Template(r"""<!DOCTYPE html>
             if (!files.length) return;
             this.disabled = true;
             this.textContent = '压缩中...';
-            fetch('/api/oldrun-srt/download', {
+            downloadFile('/api/oldrun-srt/download', 'srts.zip', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({files: files})
-            }).then(function(r) {
-                if (!r.ok) throw new Error(r.statusText);
-                return r.blob();
-            }).then(function(blob) {
-                var a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                a.download = 'srts.zip';
-                a.click();
-                URL.revokeObjectURL(a.href);
-            }).catch(function(e) {
-                alert('下载失败: ' + e.message);
-            }).finally(function() {
-                this.textContent = filtered.length < DATA.length ? '下载过滤' : '下载全部';
-                this.disabled = false;
-            }.bind(this));
+            });
+            var btn = this;
+            setTimeout(function() {
+                btn.textContent = filtered.length < DATA.length ? '下载过滤' : '下载全部';
+                btn.disabled = false;
+            }, 1000);
         });
 
         document.getElementById('pager').addEventListener('click', function(e) {
