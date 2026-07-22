@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="/ning.css">
+    <style>
+        .srt-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 1px;
+            background: #222;
+            border: 1px solid #333;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .srt-cell {
+            padding: 6px 8px;
+            background: #1a1a2e;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .srt-cell a {
+            color: #ccc;
+            text-decoration: none;
+            font-family: monospace;
+            font-size: 0.95em;
+        }
+        .srt-cell:hover { background: #2a2a4a; }
+        .srt-cell:hover a { color: #fff; }
+        #searchBox:focus { border-color: #2196F3; }
+        #pageInfo { color: #888; font-size: 0.98em; }
+        .pager-btn {
+            display: inline-block;
+            padding: 4px 10px;
+            margin: 0 2px;
+            color: #2196F3;
+            text-decoration: none;
+            border: 1px solid #333;
+            border-radius: 3px;
+            font-size: 0.98em;
+            background: #1a1a2e;
+            cursor: pointer;
+        }
+        .pager-btn:hover { background: #2a2a4a; }
+        .pager-btn.active { background: #2196F3; color: #fff; border-color: #2196F3; }
+        .pager-btn.disabled { color: #555; cursor: default; pointer-events: none; }
+        .srt-lang-dropdown:hover .srt-lang-menu { display: block !important; }
+        .srt-lang-menu .srt-item { display:block;padding:6px 12px;color:#ccc;text-decoration:none;font-size:0.98em;white-space:nowrap; }
+        .srt-lang-menu .srt-item:hover { background:#333;color:#fff; }
+    </style>
+</head>
+<body>
+    <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="display:flex;align-items:center;gap:12px;">
+            <a href="/" class="back-link">&larr; 返回首页</a>
+            <div class="srt-lang-dropdown" style="position:relative;">
+                <a href="#" class="srt-lang-toggle" style="color:#2196F3;text-decoration:none;font-size:0.98em;cursor:pointer;">{{ flag }} {{ lang }} ▾</a>
+                <div class="srt-lang-menu" style="display:none;position:absolute;top:100%;left:0;background:#1e1e2e;border:1px solid #444;border-radius:4px;min-width:90px;z-index:1000;box-shadow:0 2px 8px rgba(0,0,0,0.4);">
+{% for opt in lang_options %}
+                    <a href="{{ opt.url }}" class="srt-item">{{ opt.flag }} {{ opt.label }}</a>
+{% endfor %}
+                </div>
+            </div>
+        </div>
+        <div id="userArea" style="font-size:0.9em;"></div>
+    </div>
+    <div class="container">
+        <h1>{{ title }}</h1>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+            <div id="pageInfo" style="color:#888;font-size:0.85em;"></div>
+            <div style="display:flex;align-items:stretch;gap:0;flex-shrink:0;">
+                <input type="text" id="searchBox" placeholder="输入编号过滤..." style="width:200px;height:32px;padding:0 10px;border:1px solid #555;border-right:none;border-radius:4px 0 0 4px;background:#1a1a2e;color:#ccc;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;">
+                <button id="downloadBtn" style="height:32px;padding:0 12px;border:1px solid #555;border-left:none;border-radius:0 4px 4px 0;background:#2196F3;color:#fff;cursor:pointer;font-size:13px;font-family:inherit;box-sizing:border-box;white-space:nowrap;">下载全部</button>
+            </div>
+        </div>
+        <div id="srtGrid"></div>
+        <div id="pager" style="text-align:center;margin-top:20px;"></div>
+    </div>
+    <script>
+    (function() {
+        var DATA = {{ data_json }};
+        var PER_PAGE = 150;
+
+        var filtered = DATA;
+        var page = 1;
+
+        function filterData(term) {
+            if (!term) return DATA;
+            return DATA.filter(function(f) { return f.name.indexOf(term) !== -1; });
+        }
+
+        function render() {
+            var totalPages = Math.ceil(filtered.length / PER_PAGE) || 1;
+            if (page > totalPages) page = totalPages;
+            var start = (page - 1) * PER_PAGE;
+            var items = filtered.slice(start, start + PER_PAGE);
+
+            document.getElementById('pageInfo').textContent =
+                '共 ' + filtered.length + ' 个文件' +
+                (filtered.length !== DATA.length ? ' (已过滤，全部 ' + DATA.length + ' 个)' : '');
+
+            var grid = document.createElement('div');
+            grid.className = 'srt-grid';
+            for (var i = 0; i < PER_PAGE; i++) {
+                var cell = document.createElement('div');
+                cell.className = 'srt-cell';
+                if (i < items.length) {
+                    cell.innerHTML = '<a href="/srt-view?path=' + encodeURIComponent(items[i].path) + '" target="_blank">' + items[i].name + '</a>';
+                }
+                grid.appendChild(cell);
+            }
+            document.getElementById('srtGrid').innerHTML = '';
+            document.getElementById('srtGrid').appendChild(grid);
+            renderPager(totalPages);
+        }
+
+        function renderPager(totalPages) {
+            var pager = document.getElementById('pager');
+            if (totalPages <= 1) { pager.innerHTML = ''; return; }
+            var h = '';
+            h += '<span class="pager-btn' + (page <= 1 ? ' disabled' : '') + '" data-p="' + (page - 1) + '">上一页</span>';
+            var from = Math.max(1, page - 5), to = Math.min(totalPages, page + 5);
+            if (from > 1) { h += '<span class="pager-btn" data-p="1">1</span>'; if (from > 2) h += '<span class="pager-btn disabled">...</span>'; }
+            for (var p = from; p <= to; p++) {
+                h += '<span class="pager-btn' + (p === page ? ' active' : '') + '" data-p="' + p + '">' + p + '</span>';
+            }
+            if (to < totalPages) { if (to < totalPages-1) h += '<span class="pager-btn disabled">...</span>'; h += '<span class="pager-btn" data-p="' + totalPages + '">' + totalPages + '</span>'; }
+            h += '<span class="pager-btn' + (page >= totalPages ? ' disabled' : '') + '" data-p="' + (page + 1) + '">下一页</span>';
+            pager.innerHTML = h;
+        }
+
+        document.getElementById('searchBox').addEventListener('input', function() {
+            filtered = filterData(this.value);
+            page = 1;
+            render();
+            var btn = document.getElementById('downloadBtn');
+            btn.textContent = this.value.trim() ? '下载过滤' : '下载全部';
+        });
+
+        document.getElementById('downloadBtn').addEventListener('click', function() {
+            var files = (filtered.length && filtered.length < DATA.length) ? filtered : DATA;
+            if (!files.length) return;
+            this.disabled = true;
+            this.textContent = '压缩中...';
+            downloadFile('/api/oldrun-srt/download', 'srts.zip', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({files: files})
+            });
+            var btn = this;
+            setTimeout(function() {
+                btn.textContent = filtered.length < DATA.length ? '下载过滤' : '下载全部';
+                btn.disabled = false;
+            }, 1000);
+        });
+
+        document.getElementById('pager').addEventListener('click', function(e) {
+            var btn = e.target.closest('.pager-btn');
+            if (!btn || btn.classList.contains('active') || btn.classList.contains('disabled')) return;
+            page = parseInt(btn.getAttribute('data-p'));
+            render();
+        });
+
+        var langToggle = document.querySelector('.srt-lang-toggle');
+        var langMenu = document.querySelector('.srt-lang-menu');
+        if (langToggle && langMenu) {
+            langToggle.addEventListener('click', function(e) {
+                e.preventDefault();
+                langMenu.style.display = langMenu.style.display === 'block' ? 'none' : 'block';
+            });
+            document.addEventListener('click', function(e) {
+                if (!e.target.closest('.srt-lang-dropdown')) langMenu.style.display = 'none';
+            });
+        }
+        render();
+    })();
+    </script>
+    <script src="/utils.js"></script>
+    <script src="/auth.js"></script>
+</body>
+</html>

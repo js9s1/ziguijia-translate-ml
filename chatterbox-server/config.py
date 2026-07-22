@@ -93,9 +93,15 @@ SMTP_PASS = os.environ.get("SMTP_PASS", "")
 SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USER)
 
 # ── Valkey (Redis-compatible) ──────────────────────────────────
+# Prefer VALKEY_URL env var (full connection URL).
+# If not set, construct from host/port/db/password components —
+# this avoids embedding the password in a Python string that could
+# be logged or leaked.
+VALKEY_URL = os.environ.get("VALKEY_URL", "")
+VALKEY_HOST = os.environ.get("VALKEY_HOST", "localhost")
+VALKEY_PORT = int(os.environ.get("VALKEY_PORT", "6379"))
+VALKEY_DB = int(os.environ.get("VALKEY_DB", "0"))
 VALKEY_PASSWORD = os.environ.get("VALKEY_PASSWORD", "")
-_valkey_auth = f":{VALKEY_PASSWORD}@" if VALKEY_PASSWORD else ""
-VALKEY_URL = os.environ.get("VALKEY_URL", f"valkey://{_valkey_auth}localhost:6379/0")
 
 # ── SRT filename → checkpoint step mapping ─────────────────
 # Shared between jobqueue.py (clear_checkpoint_for_file) and

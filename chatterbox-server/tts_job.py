@@ -3,14 +3,15 @@
 import os
 import uuid
 
+from config import AUDIO_TRACKS_DIR
 from jobqueue import get_job_queue
 from log_utils import job_log
-from config import AUDIO_TRACKS_DIR
 
 
 def _run_tts_job(job_data: dict):
-    from audio_utils import NingAudio
     from contextlib import redirect_stdout
+
+    from audio_utils import NingAudio
 
     text = job_data["text"]
     output_dir = job_data["output_dir"]

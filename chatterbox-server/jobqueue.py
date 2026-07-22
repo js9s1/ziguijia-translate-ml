@@ -8,9 +8,9 @@ import sys as _sys
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from enum import Enum
 from queue import Queue
-from typing import Callable, Optional
 
 import psutil
 
@@ -28,10 +28,10 @@ try:
 except RuntimeError:
     pass  # already set in a parent context
 
-from db_schema import init_jobs_schema, ConnectionManager, JOB_COLUMNS
+from config import CHECKPOINT_ORDER, FILENAME_TO_CHECKPOINT_STEP
+from db_schema import JOB_COLUMNS, ConnectionManager, init_jobs_schema
 from redis_util import publish_job_status
 from singleton import singleton
-from config import FILENAME_TO_CHECKPOINT_STEP, CHECKPOINT_ORDER
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(BASE_DIR, "jobs.db")
@@ -60,7 +60,7 @@ def _extract_failure_reason(output_dir: str | None) -> str | None:
     if not os.path.isfile(log_path):
         return None
     try:
-        with open(log_path, "r", errors="replace") as f:
+        with open(log_path, errors="replace") as f:
             # Read the last ~8 KiB — enough for a traceback + surrounding context
             f.seek(0, os.SEEK_END)
             size = f.tell()
@@ -190,11 +190,49 @@ def _reset_gpu_state():
     except Exception as e:
         logger.warning("GPU state reset between jobs — error: %s", e)
 
+
+def _reset_gpu_state_cooldown(jq) -> bool:
+    """Conditionally reset GPU state with a 60 s cooldown.
+    Returns True if a reset was attempted.
+    """
+    now = time.monotonic()
+    if now - jq._last_gpu_reset_ts < 60:
+        return False
+    jq._last_gpu_reset_ts = now
+    _reset_gpu_state()
+    return True
+
 def _now_str() -> str:
     return time.strftime('%Y-%m-%d %H:%M:%S')
 
 # Worker thread heartbeat: if no pulse within this many seconds, consider it dead.
 _WORKER_HEARTBEAT_STALE = 30
+
+
+def _safe_close_proc(proc: multiprocessing.Process | None):
+    """Close a multiprocessing.Process to release OS resources.
+
+    Must be called after ``proc.join()`` regardless of whether the process
+    exited normally or was killed.  On POSIX, failing to close a non-daemon
+    Process leaks a pipe fd and keeps the process in the process table as
+    a zombie until the parent exits.
+    """
+    if proc is None:
+        return
+    try:
+        proc.close()
+    except Exception:
+        pass
+
+
+def _safe_close_psutil_procs(procs):
+    """Close psutil.Process objects to release their cached /proc handles."""
+    for p in procs:
+        try:
+            if isinstance(p, psutil.Process):
+                p.cmdline.cache_clear() if hasattr(p.cmdline, 'cache_clear') else None
+        except Exception:
+            pass
 
 
 # ── Handler registry ────────────────────────────────────────
@@ -238,7 +276,7 @@ class JobStatus(Enum):
     DELETED = "deleted"
 
 
-def _get_run_func(name: str) -> Optional[Callable]:
+def _get_run_func(name: str) -> Callable | None:
     """Lazily import and return a single job handler function.
 
     Uses ``importlib`` so only the module containing *name* is loaded.
@@ -288,14 +326,16 @@ class JobQueue:
     def __init__(self):
         self._conn = ConnectionManager(DB_FILE)
         self._queue = Queue()
-        self._worker_thread = None
+        self._worker_thread: threading.Thread | None = None
         self._cancel_event = threading.Event()
+        self._cancel_lock = threading.Lock()
         self._current_access_code: str | None = None
         self._running = False
         self._heartbeat_ts = 0.0
         self._graceful_shutdown = False
         self._shutdown_timeout = 60  # seconds to wait for current job
         self._shutdown_done = threading.Event()  # set when worker finishes
+        self._last_gpu_reset_ts = 0.0  # cooldown for _reset_gpu_state
         self._init_db()
         self._load_pending_jobs()
         if not _SKIP_QUEUE_INIT:
@@ -408,6 +448,7 @@ class JobQueue:
                     logger.warning("Orphan %d force-killed", p.pid)
                 except Exception:
                     pass
+            _safe_close_psutil_procs(killed_pids)
             logger.info(
                 "Cleaned up %d orphan subprocess(es) from previous server instance", len(killed_pids)
             )
@@ -419,7 +460,7 @@ class JobQueue:
     def _generate_access_code(self) -> str:
         return str(uuid.uuid4())[:8].upper()
 
-    def _find_failed_ocr_job(self, video_number: str, user_id: int) -> Optional[tuple[str, str]]:
+    def _find_failed_ocr_job(self, video_number: str, user_id: int) -> tuple[str, str] | None:
         """Return (access_code, output_dir) of a failed ning OCR job for the same video+user, if any."""
         conn = self._get_conn()
         row = conn.execute(
@@ -430,7 +471,7 @@ class JobQueue:
             return row[0], row[1]
         return None
 
-    def _find_failed_ning_job(self, video_number: str, user_id: int) -> Optional[tuple[str, str]]:
+    def _find_failed_ning_job(self, video_number: str, user_id: int) -> tuple[str, str] | None:
         """Return (access_code, output_dir) of a failed ning SRT-translate job for the same video+user, if any."""
         conn = self._get_conn()
         row = conn.execute(
@@ -474,8 +515,8 @@ class JobQueue:
             job_data.get("target_language", "en"),
             job_data.get("cfg_weight", 0.5),
             job_data.get("exaggeration", 0.5),
-            job_data.get("start_trim", None),
-            job_data.get("end_trim", None),
+            job_data.get("start_trim"),
+            job_data.get("end_trim"),
             job_data.get("cached_path"),
             job_data.get("filename"),
             prev_ckpt,
@@ -552,6 +593,10 @@ class JobQueue:
                 self._kill_processes_by_output_dir(output_dir, _sig.SIGKILL)
             proc.join(timeout=2)
 
+        # Release OS resources (pipe fd, process-table entry).
+        # Must be called after every proc.join() regardless of outcome.
+        _safe_close_proc(proc)
+
     def _close_conn(self):
         """Close the current thread-local DB connection, if open.
 
@@ -576,19 +621,27 @@ class JobQueue:
         if self._worker_thread is not None and not self._is_worker_healthy():
             logger.warning("Worker thread dead or stale — restarting")
             self._running = False
+            old_thread = self._worker_thread
             self._worker_thread = None
+            # Let the old thread exit cleanly (daemon thread won't block
+            # process shutdown, but joining prevents reference leaks)
+            try:
+                old_thread.join(timeout=5)
+            except RuntimeError:
+                pass  # thread not started or already joined
         if not self._running:
             self._running = True
             self._heartbeat_ts = time.monotonic()
             self._worker_thread = threading.Thread(
-                target=self._process_queue, daemon=True
+                target=self._process_queue, daemon=True,
+                name="jobqueue-worker",
             )
             self._worker_thread.start()
 
     def _process_queue(self):
         import queue as std_queue
         _last_orphan_check = time.monotonic()
-        _ORPHAN_CHECK_INTERVAL = 300  # every 5 minutes
+        _ORPHAN_CHECK_INTERVAL = 120  # every 2 minutes
         while self._running:
             self._heartbeat_ts = time.monotonic()
 
@@ -600,9 +653,10 @@ class JobQueue:
 
             if self._graceful_shutdown:
                 # Don't dequeue new jobs — let the current one finish, then exit
-                if self._current_access_code is not None:
-                    time.sleep(1)
-                    continue
+                with self._cancel_lock:
+                    if self._current_access_code is not None:
+                        time.sleep(1)
+                        continue
                 break
             try:
                 access_code = self._queue.get(timeout=1)
@@ -610,14 +664,23 @@ class JobQueue:
                 continue  # timeout, just re-check self._running
             except Exception:
                 continue
-            self._current_access_code = access_code
-            self._cancel_event.clear()
+            with self._cancel_lock:
+                self._current_access_code = access_code
+                self._cancel_event.clear()
             try:
                 self._process_job(access_code)
             except BaseException as e:
                 logger.exception(f"_process_job {access_code} raised {type(e).__name__}: {e}")
             finally:
-                self._current_access_code = None
+                with self._cancel_lock:
+                    self._current_access_code = None
+        # Drain the queue on exit so any remaining items don't block
+        # the queue's internal Condition and leak a thread reference.
+        while True:
+            try:
+                self._queue.get_nowait()
+            except std_queue.Empty:
+                break
         self._shutdown_done.set()
 
     def _process_job(self, access_code: str):
@@ -795,12 +858,17 @@ class JobQueue:
             conn.commit()
             publish_job_status(access_code, JobStatus.FAILED.value, error=str(e)[:500])
             logger.error(f"Job {access_code} handler error: {e}")
+        finally:
+            # Release OS resources — without this the child process remains
+            # as a zombie on POSIX, leaking a pipe fd and a process-table entry.
+            _safe_close_proc(proc)
 
         # ── GPU state reset between jobs ─────────────────────────
         # After any job finishes (success, failure, or cancellation),
         # reset the ROCm/HIP GPU driver state so the next job doesn't
         # inherit a degraded GPU from a long-running predecessor.
-        _reset_gpu_state()
+        # Cooldown prevents repeatedly probing a hung GPU.
+        _reset_gpu_state_cooldown(self)
 
         conn.commit()
 
@@ -1015,7 +1083,7 @@ class JobQueue:
         )
         conn.commit()
 
-    def get_status(self, access_code: str) -> Optional[dict]:
+    def get_status(self, access_code: str) -> dict | None:
         conn = self._get_conn()
         row = conn.execute(
             "SELECT access_code, status, error, output_dir, progress, target_language, created_at, temperature, cfg_weight, exaggeration, checkpoint, checkpoint_edited, edited_srt_files FROM jobs WHERE access_code = ?",
@@ -1084,7 +1152,8 @@ class JobQueue:
         if output_dir:
             # Kill any process whose cmdline references this output dir,
             # including subprocesses spawned by the job handler.
-            killed_pids = []
+            killed_pids = set()
+            killed_procs = []
             for proc in psutil.process_iter(['pid', 'cmdline']):
                 try:
                     if output_dir in ' '.join(proc.info['cmdline'] or []):
@@ -1094,7 +1163,8 @@ class JobQueue:
                             os.killpg(pgid, signal.SIGTERM)
                         except (ProcessLookupError, PermissionError, AttributeError):
                             proc.send_signal(signal.SIGTERM)
-                        killed_pids.append(proc.info['pid'])
+                        killed_pids.add(proc.info['pid'])
+                        killed_procs.append(proc)
                 except Exception:
                     pass
             if killed_pids:
@@ -1111,10 +1181,12 @@ class JobQueue:
                             p.kill()
                         except Exception:
                             pass
+                _safe_close_psutil_procs(killed_procs)
 
         # Signal the worker thread to skip completion logic
-        if access_code == self._current_access_code:
-            self._cancel_event.set()
+        with self._cancel_lock:
+            if access_code == self._current_access_code:
+                self._cancel_event.set()
 
         now = _now_str()
         conn.execute(
@@ -1145,7 +1217,7 @@ class JobQueue:
                 "SELECT checkpoint_edited FROM jobs WHERE access_code = ?", (access_code,)
             ).fetchone()
             if not ckpt_row or not ckpt_row[0]:
-                return {"success": False, "error": f"Job is completed, only failed, cancelled or checkpoint-edited jobs can be resubmitted"}
+                return {"success": False, "error": "Job is completed, only failed, cancelled or checkpoint-edited jobs can be resubmitted"}
         elif row[0] not in (JobStatus.FAILED.value, JobStatus.CANCELLED.value):
             return {"success": False, "error": f"Job is {row[0]}, only failed, cancelled or checkpoint-edited jobs can be resubmitted"}
 

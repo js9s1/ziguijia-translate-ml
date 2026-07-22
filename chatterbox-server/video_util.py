@@ -1,12 +1,11 @@
 """Shared utilities for video job handlers."""
 
-import os
-import sys
 import re
+import sys
 from contextlib import contextmanager
 
+from config import HY_MT_BACKEND, HY_MT_DIR
 from log_utils import job_log
-from config import HY_MT_DIR, HY_MT_BACKEND, LANG_MAP
 
 
 def _normalize_srt_timestamps(text: str) -> str:
@@ -130,7 +129,8 @@ def translate_srt_file(srt_path: str, output_path: str, access_code: str, output
         outro_marker: If set, blocks from the first block containing this
             text onward will be left empty (trailer trimming).
     """
-    from contextlib import redirect_stdout, redirect_stderr
+    from contextlib import redirect_stderr, redirect_stdout
+
     from log_utils import redirect_logging_to_file
 
     hy_mt = _get_hy_mt()
@@ -164,10 +164,7 @@ def translate_srt_file(srt_path: str, output_path: str, access_code: str, output
         translated_blocks = []
         for i, (idx, time_range, text) in enumerate(parsed):
             # Header: empty (skip translation)
-            if header_cut is not None and i <= header_cut:
-                translated = ""
-            # Trailer: empty (skip translation)
-            elif trailer_cut is not None and i >= trailer_cut:
+            if header_cut is not None and i <= header_cut or trailer_cut is not None and i >= trailer_cut:
                 translated = ""
             else:
                 translated = translate_segment(text, target_language_name)

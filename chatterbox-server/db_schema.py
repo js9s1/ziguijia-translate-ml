@@ -10,8 +10,8 @@ Both ``JobQueue`` and ``UserManager`` delegate to it instead of
 duplicating the same boilerplate.
 """
 
-import sqlite3
 import logging
+import sqlite3
 import threading
 
 logger = logging.getLogger(__name__)

@@ -1,13 +1,12 @@
 """OCR-only job — extracts subtitles from video using rapid_videocr_pipeline.sh"""
 
 import os
-import re
 import subprocess
 import uuid
 
+from config import RAPID_VIDEOCR_PIPELINE_SCRIPT, VIDEO_DIR
 from jobqueue import get_job_queue
 from log_utils import job_log
-from config import VIDEO_DIR, RAPID_VIDEOCR_PIPELINE_SCRIPT
 from video_util import open_proc_log, read_srt_text
 
 
@@ -16,7 +15,7 @@ def _detect_srt_language(srt_path: str) -> str:
 
     Returns a language code (zh, ja, ko, ar, ru, el, he, hi, th, en) or 'en' as fallback.
     """
-    from language_utils import detect_dominant_script, is_srt_timing_line, is_srt_index_line
+    from language_utils import detect_dominant_script, is_srt_index_line, is_srt_timing_line
 
     try:
         content = read_srt_text(srt_path)

@@ -1,22 +1,22 @@
 """Ning-video job — video synthesis from a preset video number + SRT."""
 
-import json
 import os
-import re
 import shutil
-import subprocess
-import time
 import uuid
 
-from jobqueue import get_job_queue, JobStatus
+from config import MARKER_INTRO, MARKER_OUTRO, VIDEO_DIR
+from jobqueue import get_job_queue
 from log_utils import job_log, job_log_lines
-from config import VIDEO_DIR, MARKER_INTRO, MARKER_OUTRO, GEN_VIDEO_ORIG_SCRIPT, RAPID_VIDEOCR_PIPELINE_SCRIPT, PROJECT_ROOT, RAPID_VIDEOCR_BIN, PYTHON_BIN, LANG_MAP
 from pipeline import (
-    run_audio_ckpt, run_video_ckpt, validate_files,
-    run_download_ckpt, run_ocr_ckpt, run_translate_ckpt,
-    adjust_original_audio, _adjust_original_audio_nonfatal,
+    _adjust_original_audio_nonfatal,
+    run_audio_ckpt,
+    run_download_ckpt,
+    run_ocr_ckpt,
+    run_translate_ckpt,
+    run_video_ckpt,
+    validate_files,
 )
-from video_util import CheckpointHelper, translate_srt_file, open_proc_log
+from video_util import CheckpointHelper, open_proc_log
 
 
 def _find_cached_video(number: str) -> str | None:

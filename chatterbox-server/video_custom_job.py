@@ -1,19 +1,26 @@
 """Custom/auto video jobs — user video + SRT, or auto-extract+translate+generate."""
 
 import os
-import subprocess
 import uuid
 
+from config import (
+    MARKER_INTRO,
+    MARKER_OUTRO,
+    VIDEO_DIR,
+)
 from jobqueue import get_job_queue
 from log_utils import job_log
-from config import VIDEO_DIR, WHISPER_MODEL, WHISPER_OV_DEVICE, RAPID_VIDEOCR_PIPELINE_SCRIPT, LANG_MAP, MARKER_INTRO, MARKER_OUTRO
 from pipeline import (
-    run_audio_ckpt, run_video_ckpt, run_gen_audio_step,
-    run_ocr_ckpt, run_translate_ckpt,
-    run_extract_audio_ckpt, run_whisper_ckpt,
-    adjust_original_audio, _adjust_original_audio_nonfatal,
+    _adjust_original_audio_nonfatal,
+    run_audio_ckpt,
+    run_extract_audio_ckpt,
+    run_gen_audio_step,
+    run_ocr_ckpt,
+    run_translate_ckpt,
+    run_video_ckpt,
+    run_whisper_ckpt,
 )
-from video_util import CheckpointHelper, translate_srt_file, open_proc_log
+from video_util import CheckpointHelper, open_proc_log
 
 
 def _run_video_custom_job(job_data: dict):

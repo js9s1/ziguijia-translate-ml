@@ -15,20 +15,19 @@ import subprocess
 import tempfile
 import time
 
-from log_utils import job_log, job_log_lines
 from config import (
-    PYTHON_BIN,
+    AUDIO_PROMPT_PATH,
     GEN_AUDIO_SCRIPT,
     GEN_VIDEO_SCRIPT,
-    AUDIO_PROMPT_PATH,
+    LANG_MAP,
     PROJECT_ROOT,
-    RAPID_VIDEOCR_PIPELINE_SCRIPT,
+    PYTHON_BIN,
     RAPID_VIDEOCR_BIN,
+    RAPID_VIDEOCR_PIPELINE_SCRIPT,
     WHISPER_MODEL,
     WHISPER_OV_DEVICE,
-    LANG_MAP,
 )
-
+from log_utils import job_log, job_log_lines
 
 # ── Low-level subprocess wrappers ──────────────────────────
 
@@ -65,7 +64,7 @@ def run_gen_audio_step(
     # Write both stdout and stderr directly to job.log to avoid pipe
     # buffer deadlock and unnecessary in-memory buffering.
     log_path = os.path.join(output_dir, "job.log")
-    job_log(access_code, output_dir, f"--- gen_audio ---")
+    job_log(access_code, output_dir, "--- gen_audio ---")
 
     with open(log_path, "a") as proc_log:
         proc_pos = proc_log.tell()
@@ -118,7 +117,7 @@ def run_gen_audio_step(
                 )
 
     # Read back only the output written by this subprocess invocation
-    with open(log_path, "r") as f:
+    with open(log_path) as f:
         f.seek(proc_pos)
         sub_out = f.read()
 
@@ -206,7 +205,7 @@ def run_gen_video_step(
                 )
 
     # Read back only the output written by this subprocess invocation
-    with open(log_path, "r") as f:
+    with open(log_path) as f:
         f.seek(proc_pos)
         sub_out = f.read()
 

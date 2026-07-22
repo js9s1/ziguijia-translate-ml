@@ -17,8 +17,8 @@ def _start_srt_rebuilder(post_fork_logger=None):
     """
     log = (post_fork_logger or logging.getLogger("gunicorn.error"))
     try:
-        from chatterbox_server import _build_all_static_srt
-        _build_all_static_srt()
+        from oldrun import build_all_static_srt
+        build_all_static_srt()
         log.info("Static SRT list pages built at startup")
     except Exception as e:
         log.warning("Failed to build static SRT pages at startup: %s", e)
@@ -27,8 +27,8 @@ def _start_srt_rebuilder(post_fork_logger=None):
         while True:
             time.sleep(_SRT_REBUILD_SEC)
             try:
-                from chatterbox_server import _build_all_static_srt
-                _build_all_static_srt()
+                from oldrun import build_all_static_srt
+                build_all_static_srt()
                 log.info("Static SRT list pages rebuilt (periodic)")
             except Exception as e:
                 log.warning("Failed to rebuild static SRT pages: %s", e)

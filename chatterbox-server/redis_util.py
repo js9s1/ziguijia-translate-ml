@@ -9,8 +9,7 @@ import logging
 import time
 
 import valkey
-
-from config import VALKEY_URL
+from config import VALKEY_DB, VALKEY_HOST, VALKEY_PASSWORD, VALKEY_PORT, VALKEY_URL
 
 logger = logging.getLogger(__name__)
 
@@ -26,14 +25,22 @@ def get_redis() -> valkey.Valkey | None:
     if _valkey_client is not None:
         return _valkey_client if _available else None
     try:
-        _valkey_client = valkey.from_url(VALKEY_URL, decode_responses=True, socket_timeout=2)
+        if VALKEY_URL:
+            _valkey_client = valkey.from_url(VALKEY_URL, decode_responses=True, socket_timeout=2)
+        else:
+            kwargs = dict(decode_responses=True, socket_timeout=2)
+            if VALKEY_PASSWORD:
+                kwargs["password"] = VALKEY_PASSWORD
+            _valkey_client = valkey.Valkey(
+                host=VALKEY_HOST, port=VALKEY_PORT, db=VALKEY_DB, **kwargs
+            )
         _valkey_client.ping()
         _available = True
-        logger.info(f"Valkey connected: {VALKEY_URL}")
+        logger.info("Valkey connected")
         return _valkey_client
     except valkey.ConnectionError:
         _available = False
-        logger.warning(f"Valkey not available at {VALKEY_URL} — falling back to in-memory")
+        logger.warning("Valkey not available — falling back to in-memory")
         return None
 
 

@@ -5,7 +5,6 @@ and ``video_ocr_job._detect_srt_language``.
 """
 
 import re
-import os
 
 # Language code → full name mapping (single source of truth for the backend).
 # Frontend fetches this via /api/languages.

@@ -1,0 +1,35 @@
+[project]
+name = "chatterbox-server"
+version = "0.1.0"
+description = "AI-driven video translation and voice cloning tool"
+requires-python = ">=3.11"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "B",   # flake8-bugbear
+    "I",   # isort
+    "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B905",  # zip without strict
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["chatterbox-server"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.isort]
+profile = "black"
+line_length = 120

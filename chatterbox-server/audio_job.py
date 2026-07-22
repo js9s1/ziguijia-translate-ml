@@ -6,12 +6,11 @@ import uuid
 
 import torch
 import torchaudio as ta
-
+from audio_utils import NingAudio
+from config import AUDIO_TRACKS_DIR
 from jobqueue import get_job_queue
 from log_utils import job_log
-from config import AUDIO_TRACKS_DIR
 from pipeline import run_gen_audio_step
-from audio_utils import NingAudio
 
 
 def _run_gen_audio(job_data: dict):

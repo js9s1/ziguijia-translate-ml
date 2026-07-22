@@ -1,13 +1,10 @@
 import io
 import os
 import sys
-import threading
-from typing import Optional
 
 import srt
 import torch
 import torchaudio as ta
-
 from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 from config import AUDIO_PROMPT_PATH
 from singleton import singleton
@@ -27,7 +24,6 @@ def _check_gpu_healthy() -> bool:
     healthy enough for TTS inference.
     """
     import subprocess
-    import sys
     probe_code = (
         "import os\n"
         "os.environ.setdefault('HSA_OVERRIDE_GFX_VERSION', '9.0.0')\n"
@@ -115,7 +111,7 @@ _default_audio_prompt_path = AUDIO_PROMPT_PATH
 
 @singleton
 class NingAudio:
-    def __init__(self, audio_prompt: Optional[str] = None):
+    def __init__(self, audio_prompt: str | None = None):
         global _default_audio_prompt_path
         self.audio_prompt_path = audio_prompt if audio_prompt else _default_audio_prompt_path
         self.model = None
@@ -161,7 +157,7 @@ class NingAudio:
     def text_to_wave(
         self,
         text: str,
-        prompt_file: Optional[str] = None,
+        prompt_file: str | None = None,
         temperature: float = 0.6,
         target_language: str = "en",
         cfg_weight: float = 0.5,

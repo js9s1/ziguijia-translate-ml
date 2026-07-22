@@ -3,12 +3,11 @@ import os
 import secrets
 import smtplib
 import string
-import threading
 import time
 from email.mime.text import MIMEText
 
 from config import SMTP_FROM, SMTP_HOST, SMTP_PASS, SMTP_PORT, SMTP_USER
-from db_schema import init_users_schema, ConnectionManager
+from db_schema import ConnectionManager, init_users_schema
 from singleton import singleton
 from werkzeug.security import check_password_hash, generate_password_hash
 
