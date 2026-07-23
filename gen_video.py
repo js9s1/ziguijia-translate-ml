@@ -267,7 +267,7 @@ def process_video(video_file, segments, output_file):
 
             cmd.extend(["-filter_complex", ";".join(filter_parts)])
             cmd.extend(["-map", "[hw]", "-c:v", "h264_vaapi", "-qp", "23",
-                        "-r", "24", batch_out])
+                        batch_out])
 
             print(f"  Batch {batch_idx:04d}: {n} segments → single ffmpeg")
             result = subprocess.run(cmd, check=False, capture_output=True, text=True,
@@ -320,7 +320,6 @@ def process_video(video_file, segments, output_file):
                         "-filter_complex", filter_str,
                         "-map", "[hw]",
                         "-c:v", "h264_vaapi", "-qp", "23",
-                        "-r", "24",
                         out_name,
                     ])
                     result = subprocess.run(cmd, check=False, capture_output=True, text=True)
@@ -450,10 +449,33 @@ def main():
     # Process video
     process_video(args.video_file, segments, output_file)
 
+    # ── Correct accumulated frame-boundary drift ──────────────
+    # Each ffmpeg -ss/-to segment rounds up to the nearest frame
+    # boundary (~16-25 ms).  Over 100+ segments this adds up to
+    # a 1-3 s video-vs-audio mismatch.  Apply a one-shot setpts
+    # correction so the video duration matches the adjusted audio.
+    corrected = output_file.replace("_modified.mp4", "_corrected.mp4")
+    expected_end = segments[-1]["adj_end"]
+    actual_dur = get_video_info(output_file)["duration"]
+    if abs(actual_dur - expected_end) > 0.1:
+        ratio = expected_end / actual_dur
+        print(f"Correcting video duration: {actual_dur:.2f}s → {expected_end:.2f}s (ratio {ratio:.4f})")
+        subprocess.run([
+            "ffmpeg", "-y", "-v", "quiet",
+            "-i", output_file,
+            "-filter:v", f"setpts={ratio}*PTS",
+            "-c:v", "libx264", "-crf", "23", "-preset", "fast",
+            "-an",
+            corrected,
+        ], check=True)
+        output_file = corrected
+    else:
+        print(f"Video timing accurate ({actual_dur:.2f}s vs expected {expected_end:.2f}s)")
+
     # Final step: add audio and SRT subtitles to the modified video
     audio_wav = args.audio_wav or os.path.join(os.path.dirname(args.adjusted_srt), "output.wav")
-    final_output = output_file.replace("_modified.mp4", "_final.mp4")
-    temp_output = output_file.replace("_modified.mp4", "_temp.mp4")
+    final_output = output_file.replace("_corrected.mp4", "_final.mp4").replace("_modified.mp4", "_final.mp4")
+    temp_output = output_file.replace("_corrected.mp4", "_temp.mp4").replace("_modified.mp4", "_temp.mp4")
 
     # Get exact audio duration so we can trim the video precisely.
     # This is a safety net: the per-segment adjusted timing should already
@@ -480,11 +502,8 @@ def main():
                 "-vf", "format=yuv420p,delogo=x=100:y=600:w=1060:h=80:show=0",
                 "-c:v", "libx264", "-crf", "23", "-preset", "fast",
                 "-c:a", "aac", "-b:a", "192k",
+                temp_output,
             ]
-            if audio_duration:
-                blur_cmd.extend(["-t", str(audio_duration), temp_output])
-            else:
-                blur_cmd.extend(["-shortest", temp_output])
             subprocess.run(blur_cmd, check=True)
         else:
             mux_cmd = [
@@ -494,7 +513,6 @@ def main():
                 "-c:v", "copy",
                 "-c:a", "aac", "-b:a", "192k",
                 "-map", "0:v", "-map", "1:a",
-                "-shortest",
                 temp_output,
             ]
             subprocess.run(mux_cmd, check=True)

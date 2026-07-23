@@ -30,7 +30,7 @@ except RuntimeError:
 
 from config import CHECKPOINT_ORDER, FILENAME_TO_CHECKPOINT_STEP
 from db_schema import JOB_COLUMNS, ConnectionManager, init_jobs_schema
-from redis_util import publish_job_status
+from valkey_util import publish_job_status
 from singleton import singleton
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -125,70 +125,21 @@ def _reset_gpu_state():
     subsequent jobs to crash with SIGABRT during heavier GPU workloads
     even though a lightweight health probe passes.
 
-    This runs a subprocess that:
-      1. Allocates and computes on the GPU (heavier than the TTS probe)
-      2. Calls ``torch.cuda.empty_cache()`` and ``torch.cuda.synchronize()``
-      3. Calls ``hipDeviceReset()`` if available (ROCm)
-
-    The subprocess approach isolates any GPU driver crashes so they don't
-    affect the parent server process.
+    Uses the shared ``gpu_probe.run_gpu_probe`` — a heavier workload
+    (256–1024 tensors) than the TTS pre-flight check.
     """
-    import subprocess
-    import sys
+    from gpu_probe import run_gpu_probe
 
-    probe = (
-        "import os\n"
-        "os.environ.setdefault('HSA_OVERRIDE_GFX_VERSION', '9.0.0')\n"
-        "os.environ.setdefault('HSA_XNACK', '0')\n"
-        "os.environ.setdefault('ROCBLAS_USE_HIPBLASLT', '0')\n"
-        "import torch\n"
-        "ok = True\n"
-        "try:\n"
-        "    # Heavier probe — larger tensors, multiple iterations\n"
-        "    for size in [256, 512, 1024]:\n"
-        "        a = torch.randn(size, size, device='cuda')\n"
-        "        b = torch.randn(size, size, device='cuda')\n"
-        "        c = a @ b\n"
-        "        c = torch.nn.functional.relu(c)\n"
-        "        torch.cuda.synchronize()\n"
-        "    torch.cuda.empty_cache()\n"
-        "    torch.cuda.synchronize()\n"
-        "    # Attempt HIP device reset (ROCm) — helps clear driver state\n"
-        "    try:\n"
-        "        torch.cuda.reset_peak_memory_stats()\n"
-        "    except Exception:\n"
-        "        pass\n"
-        "except Exception as e:\n"
-        "    print(f'GPU reset/probe failed: {e}', flush=True)\n"
-        "    ok = False\n"
-        "print('OK' if ok else 'FAIL', flush=True)\n"
-    )
-    try:
-        r = subprocess.run(
-            [sys.executable, "-c", probe],
-            capture_output=True, text=True, timeout=30,
-            env={
-                **os.environ,
-                "HSA_OVERRIDE_GFX_VERSION": "9.0.0",
-                "HSA_XNACK": "0",
-                "ROCBLAS_USE_HIPBLASLT": "0",
-                "PYTHONUNBUFFERED": "1",
-                "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", "0"),
-            },
+    r = run_gpu_probe([256, 512, 1024], reset_peak_memory=True)
+    if r is None:
+        return
+    if "OK" in r.stdout:
+        logger.info("GPU state reset between jobs — ok")
+    else:
+        logger.warning(
+            "GPU state reset between jobs — probe failed: stderr=%s stdout=%s",
+            r.stderr.strip()[:200], r.stdout.strip()[:200],
         )
-        if "OK" in r.stdout:
-            logger.info("GPU state reset between jobs — ok")
-        else:
-            logger.warning(
-                "GPU state reset between jobs — probe failed: stderr=%s stdout=%s",
-                r.stderr.strip()[:200], r.stdout.strip()[:200],
-            )
-    except subprocess.TimeoutExpired:
-        logger.warning("GPU state reset between jobs — timed out (GPU may be hung)")
-    except FileNotFoundError:
-        logger.debug("GPU state reset skipped — python interpreter not found")
-    except Exception as e:
-        logger.warning("GPU state reset between jobs — error: %s", e)
 
 
 def _reset_gpu_state_cooldown(jq) -> bool:
@@ -638,6 +589,35 @@ class JobQueue:
             )
             self._worker_thread.start()
 
+    def _try_mark_failed(self, access_code, error_msg):
+        """Best-effort mark job as FAILED, reconnecting if needed.
+
+        Called from error-recovery paths where the worker's DB connection
+        may be in a broken state (e.g. after a GPU hang destabilises the
+        ROCm driver).  Failures here are logged but never re-raised, so a
+        stuck ``"processing"`` row is the worst-case outcome and an operator
+        can reset it manually.
+        """
+        now = _now_str()
+        for attempt in range(2):
+            try:
+                conn = self._get_conn()
+                conn.execute(
+                    "UPDATE jobs SET status = ?, error = ?, failed_at = ?, status_changed_at = ? WHERE access_code = ?",
+                    (JobStatus.FAILED.value, error_msg, now, now, access_code)
+                )
+                conn.commit()
+                publish_job_status(access_code, JobStatus.FAILED.value, error=error_msg)
+                return
+            except Exception:
+                if attempt == 0:
+                    self._conn.close()
+                else:
+                    logger.critical(
+                        "Cannot update job %s to FAILED — may stay stuck at processing",
+                        access_code, exc_info=True,
+                    )
+
     def _process_queue(self):
         import queue as std_queue
         _last_orphan_check = time.monotonic()
@@ -671,6 +651,7 @@ class JobQueue:
                 self._process_job(access_code)
             except BaseException as e:
                 logger.exception(f"_process_job {access_code} raised {type(e).__name__}: {e}")
+                self._try_mark_failed(access_code, str(e)[:500])
             finally:
                 with self._cancel_lock:
                     self._current_access_code = None
@@ -831,32 +812,20 @@ class JobQueue:
                 output_dir = job.get("output_dir")
                 self._kill_process_group(proc, output_dir)
 
-                now = _now_str()
                 sig = f" (exit {proc.exitcode})" if proc.exitcode is not None else ""
                 reason = _extract_failure_reason(output_dir)
                 if reason:
                     error_msg = f"{reason}{sig}"
                 else:
                     error_msg = f"Job process failed{sig}"
-                conn.execute(
-                    "UPDATE jobs SET status = ?, error = ?, failed_at = ?, status_changed_at = ? WHERE access_code = ?",
-                    (JobStatus.FAILED.value, error_msg, now, now, access_code)
-                )
-                conn.commit()
-                publish_job_status(access_code, JobStatus.FAILED.value, error=error_msg)
+                self._try_mark_failed(access_code, error_msg)
                 logger.warning(f"Job {access_code} failed with exit code {proc.exitcode}")
         except Exception as e:
             # Ensure the child process is cleaned up on unexpected errors
             if proc.is_alive():
                 output_dir = job.get("output_dir")
                 self._kill_process_group(proc, output_dir)
-            now = _now_str()
-            conn.execute(
-                "UPDATE jobs SET status = ?, error = ?, failed_at = ?, status_changed_at = ? WHERE access_code = ?",
-                (JobStatus.FAILED.value, str(e)[:500], now, now, access_code)
-            )
-            conn.commit()
-            publish_job_status(access_code, JobStatus.FAILED.value, error=str(e)[:500])
+            self._try_mark_failed(access_code, str(e)[:500])
             logger.error(f"Job {access_code} handler error: {e}")
         finally:
             # Release OS resources — without this the child process remains

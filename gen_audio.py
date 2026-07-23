@@ -312,21 +312,89 @@ def save_audio(output_path, wav_tensor, sample_rate):
 
 
 def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_dir=CFG_ASSETS_DIR, target_language="en", cfg_weight=0.5, exaggeration=0.5):
-    from audio_utils import NingAudio
-
-    audio = NingAudio(audio_prompt=audio_prompt)
-    audio.setup()
-    sample_rate = audio.sample_rate
-
     subs = load_subs(srt_path)
     if not subs:
         print("No subtitles found in SRT file")
         return
 
-    # ── Load cache meta (single file → in-memory) ──
+    # ── Load cache and check which segments need generation ───
+    # Defer GPU / model init until we know there is uncached work.
     cache = _load_cache(output_dir)
-    # Migrate cache when segment indices shifted (e.g. edited SRT timing)
     _migrate_cache(cache, subs, output_dir)
+
+    uncached_count = 0
+    for i, sub in enumerate(subs):
+        _, clean_content = extract_speaker(sub.content)
+        if not clean_content.strip():
+            continue
+        cached, _ = _check_cache(cache, i, clean_content, output_dir)
+        if not cached:
+            uncached_count += 1
+
+    if uncached_count == 0:
+        # ── Every segment is cached — skip GPU entirely ────
+        cached_wavs = [_combined_seg_path(output_dir, i) for i in range(len(subs))
+                       if os.path.exists(_combined_seg_path(output_dir, i))]
+        if not cached_wavs:
+            print("No cached audio found")
+            return
+        info = sf.info(cached_wavs[0])
+        sample_rate = info.samplerate
+
+        adjusted_subs = []
+        segments_info = []
+        changed_segments = []
+        accumulated_offset = 0.0
+
+        for i, sub in enumerate(subs):
+            _, clean_content = extract_speaker(sub.content)
+            orig_start = sub.start.total_seconds()
+            orig_duration = (sub.end - sub.start).total_seconds()
+            seg_wav_path = _combined_seg_path(output_dir, i)
+
+            if not clean_content.strip():
+                total_wav_duration = orig_duration
+            else:
+                _, total_wav_duration = _check_cache(cache, i, clean_content, output_dir)
+
+            new_start = orig_start + accumulated_offset
+
+            if abs(total_wav_duration - orig_duration) > CHANGED_THRESHOLD:
+                changed_segments.append({
+                    "segment": i,
+                    "time": orig_start,
+                    "orig_duration": orig_duration,
+                    "new_duration": total_wav_duration,
+                    "diff": total_wav_duration - orig_duration,
+                })
+
+            adjusted_subs.append(
+                srt.Subtitle(index=i, start=timedelta(seconds=new_start),
+                             end=timedelta(seconds=new_start + total_wav_duration),
+                             content=sub.content)
+            )
+
+            segments_info.append({
+                "wav_path": seg_wav_path,
+                "wav_duration": total_wav_duration,
+                "new_start": new_start,
+            })
+
+            if total_wav_duration > orig_duration:
+                accumulated_offset += total_wav_duration - orig_duration
+
+        original_total = (subs[-1].end - subs[0].start).total_seconds()
+        total_duration = original_total + accumulated_offset
+        combined_tensor = combine_audio_segments(segments_info, total_duration, sample_rate)
+        _save_cache(output_dir, cache)
+        return combined_tensor, adjusted_subs, changed_segments, sample_rate, total_duration
+
+    # ── Some segments need generation — init GPU model ──────
+    from audio_utils import NingAudio
+
+    audio = NingAudio(audio_prompt=audio_prompt)
+    audio.setup()
+    sample_rate = audio.sample_rate
 
     adjusted_subs = []
     segments_info = []
