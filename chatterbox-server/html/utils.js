@@ -47,7 +47,7 @@ var _langFlags = {
     es: '🇪🇸', fi: '🇫🇮', fr: '🇫🇷', he: '🇮🇱', hi: '🇮🇳',
     it: '🇮🇹', ja: '🇯🇵', ko: '🇰🇷', ms: '🇲🇾', nl: '🇳🇱',
     no: '🇳🇴', pl: '🇵🇱', pt: '🇵🇹', ru: '🇷🇺', sv: '🇸🇪',
-    sw: '🇹🇿', tr: '🇹🇷', vi: '🇻🇳', th: '🇹🇭', zh: '🇨🇳',
+    sw: '🇹🇿', tr: '🇹🇷', vi: '🇻🇳', th: '🇹🇭', id: '🇮🇩', zh: '🇨🇳',
 };
 
 function loadLanguages() {
@@ -71,7 +71,7 @@ function loadLanguages() {
                 he:'Hebrew',hi:'Hindi',it:'Italian',ja:'Japanese',
                 ko:'Korean',ms:'Malay',nl:'Dutch',no:'Norwegian',
                 pl:'Polish',pt:'Portuguese',ru:'Russian',sv:'Swedish',
-                sw:'Swahili',tr:'Turkish',zh:'Chinese',vi:'Vietnamese',th:'Thai'
+                sw:'Swahili',tr:'Turkish',zh:'Chinese',vi:'Vietnamese',th:'Thai',id:'Indonesian'
             };
             _langOptions = [];
             for (var k in _langNames) {

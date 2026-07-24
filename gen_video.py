@@ -290,6 +290,12 @@ def process_video(video_file, segments, output_file):
             batch_files.append(batch_out)
 
         # ── Hierarchical concat of batch outputs ─────────────
+        if not batch_files:
+            raise RuntimeError(
+                "No video segments produced — SRT timestamps may be outside "
+                f"the video duration ({video_duration:.1f}s). "
+                "Check that the SRT matches the uploaded video clip."
+            )
         if len(batch_files) == 1:
             shutil.copy(batch_files[0], output_file)
         else:
@@ -427,6 +433,18 @@ def main():
                 changed_indices = set(changed_data)
         else:
             changed_indices = set()
+
+    # ── Validate SRT timestamps match the video ──────────────
+    # Reject misaligned SRTs with a clear error instead of
+    # silently clipping all segments and failing downstream.
+    if original_subs:
+        first_start = original_subs[0].start.total_seconds()
+        video_dur = get_video_info(args.video_file)["duration"]
+        if first_start > video_dur:
+            print(f"Error: SRT timestamps are outside the video duration.", file=sys.stderr)
+            print(f"       First SRT segment starts at {first_start:.1f}s but the video is only {video_dur:.1f}s long.", file=sys.stderr)
+            print(f"       The SRT appears to be for a longer original video — please upload an SRT that matches this clip.", file=sys.stderr)
+            sys.exit(1)
 
     # Get video info
     video_info = get_video_info(args.video_file)

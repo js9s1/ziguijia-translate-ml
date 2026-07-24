@@ -15,7 +15,7 @@ LANG_NAME_MAP: dict[str, str] = {
     "ko": "Korean", "ms": "Malay", "nl": "Dutch", "no": "Norwegian",
     "pl": "Polish", "pt": "Portuguese", "ru": "Russian", "sv": "Swedish",
     "sw": "Swahili", "tr": "Turkish", "zh": "Chinese",
-    "vi": "Vietnamese", "th": "Thai",
+    "vi": "Vietnamese", "th": "Thai", "id": "Indonesian",
 }
 
 # Unicode script ranges for language detection/validation.
