@@ -78,7 +78,9 @@ class RequestIDFilter(logging.Filter):
 
 def post_fork(server, worker):
     """Called after a worker is forked. Reset the JobQueue singleton so each
-    worker gets its own worker thread and DB connection. Also install
+    worker gets its own worker thread and DB connection. Also reset the
+    NingAudio singleton and Indonesian model handle so no stale GPU
+    references leak from the parent process. Finally install
     structured JSON logging on gunicorn's existing handler."""
     from jobqueue import JobQueue
     JobQueue.clear()
@@ -86,6 +88,13 @@ def post_fork(server, worker):
     # pending jobs immediately, without waiting for a web request.
     from jobqueue import get_job_queue
     get_job_queue()
+
+    # Reset TTS model singletons — these hold module-level GPU handles
+    # that point to the parent process and must not be reused post-fork.
+    from audio_utils import NingAudio
+    from gpu_manage import _clear_all_models
+    NingAudio.clear()
+    _clear_all_models()
 
     _start_srt_rebuilder(post_fork_logger=server.log)
 
@@ -102,7 +111,7 @@ def post_fork(server, worker):
         gunicorn_handler.addFilter(req_filter)
 
         # Add the same handler to application loggers so they write to the same file
-        for name in ("chatterbox_server", "auth", "jobqueue", "redis_util",
+        for name in ("chatterbox_server", "auth", "jobqueue", "valkey_util",
                      "audio_job", "tts_job", "video_ning_job", "video_custom_job",
                      "video_ocr_job", "video_util", "pipeline", "db_schema", "log_utils"):
             app_logger = logging.getLogger(name)

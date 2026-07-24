@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from contextlib import redirect_stdout
 
 from config import (
     AUDIO_PROMPT_PATH,
@@ -27,6 +28,7 @@ from config import (
     WHISPER_MODEL,
     WHISPER_OV_DEVICE,
 )
+from jobqueue import get_job_queue
 from log_utils import job_log, job_log_lines
 
 # ── Low-level subprocess wrappers ──────────────────────────
@@ -44,16 +46,14 @@ def run_gen_audio_step(
     output_srt: str = "output_adjusted.srt",
     output_wav: str = "output.wav",
     changed_json: str = "changed_segments.json",
-    timeout: float = 86400,  # 24 h safety limit — GPU hangs should not block the queue forever
+    timeout: float = 86400,
 ) -> dict[str, str]:
-    """Run the gen_audio.py subprocess and return paths to generated files.
-    Progress is updated every 30 seconds while waiting.
+    """Generate audio from SRT (in-process, shares the singleton TTS model).
 
-    Returns:
-        dict with keys: output_srt_path, output_wav_path, changed_json_path
-
-    Raises:
-        RuntimeError if the subprocess fails, times out, or output files are missing.
+    Previously ran gen_audio.py as a subprocess, which contended for GPU
+    memory with the gunicorn worker.  Now runs in-process via
+    ``gen_audio.process_with_direct`` so the job queue's single-worker
+    serialisation naturally serialises GPU access.
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -61,77 +61,43 @@ def run_gen_audio_step(
     wav_path_out = os.path.join(output_dir, output_wav)
     changed_json_out = os.path.join(output_dir, changed_json)
 
-    # Write both stdout and stderr directly to job.log to avoid pipe
-    # buffer deadlock and unnecessary in-memory buffering.
     log_path = os.path.join(output_dir, "job.log")
     job_log(access_code, output_dir, "--- gen_audio ---")
 
     with open(log_path, "a") as proc_log:
-        proc_pos = proc_log.tell()
+        with redirect_stdout(proc_log):
+            import sys
+            sys.path.insert(0, PROJECT_ROOT)
+            from gen_audio import process_with_direct
+            result = process_with_direct(
+                srt_path, audio_prompt, temperature, output_dir,
+                assets_dir=os.path.join(PROJECT_ROOT, "..", "assets"),
+                target_language=target_language,
+                cfg_weight=cfg_weight,
+                exaggeration=exaggeration,
+            )
 
-        process = subprocess.Popen(
-            [
-                PYTHON_BIN,
-                GEN_AUDIO_SCRIPT,
-                srt_path,
-                "--audio_prompt", audio_prompt,
-                "--output_dir", output_dir,
-                "--output_srt", output_srt,
-                "--output_wav", output_wav,
-                "--changed_json", changed_json,
-                "--temperature", str(temperature),
-                "--target_language", target_language,
-                "--cfg_weight", str(cfg_weight),
-                "--exaggeration", str(exaggeration),
-            ],
-            stdout=proc_log,
-            stderr=proc_log,
-            text=True,
-            env={
-                **os.environ,
-                "HSA_OVERRIDE_GFX_VERSION": "9.0.0",
-                "HSA_XNACK": "0",
-                "ROCBLAS_USE_HIPBLASLT": "0",
-            },
-        )
+    if result is None:
+        raise RuntimeError("gen_audio produced no output (no subtitles?)")
 
-        # Poll subprocess with periodic progress updates
-        from jobqueue import get_job_queue
-        start = time.monotonic()
-        while True:
-            try:
-                process.wait(timeout=30)
-                break
-            except subprocess.TimeoutExpired:
-                elapsed = int(time.monotonic() - start)
-                if elapsed > timeout:
-                    process.kill()
-                    process.wait()
-                    raise RuntimeError(
-                        f"gen_audio timed out after {elapsed // 3600}h "
-                        f"(GPU may be hung — try restarting the server)"
-                    )
-                get_job_queue().update_job_progress(
-                    access_code,
-                    f"正在合成音频... ({elapsed // 60}分{elapsed % 60}秒)"
-                )
+    combined_tensor, adjusted_subs, changed_segments, sample_rate, total_duration = result
 
-    # Read back only the output written by this subprocess invocation
-    with open(log_path) as f:
-        f.seek(proc_pos)
-        sub_out = f.read()
+    import srt as srt_mod
+    with open(srt_path_out, "w", encoding="utf-8") as f:
+        for i, sub in enumerate(adjusted_subs):
+            f.write(f"{i+1}\n")
+            f.write(f"{srt_mod.timedelta_to_srt_timestamp(sub.start)} --> {srt_mod.timedelta_to_srt_timestamp(sub.end)}\n")
+            f.write(sub.content + "\n\n")
 
-    output_lines = sub_out.strip().splitlines()
-    if output_lines:
-        job_log_lines(access_code, output_dir, output_lines)
+    import torchaudio as ta
+    ta.save(wav_path_out, combined_tensor, sample_rate)
 
-    if process.returncode != 0:
-        raise RuntimeError(sub_out[:500] if sub_out else "gen_audio failed")
+    import json
+    with open(changed_json_out, "w") as f:
+        json.dump(changed_segments, f)
 
-    expected = [srt_path_out, wav_path_out]
-    missing = [f for f in expected if not os.path.exists(f)]
-    if missing:
-        raise RuntimeError(f"gen_audio completed but output files missing: {', '.join(missing)}")
+    job_log(access_code, output_dir,
+            f"Generated {len(adjusted_subs)} audio segments (duration: {total_duration:.2f}s)")
 
     return {
         "output_srt_path": srt_path_out,
@@ -185,7 +151,6 @@ def run_gen_video_step(
         )
 
         # Poll subprocess with periodic progress updates
-        from jobqueue import get_job_queue
         start = time.monotonic()
         while True:
             try:

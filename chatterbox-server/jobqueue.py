@@ -796,30 +796,32 @@ class JobQueue:
                     conn.commit()
                     publish_job_status(access_code, JobStatus.CANCELLED.value)
                     logger.info(f"Job {access_code} was cancelled")
-            elif proc.exitcode == 0:
-                now = _now_str()
-                conn.execute(
-                    "UPDATE jobs SET status = ?, status_changed_at = ?, completed_at = ? WHERE access_code = ?",
-                    (JobStatus.COMPLETED.value, now, now, access_code)
-                )
-                conn.commit()
-                publish_job_status(access_code, JobStatus.COMPLETED.value)
-                logger.info(f"Job {access_code} completed successfully")
             else:
-                # Kill the process group — the child proc may have exited but
-                # grandchild subprocesses (shell scripts → gen_audio.py, ffmpeg, etc.)
-                # can still be alive, consuming resources as orphans.
-                output_dir = job.get("output_dir")
-                self._kill_process_group(proc, output_dir)
-
-                sig = f" (exit {proc.exitcode})" if proc.exitcode is not None else ""
-                reason = _extract_failure_reason(output_dir)
-                if reason:
-                    error_msg = f"{reason}{sig}"
+                # Save exitcode immediately — multiprocessing.Process auto-closes
+                # after child exit, making later .exitcode / .is_alive() calls fail.
+                exitcode = proc.exitcode
+                if exitcode == 0:
+                    now = _now_str()
+                    conn.execute(
+                        "UPDATE jobs SET status = ?, status_changed_at = ?, completed_at = ? WHERE access_code = ?",
+                        (JobStatus.COMPLETED.value, now, now, access_code)
+                    )
+                    conn.commit()
+                    publish_job_status(access_code, JobStatus.COMPLETED.value)
+                    logger.info(f"Job {access_code} completed successfully")
                 else:
-                    error_msg = f"Job process failed{sig}"
-                self._try_mark_failed(access_code, error_msg)
-                logger.warning(f"Job {access_code} failed with exit code {proc.exitcode}")
+                    # Kill the process group — grandchild subprocesses may linger
+                    output_dir = job.get("output_dir")
+                    self._kill_process_group(proc, output_dir)
+
+                    sig = f" (exit {exitcode})" if exitcode is not None else ""
+                    reason = _extract_failure_reason(output_dir)
+                    if reason:
+                        error_msg = f"{reason}{sig}"
+                    else:
+                        error_msg = f"Job process failed{sig}"
+                    self._try_mark_failed(access_code, error_msg)
+                    logger.warning(f"Job {access_code} failed with exit code {exitcode}")
         except Exception as e:
             # Ensure the child process is cleaned up on unexpected errors
             if proc.is_alive():

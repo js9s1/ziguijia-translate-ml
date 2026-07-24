@@ -1,6 +1,5 @@
 import io
 import os
-import sys
 
 import srt
 import torch
@@ -10,102 +9,9 @@ from config import AUDIO_PROMPT_PATH
 from singleton import singleton
 from video_util import read_srt_text
 
+# ── GPU / model management lives in gpu_manage.py ──
+import gpu_manage as _gm
 
-def _check_gpu_healthy() -> bool:
-    """Probe GPU health with a progressively heavier workload (with timeout).
-
-    A single tiny 128×128 matmul can still pass on a degraded ROCm/HIP
-    driver state after a long video job.  This test ramps up through
-    multiple tensor sizes and runs a small inference pipeline:
-    matmul → activation → softmax, repeated across sizes, with explicit
-    ``torch.cuda.synchronize()`` after each step.
-
-    Returns True only if all sizes pass, indicating the GPU is genuinely
-    healthy enough for TTS inference.
-    """
-    import subprocess
-    probe_code = (
-        "import os\n"
-        "os.environ.setdefault('HSA_OVERRIDE_GFX_VERSION', '9.0.0')\n"
-        "os.environ.setdefault('HSA_XNACK', '0')\n"
-        "os.environ.setdefault('ROCBLAS_USE_HIPBLASLT', '0')\n"
-        "import torch\n"
-        "ok = True\n"
-        "try:\n"
-        "    # Progressive workload — small → large, catching driver decay\n"
-        "    for size in [128, 256, 512, 768]:\n"
-        "        a = torch.randn(size, size, device='cuda')\n"
-        "        b = torch.randn(size, size, device='cuda')\n"
-        "        c = a @ b                     # GEMM — catches HIPBLAS errors\n"
-        "        c = torch.nn.functional.relu(c)  # activation path\n"
-        "        c = torch.softmax(c, dim=-1)    # reduction path\n"
-        "        torch.cuda.synchronize()\n"
-        "    torch.cuda.empty_cache()\n"
-        "    print('OK', flush=True)\n"
-        "except Exception as e:\n"
-        "    print(f'FAIL: {e}', flush=True)"
-    )
-    try:
-        r = subprocess.run(
-            [sys.executable, "-c", probe_code],
-            capture_output=True, text=True, timeout=30,
-            env={
-                **os.environ,
-                "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", "0"),
-                "HSA_OVERRIDE_GFX_VERSION": "9.0.0",
-                "HSA_XNACK": "0",
-                "ROCBLAS_USE_HIPBLASLT": "0",  # gfx90c doesn't support hipBLASLt
-                "PYTHONUNBUFFERED": "1",
-            },
-        )
-        ok = "OK" in r.stdout
-        if not ok:
-            print(f"GPU health check failed — stderr: {r.stderr.strip()}")
-        return ok
-    except subprocess.TimeoutExpired:
-        print("GPU health check timed out — GPU appears hung")
-        return False
-    except Exception as e:
-        print(f"GPU health check error: {e}")
-        return False
-
-
-def _choose_device(preferred: str = "cuda") -> str:
-    """Pick device: GPU if healthy with enough free memory, otherwise CPU.
-    Performs a subprocess probe to catch GPU Hang conditions."""
-    if preferred == "cpu":
-        return "cpu"
-    if not torch.cuda.is_available():
-        print("CUDA not available — using CPU")
-        return "cpu"
-    # AMD APU iGPUs (Renoir/gfx90c, VanGogh/Dali) — historically unstable
-    # with TTS on ROCm 7.x. With PyTorch ROCm 6.2 + HSA_XNACK=0 override,
-    # GPU inference works correctly. This check is kept as a safety net
-    # but no longer blocks by default.
-    # See rocm_env.sh for required environment variables.
-    if not _check_gpu_healthy():
-        print("GPU unhealthy (hang detected) — falling back to CPU")
-        return "cpu"
-    try:
-        free, total = torch.cuda.mem_get_info()
-        free_gb = free / (1024**3)
-        total_gb = total / (1024**3)
-        # Model needs roughly 6 GiB; leave some margin
-        if free_gb < 6.6:
-            print(f"GPU free memory {free_gb:.1f} GiB / {total_gb:.1f} GiB — too low, using CPU")
-            return "cpu"
-        return "cuda"
-    except Exception:
-        return "cpu"
-
-
-# HF_TOKEN must be set via environment variable for HuggingFace authentication
-# Example: export HF_TOKEN="your_token_here"
-
-
-# Shared model state — lives at module level so it persists across
-# singleton instances and works with the @singleton decorator.
-_model = None
 _default_audio_prompt_path = AUDIO_PROMPT_PATH
 
 
@@ -118,35 +24,36 @@ class NingAudio:
         self.sample_rate = None
 
     def get_model(self, device: str = "cuda") -> ChatterboxMultilingualTTS:
-        global _model
-        if _model is not None:
-            # Already loaded; if on CPU but GPU has freed up, reload to GPU
-            if self.model and self.model.device == "cpu" and _choose_device("cuda") == "cuda":
-                print("GPU memory available, reloading model to GPU")
-                _model = None
-                torch.cuda.empty_cache()
-        if _model is None:
-            import warnings
-            warnings.filterwarnings("ignore")
-            # Use _choose_device for all cases — it checks GPU health, model
-            # compatibility (known-problem iGPUs), and free memory.
-            actual_device = _choose_device(device)
-            try:
-                _model = ChatterboxMultilingualTTS.from_pretrained(device=actual_device)
-            except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
-                if actual_device == "cuda":
-                    print(f"CUDA OOM ({e}), falling back to CPU")
-                    torch.cuda.empty_cache()
-                    _model = ChatterboxMultilingualTTS.from_pretrained(device="cpu")
-                else:
-                    raise
-            _model.prepare_conditionals(self.audio_prompt_path)
-        self.model = _model
+        """Return the multilingual model, loading on demand via GPU swap.
+
+        The model is loaded only when needed; the other model is fully
+        unloaded first so only one model occupies VRAM at any time.
+        """
+        _gm._acquire_gpu_for("other")  # "other" = not "id" → multilingual
+        self.model = _gm._model
         self.sample_rate = self.model.sr
         return self.model
 
+    def _ensure_model(self, target_language: str = "en") -> None:
+        """Lazy GPU swap: only reloads if *target_language* differs from
+        what is currently on GPU.  No-op if the correct model is already
+        loaded."""
+        _gm._acquire_gpu_for(target_language)
+        if target_language == "id":
+            self.model = None  # break reference so old model can be GC'd
+            return
+        # Multilingual path: sync instance fields to the global
+        self.model = _gm._model
+        self.sample_rate = _gm._model.sr if _gm._model is not None else None
+
     def setup(self, device: str = "cuda"):
-        self.get_model(device)
+        """Load the model for English (backward-compat; prefer _ensure_model)."""
+        self._ensure_model("en")
+
+    def get_model(self, device: str = "cuda") -> ChatterboxMultilingualTTS:
+        """Return the multilingual model (backward-compat; prefer _ensure_model)."""
+        self._ensure_model("en")
+        return self.model
 
     def wav_to_bytes(self, wav: torch.Tensor, sample_rate: int) -> io.BytesIO:
         buffer = io.BytesIO()
@@ -163,7 +70,14 @@ class NingAudio:
         cfg_weight: float = 0.5,
         exaggeration: float = 0.5,
     ) -> io.BytesIO:
-        self.setup()
+        if target_language == "id":
+            self.model = None  # break ref to old model
+            _gm._acquire_gpu_for("id")
+            wav = _gm._generate_indonesian(text, prompt_file=prompt_file,
+                                       temperature=temperature)
+            return self.wav_to_bytes(wav, _gm._indonesian_model.sr)
+
+        self._ensure_model(target_language)
         if prompt_file:
             self.model.prepare_conditionals(prompt_file)
         try:
@@ -201,8 +115,16 @@ class NingAudio:
         exaggeration: float = 0.5,
     ) -> io.BytesIO:
         import re
-        self.setup()
-        sample_rate = self.model.sr
+
+        # ── Indonesian fine-tuned model path ──
+        if target_language == "id":
+            self.model = None  # break ref to old model
+            _gm._acquire_gpu_for("id")
+            sample_rate = _gm._indonesian_model.sr
+        else:
+            self._ensure_model(target_language)
+            sample_rate = self.model.sr
+
         pattern = r'<(\d+(?:\.\d+)?)>\s*'
         parts = re.split(pattern, text)
 
@@ -246,16 +168,20 @@ class NingAudio:
         return list(srt.parse(read_srt_text(srt_path)))
 
     def _fallback_to_cpu(self, error: Exception) -> bool:
-        """Reload model to CPU after a GPU error. Returns True if successful."""
-        global _model
-        if self.model is None or getattr(self.model, 'device', 'cpu') != 'cuda':
+        """Reload multilingual model to CPU after a GPU error."""
+        if _gm._model is None or _gm._get_device(_gm._model) != "cuda":
             return False
         print(f"GPU error during generation ({error}), falling back to CPU")
-        _model = None
+        _gm._model = None
         self.model = None
         torch.cuda.empty_cache()
         try:
-            self.get_model(device="cpu")
+            import warnings
+            warnings.filterwarnings("ignore")
+            _gm._model = ChatterboxMultilingualTTS.from_pretrained(device="cpu")
+            _gm._model.prepare_conditionals(self.audio_prompt_path)
+            self.model = _gm._model
+            self.sample_rate = _gm._model.sr
             print("Successfully reloaded model on CPU")
             return True
         except Exception as e2:
@@ -263,16 +189,22 @@ class NingAudio:
             return False
 
     def generate_audio(self, text, output_path, sample_rate, temperature=None, prompt_file=None, target_language="en", cfg_weight=0.5, exaggeration=0.5):
+        # ── Indonesian fine-tuned model path ──
+        if target_language == "id":
+            self.model = None  # break ref to old model
+            _gm._acquire_gpu_for("id")
+            temp = temperature if temperature is not None else 0.6
+            wav = _gm._generate_indonesian(text, prompt_file=prompt_file,
+                                       temperature=temp)
+            if wav.dim() == 1:
+                wav = wav.unsqueeze(0)
+            ta.save(output_path, wav, _gm._indonesian_model.sr)
+            wav_duration = wav.shape[1] / _gm._indonesian_model.sr
+            return wav, wav_duration
+
         if temperature is None:
-            temperature = self.model.temperature
-        # If on CPU, try to re-upgrade to GPU — GPU may have recovered
-        if self.model and getattr(self.model, 'device', 'cpu') == 'cpu' and torch.cuda.is_available():
-            try:
-                free, _ = torch.cuda.mem_get_info()
-                if free >= 6.6 * (1024**3):
-                    self.get_model(device="cuda")
-            except Exception:
-                pass
+            temperature = 0.6
+        self._ensure_model(target_language)
         if prompt_file:
             self.model.prepare_conditionals(prompt_file)
         try:
