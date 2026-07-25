@@ -41,6 +41,7 @@ class NingAudio:
         _gm._acquire_gpu_for(target_language)
         if target_language == "id":
             self.model = None  # break reference so old model can be GC'd
+            self.sample_rate = _gm._indonesian_model.sr if _gm._indonesian_model is not None else None
             return
         # Multilingual path: sync instance fields to the global
         self.model = _gm._model

@@ -91,8 +91,12 @@ def _run_audio_segmentation_job(job_data: dict):
     os.makedirs(output_dir, exist_ok=True)
 
     ning = NingAudio()
-    ning.setup()
-    sample_rate = ning.sample_rate
+    ning._ensure_model(target_language)
+    if target_language == "id":
+        import gpu_manage as _gm
+        sample_rate = _gm._indonesian_model.sr
+    else:
+        sample_rate = ning.sample_rate
 
     pattern = r'<(\d+(?:\.\d+)?)>\s*'
     parts = re.split(pattern, content)

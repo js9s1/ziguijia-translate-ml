@@ -391,10 +391,14 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
 
     # ── Some segments need generation — init GPU model ──────
     from audio_utils import NingAudio
+    import gpu_manage as _gm
 
     audio = NingAudio(audio_prompt=audio_prompt)
-    audio.setup()
-    sample_rate = audio.sample_rate
+    audio._ensure_model(target_language)
+    if target_language == "id":
+        sample_rate = _gm._indonesian_model.sr
+    else:
+        sample_rate = audio.sample_rate
 
     adjusted_subs = []
     segments_info = []

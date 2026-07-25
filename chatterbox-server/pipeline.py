@@ -14,7 +14,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 
 from config import (
     AUDIO_PROMPT_PATH,
@@ -65,17 +65,24 @@ def run_gen_audio_step(
     job_log(access_code, output_dir, "--- gen_audio ---")
 
     with open(log_path, "a") as proc_log:
-        with redirect_stdout(proc_log):
+        with redirect_stdout(proc_log), redirect_stderr(proc_log):
             import sys
             sys.path.insert(0, PROJECT_ROOT)
             from gen_audio import process_with_direct
-            result = process_with_direct(
-                srt_path, audio_prompt, temperature, output_dir,
-                assets_dir=os.path.join(PROJECT_ROOT, "..", "assets"),
-                target_language=target_language,
-                cfg_weight=cfg_weight,
-                exaggeration=exaggeration,
-            )
+            try:
+                result = process_with_direct(
+                    srt_path, audio_prompt, temperature, output_dir,
+                    assets_dir=os.path.join(PROJECT_ROOT, "..", "assets"),
+                    target_language=target_language,
+                    cfg_weight=cfg_weight,
+                    exaggeration=exaggeration,
+                )
+            except SystemExit:
+                raise
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                raise
 
     if result is None:
         raise RuntimeError("gen_audio produced no output (no subtitles?)")
