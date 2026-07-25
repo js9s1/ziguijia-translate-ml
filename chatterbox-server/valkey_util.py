@@ -19,7 +19,7 @@ _valkey_client: valkey.Valkey | None = None
 _available = False
 
 
-def get_redis() -> valkey.Valkey | None:
+def get_valkey() -> valkey.Valkey | None:
     """Return the shared Valkey client (decode_responses=True), or ``None`` if unreachable."""
     global _valkey_client, _available
     if _valkey_client is not None:
@@ -46,7 +46,7 @@ def get_redis() -> valkey.Valkey | None:
 
 def is_available() -> bool:
     """Return True if Valkey is reachable."""
-    get_redis()
+    get_valkey()
     return _available
 
 
@@ -63,7 +63,7 @@ def check_rate_limit(key: str, limit: int, window: int) -> bool:
         limit:  Max requests per window.
         window: Window size in seconds.
     """
-    r = get_redis()
+    r = get_valkey()
     if r is None:
         return True  # no Valkey → allow (in-memory fallback handled by caller)
     try:
@@ -81,7 +81,7 @@ def check_rate_limit(key: str, limit: int, window: int) -> bool:
 
 def cache_get(key: str) -> str | None:
     """Get a cached value. Returns None on miss or Valkey failure."""
-    r = get_redis()
+    r = get_valkey()
     if r is None:
         return None
     try:
@@ -92,7 +92,7 @@ def cache_get(key: str) -> str | None:
 
 def cache_set(key: str, value: str, ttl: int = 300):
     """Set a cached value with TTL (seconds). No-op when Valkey is down."""
-    r = get_redis()
+    r = get_valkey()
     if r is None:
         return
     try:
@@ -113,7 +113,7 @@ def publish_job_status(access_code: str, status: str, **extra):
 
         {"access_code": "...", "status": "...", ...extra_fields...}
     """
-    r = get_redis()
+    r = get_valkey()
     if r is None:
         return
     try:

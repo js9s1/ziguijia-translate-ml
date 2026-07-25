@@ -4,6 +4,16 @@ import logging
 
 from flask import Blueprint, jsonify, request, send_from_directory, session
 from middleware import email_rate_limit, login_required, rate_limit
+from pydantic import ValidationError
+from schemas import (
+    ChangePasswordRequest,
+    LoginRequest,
+    RegisterRequest,
+    ResendCodeRequest,
+    ResetPasswordConfirmRequest,
+    ResetPasswordRequest,
+    VerifyRequest,
+)
 
 auth_bp = Blueprint("auth", __name__)
 logger = logging.getLogger(__name__)
@@ -21,9 +31,12 @@ def _get_user_manager():
 def auth_register():
     if request.method == "GET":
         return send_from_directory(HTML_DIR, "register.html")
-    data = request.get_json()
-    email = data.get("email", "").strip().lower()
-    password = data.get("password", "")
+    try:
+        req = RegisterRequest.model_validate(request.get_json(silent=True) or {})
+    except ValidationError as e:
+        return jsonify({"success": False, "error": f"请填写邮箱和密码 ({e.errors()[0]['msg']})"})
+    email = req.email.strip().lower()
+    password = req.password
     if not email or not password:
         return jsonify({"success": False, "error": "请填写邮箱和密码"})
     result = _get_user_manager().register(email, password)
@@ -33,9 +46,9 @@ def auth_register():
 @auth_bp.route("/auth/verify", methods=["POST"])
 @rate_limit
 def auth_verify():
-    data = request.get_json()
-    email = data.get("email", "").strip().lower()
-    code = data.get("code", "").strip()
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email", "") or "").strip().lower()
+    code = (data.get("code", "") or "").strip()
     result = _get_user_manager().verify(email, code)
     return jsonify(result)
 
@@ -45,9 +58,12 @@ def auth_verify():
 def auth_login():
     if request.method == "GET":
         return send_from_directory(HTML_DIR, "login.html")
-    data = request.get_json()
-    email = data.get("email", "").strip().lower()
-    password = data.get("password", "")
+    try:
+        req = LoginRequest.model_validate(request.get_json(silent=True) or {})
+    except ValidationError as e:
+        return jsonify({"success": False, "error": f"请填写邮箱和密码 ({e.errors()[0]['msg']})"})
+    email = req.email.strip().lower()
+    password = req.password
     result = _get_user_manager().login(email, password)
     if result["success"]:
         session["user_id"] = result["user"]["id"]
@@ -68,19 +84,20 @@ def auth_logout():
 def auth_change_password():
     if request.method == "GET":
         return send_from_directory(HTML_DIR, "change-password.html")
-    data = request.get_json()
-    old_password = data.get("old_password", "")
-    new_password = data.get("new_password", "")
+    try:
+        req = ChangePasswordRequest.model_validate(request.get_json(silent=True) or {})
+    except ValidationError as e:
+        return jsonify({"success": False, "error": f"请填写密码 ({e.errors()[0]['msg']})"})
     email = session.get("user_email", "")
-    result = _get_user_manager().change_password(email, old_password, new_password)
+    result = _get_user_manager().change_password(email, req.old_password, req.new_password)
     return jsonify(result)
 
 
 @auth_bp.route("/auth/resend", methods=["POST"])
 @rate_limit
 def auth_resend():
-    data = request.get_json()
-    email = data.get("email", "").strip().lower()
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email", "") or "").strip().lower()
     result = _get_user_manager().resend_code(email)
     return jsonify(result)
 
@@ -107,11 +124,11 @@ def auth_csrf_token():
 def auth_reset_password():
     if request.method == "GET":
         return send_from_directory(HTML_DIR, "reset-password.html")
-    data = request.get_json()
-    email = data.get("email", "").strip().lower()
-    if not email:
-        return jsonify({"success": False, "error": "请输入邮箱"})
-
+    try:
+        req = ResetPasswordRequest.model_validate(request.get_json(silent=True) or {})
+    except ValidationError as e:
+        return jsonify({"success": False, "error": f"请输入邮箱 ({e.errors()[0]['msg']})"})
+    email = req.email.strip().lower()
     allowed, error_msg = email_rate_limit(email)
     if not allowed:
         return jsonify({"success": False, "error": error_msg})
@@ -123,11 +140,12 @@ def auth_reset_password():
 @auth_bp.route("/auth/reset-password/confirm", methods=["POST"])
 @rate_limit
 def auth_reset_password_confirm():
-    data = request.get_json()
-    email = data.get("email", "").strip().lower()
-    code = data.get("code", "").strip()
-    new_password = data.get("new_password", "")
-    if not email or not code or not new_password:
-        return jsonify({"success": False, "error": "请填写所有字段"})
+    try:
+        req = ResetPasswordConfirmRequest.model_validate(request.get_json(silent=True) or {})
+    except ValidationError as e:
+        return jsonify({"success": False, "error": f"请填写所有字段 ({e.errors()[0]['msg']})"})
+    email = req.email.strip().lower()
+    code = req.code.strip()
+    new_password = req.new_password
     result = _get_user_manager().reset_password(email, code, new_password)
     return jsonify(result)

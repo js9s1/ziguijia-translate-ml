@@ -5,6 +5,7 @@ import sys
 from contextlib import contextmanager
 
 from config import HY_MT_BACKEND, HY_MT_DIR
+from jobqueue import get_job_queue
 from log_utils import job_log
 
 
@@ -187,7 +188,6 @@ class CheckpointHelper:
 
     def done(self, name: str) -> bool:
         """Check if a checkpoint step has been completed."""
-        from jobqueue import get_job_queue
         ckpt = get_job_queue().get_checkpoint(self.access_code)
         parts = ckpt.split(",") if ckpt else []
         if self.valid_steps is not None:
@@ -196,7 +196,6 @@ class CheckpointHelper:
 
     def mark(self, name: str):
         """Mark a checkpoint step as completed."""
-        from jobqueue import get_job_queue
         ckpt = get_job_queue().get_checkpoint(self.access_code)
         parts = ([s for s in ckpt.split(",") if s] if ckpt else []) + [name]
         get_job_queue().set_checkpoint(self.access_code, ",".join(parts))

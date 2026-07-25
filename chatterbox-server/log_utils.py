@@ -4,6 +4,8 @@ import logging
 import os
 from contextlib import contextmanager
 
+from jobqueue import get_job_queue
+
 logger = logging.getLogger(__name__)
 
 
@@ -14,7 +16,6 @@ def job_log(access_code: str, output_dir: str, msg: str):
         f.write(msg + "\n")
         f.flush()
     logger.info(f"[Job {access_code}] {msg}")
-    from jobqueue import get_job_queue  # defer to avoid circular import
     get_job_queue().update_job_progress(access_code, msg)
 
 
@@ -30,7 +31,6 @@ def job_log_lines(access_code: str, output_dir: str, lines: list[str]):
             f.write(line + "\n")
     for line in lines:
         logger.info(f"[Job {access_code}] {line}")
-    from jobqueue import get_job_queue  # defer to avoid circular import
     get_job_queue().update_job_progress(access_code, f"Captured {len(lines)} output lines")
 
 

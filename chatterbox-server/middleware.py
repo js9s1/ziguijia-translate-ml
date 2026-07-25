@@ -13,10 +13,10 @@ from functools import wraps
 
 from config import AUDIO_TRACKS_DIR, VIDEO_DIR
 from flask import abort, jsonify, request, session
-from redis_util import (
+from valkey_util import (
     InMemoryRateLimiter,
     check_rate_limit,
-    get_redis,
+    get_valkey,
 )
 
 logger = logging.getLogger("chatterbox_server")
@@ -35,7 +35,7 @@ _email_limiter = InMemoryRateLimiter(EMAIL_RATE_LIMIT_MAX, EMAIL_RATE_LIMIT_WIND
 
 
 def _check_ip_rate_limit(ip_key: str) -> bool:
-    r = get_redis()
+    r = get_valkey()
     if r is not None:
         try:
             return check_rate_limit(ip_key, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW)
@@ -60,7 +60,7 @@ def rate_limit(f):
 def email_rate_limit(email: str) -> tuple[bool, str]:
     """Check per-email rate limit for password reset. Returns (allowed, error_message)."""
     key = f"rl:email:{email}"
-    r = get_redis()
+    r = get_valkey()
     allowed = True
     if r is not None:
         try:

@@ -18,6 +18,29 @@ os.environ["VALKEY_PASSWORD"] = ""
 # Ensure chatterbox-server is importable
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "chatterbox-server"))
 
+# ── Mock valkey module if unavailable ──
+try:
+    import valkey  # noqa: F401
+except ImportError:
+    from unittest import mock as _um  # noqa: E402
+    _valkey_module = _um.MagicMock()
+    _valkey_module.ConnectionError = type("ConnectionError", (Exception,), {})
+    _valkey_module.ValkeyError = type("ValkeyError", (Exception,), {})
+    _valkey_module.Valkey = _um.MagicMock
+    _valkey_module.from_url = _um.MagicMock()
+    sys.modules["valkey"] = _valkey_module
+
+# ── Mock werkzeug.security if unavailable (tests don't use real password hashing) ──
+try:
+    import werkzeug.security  # noqa: F401
+except ImportError:
+    from unittest import mock as _um2  # noqa: E402
+    _wz = _um2.MagicMock()
+    _wz.check_password_hash = lambda h, p: h == f"hashed:{p}"
+    _wz.generate_password_hash = lambda p: f"hashed:{p}"
+    sys.modules["werkzeug"] = _um2.MagicMock()
+    sys.modules["werkzeug.security"] = _wz
+
 
 # ── Prevent JobQueue singleton from starting worker thread ──
 import jobqueue as _jq  # noqa: E402
@@ -58,16 +81,23 @@ def _patch_db_paths(temp_db_dir, monkeypatch):
     # Clear singletons before each test module so DBs are fresh
     from jobqueue import JobQueue
     from auth import UserManager
-    from audio_utils import NingAudio
     JobQueue.clear()
     UserManager.clear()
-    NingAudio.clear()
+    try:
+        from audio_utils import NingAudio
+        NingAudio.clear()
+    except Exception:
+        pass  # GPU modules not available — fine for pure-unit tests
 
     yield
 
     JobQueue.clear()
     UserManager.clear()
-    NingAudio.clear()
+    try:
+        from audio_utils import NingAudio
+        NingAudio.clear()
+    except Exception:
+        pass
 
 
 @pytest.fixture

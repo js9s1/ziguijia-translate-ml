@@ -11,7 +11,7 @@ import time
 import uuid
 
 from flask import Flask, g, jsonify, request, session
-from redis_util import is_available as redis_available
+from valkey_util import is_available as valkey_available
 
 
 def _get_secret_key() -> str:
@@ -45,7 +45,7 @@ def create_app():
         PERMANENT_SESSION_LIFETIME=86400 * 7,
     )
 
-    if redis_available():
+    if valkey_available():
         from cachelib.file import FileSystemCache
 
         from flask_session import Session

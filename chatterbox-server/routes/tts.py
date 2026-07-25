@@ -4,6 +4,8 @@ import json
 import logging
 
 from flask import Blueprint, Response, jsonify, request, session
+from jobqueue import get_job_queue
+from lazy_imports import _lazy
 from middleware import login_required, parse_job_params, validate_file_upload
 
 tts_bp = Blueprint("tts", __name__)
@@ -12,18 +14,13 @@ logger = logging.getLogger(__name__)
 MAX_TEXT_LENGTH = 500
 
 
-def _lazy(module_name: str, attr: str):
-    from lazy_imports import _lazy as _l
-    return _l(module_name, attr)
-
-
 # ── TTS routes ────────────────────────────────────────────
 
 @tts_bp.route("/tts/process", methods=["POST"])
 @login_required
 def tts_process():
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
         text = data.get("text", "")
         if not text:
             return jsonify({"error": "Missing text"}), 400
@@ -44,7 +41,6 @@ def tts_process():
 
 @tts_bp.route("/tts/status/<access_code>", methods=["GET"])
 def tts_status(access_code):
-    from jobqueue import get_job_queue
     status = get_job_queue().get_status(access_code)
     if not status:
         return jsonify({"error": "Job not found"}), 404
@@ -55,9 +51,8 @@ def tts_status(access_code):
 def tts_status_stream(access_code):
     """SSE endpoint: pushes job status updates until the job finishes."""
     def generate():
-        from jobqueue import get_job_queue
-        from redis_util import get_redis
-        r = get_redis()
+        from valkey_util import get_valkey
+        r = get_valkey()
         if r is None:
             status = get_job_queue().get_status(access_code)
             yield f"data: {json.dumps(status or {'error': 'Job not found'})}\n\n"
@@ -108,7 +103,7 @@ def audio_process():
                                         exaggeration=params["exaggeration"])
             return jsonify(result)
         else:
-            data = request.get_json()
+            data = request.get_json(silent=True) or {}
             text = data.get("text", "")
             if not text:
                 return jsonify({"error": "Missing text"}), 400

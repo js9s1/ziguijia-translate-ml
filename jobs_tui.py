@@ -62,8 +62,7 @@ _TYPE_MAP = {
     "_run_video_custom_job": "自定义视频",
     "_run_tts_job": "语音合成",
     "_run_video_auto_job": "自动翻译视频",
-    "_run_audio_file_job": "音频文件合成",
-    "_run_audio_segmentation_job": "音频文件合成",
+    "_run_audio_segmentation_job": "音频分段合成",
     "_run_video_ocr_job": "OCR翻译视频",
     "_run_video_ning_ocr_job": "宁视频OCR翻译",
     "_run_video_ning_ocr_translate_only_job": "宁视频OCR仅翻译",
@@ -90,6 +89,16 @@ _STS_LABEL_MAP = {
     "failed": "已失败",
     "cancelled": "已取消",
     "deleted": "已删除",
+}
+
+_MENU_KEY_MAP: dict[str, str] = {
+    "d": "detail", "D": "detail",
+    "o": "open_dir", "O": "open_dir",
+    "k": "cancel", "K": "cancel",
+    "s": "resubmit",
+    "u": "user_jobs", "U": "user_jobs",
+    "r": "delete",
+    "c": "close", "C": "close",
 }
 
 
@@ -260,7 +269,6 @@ def _purge_step_output(output_dir: str, video_number: str, step: str):
     cached wavs and meta JSONs) is preserved so unchanged segments skip
     re-generation on resubmit.
     """
-    import shutil
     paths = []
     if step == "download":
         paths.append(os.path.join(output_dir, f"{video_number}.mp4"))
@@ -967,7 +975,159 @@ def render_detail(job: Job, mode: str) -> Panel:
     return Panel("")
 
 
-def load_user_jobs(user_id: int) -> list[Job]:
+def _yes_no_confirm(console: Console, message: str, border_style: str = "red") -> bool:
+    """Show a Y/N confirmation prompt. Returns True if confirmed."""
+    confirm_panel = Panel(
+        Align.center(message + "\n\n[reverse] Y/Enter=确认  N=取消 [/]"),
+        border_style=border_style,
+        padding=(1, 2),
+        width=50,
+    )
+    console.clear()
+    console.print(Align.center(confirm_panel))
+    console.print(Align.center("[dim]Y/Enter=确认  N=取消[/dim]"))
+    while True:
+        ch = os.read(sys.stdin.fileno(), 1)
+        if not ch:
+            continue
+        ch = ch.decode("utf-8", errors="replace").lower()
+        if ch in ("y", "\r", "\n"):
+            return True
+        if ch in ("n", "\x1b", "q"):
+            return False
+
+
+def _navigate_cursor(state: State, key: str, page_size: int = PAGE_SIZE, visible_len: int | None = None) -> bool:
+    """Update cursor/page in *state* for UP/DOWN keys. Returns True if changed."""
+    visible_len = visible_len if visible_len is not None else len(state.visible)
+    if key == "UP":
+        if state.cursor > 0:
+            state.cursor -= 1
+        elif state.page < state.pages - 1:
+            state.page += 1
+            state.cursor = max(0, visible_len - 1)
+        else:
+            return False
+    elif key == "DOWN":
+        if state.cursor < visible_len - 1:
+            state.cursor += 1
+        elif state.page > 0:
+            state.page -= 1
+            state.cursor = 0
+        else:
+            return False
+    else:
+        return False
+    return True
+
+
+def _pick_resubmit_checkpoint(console: Console, s: State, job: Job) -> bool:
+    """Interactive checkpoint picker for resubmit. Returns True if job was resubmitted."""
+    checkpoint_str = get_checkpoint(job.access_code)
+    steps = [st.strip() for st in checkpoint_str.split(",") if st.strip()] if checkpoint_str else []
+
+    if not steps:
+        if not _yes_no_confirm(
+            console,
+            f"[bold yellow]确定要重新提交任务 {job.access_code} 吗？[/]\n\n[dim]无检查点，将从头开始。[/]",
+            "yellow",
+        ):
+            return False
+        msg = resubmit_job(job.access_code)
+        s.message(msg)
+        s.menu_open = False
+        s.reload(reset_page=False)
+        return True
+
+    while True:
+        console.clear()
+        console.print(render_summary(s.all, s.search_query))
+        console.print()
+        console.print(render_table(s))
+        console.print()
+        lines = [f"[bold yellow]重新提交任务 {job.access_code}[/]", ""]
+        lines.append("[dim]选择从哪个步骤重新开始（该步骤及之后将被清除）：[/]")
+        lines.append("")
+        for i, step in enumerate(steps):
+            lines.append(f"  {i+1}. {step}")
+        lines.append("  0. [从头开始]")
+        lines.append("")
+        lines.append("[dim]输入数字  Enter=确认  ESC=取消[/dim]")
+        console.print(Panel("\n".join(lines), border_style="yellow", padding=(1, 2), width=60))
+
+        ch = os.read(sys.stdin.fileno(), 1)
+        if not ch:
+            continue
+        c = ch.decode("utf-8", errors="replace")
+        if c == "\x1b":
+            return False
+        if c.isdigit():
+            choice = int(c)
+            if choice == 0:
+                keep_steps = []
+            elif 1 <= choice <= len(steps):
+                keep_steps = steps[:choice - 1]
+            else:
+                continue
+            msg = resubmit_job(job.access_code, keep_steps=keep_steps)
+            s.message(msg)
+            s.menu_open = False
+            s.reload(reset_page=False)
+            return True
+    return False
+
+
+def _dispatch_menu_action(action: str, s: State, console: Console, job: Job) -> bool:
+    """Execute a menu action. Returns True to stay in menu, False to close."""
+    if action == "close":
+        s.menu_open = False
+        return False
+
+    if action == "detail":
+        console.clear()
+        console.print(render_detail(job, "detail"))
+        console.print("\n[dim]按任意键返回...[/dim]")
+        os.read(sys.stdin.fileno(), 1)
+        return True
+
+    if action == "open_dir":
+        if job.output_dir:
+            subprocess.Popen(
+                ["ghostty", "--working-directory=" + job.output_dir,
+                 "-e", "bash", "-c", "echo Open: " + job.access_code + "; exec $SHELL"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        return True
+
+    if action == "output":
+        run_output_browser(job, console)
+        return True
+
+    if action == "user_jobs":
+        show_user_jobs_tui(job, s, console)
+        return True
+
+    if action == "cancel":
+        cancel_job(job.access_code)
+        s.message(f"✅ 任务 {job.access_code} 已取消")
+        s.menu_open = False
+        s.reload(reset_page=False)
+        return False
+
+    if action == "resubmit":
+        _pick_resubmit_checkpoint(console, s, job)
+        return False
+
+    if action == "delete":
+        if _yes_no_confirm(console, f"[bold yellow]确定要删除任务 {job.access_code} 吗？[/]", "red"):
+            delete_job(job.access_code)
+            s.message(f"✅ 任务 {job.access_code} 已删除")
+            s.menu_open = False
+            s.reload(reset_page=False)
+            return False
+        return True
+
+    return True
     """Load all jobs for a given user_id."""
     conn = get_conn()
     rows = conn.execute(
@@ -1184,7 +1344,6 @@ def run_output_browser(job: Job, console: Console):
                 ))
                 console.print("\n[dim]按 Enter 启动 mpv...[/dim]")
                 os.read(sys.stdin.fileno(), 1)
-                import subprocess
                 subprocess.Popen(
                     ["mpv", "--keep-open=yes", fpath],
                     stdout=subprocess.DEVNULL,
@@ -1200,7 +1359,6 @@ def run_output_browser(job: Job, console: Console):
                 ))
                 console.print("\n[dim]按 Enter 启动 ghostty...[/dim]")
                 os.read(sys.stdin.fileno(), 1)
-                import subprocess
                 subprocess.Popen(
                     ["ghostty", "-e", "sh", "-c", f"cat '{fpath}' | sed 's/\\r/\\n/g' | less"],
                     stdout=subprocess.DEVNULL,
@@ -1318,179 +1476,17 @@ def run_menu_screen(s: State, console: Console):
             return
 
         # ── Direct action keystrokes ──────────────────────
-        if key in ("d", "D"):
-            action = "detail"
-        elif key in ("o", "O"):
-            action = "open_dir"
-        elif key in ("k", "K"):
-            action = "cancel"
-        elif key in ("s",):
-            action = "resubmit"
-        elif key in ("u", "U"):
-            action = "user_jobs"
-        elif key in ("r",):
-            action = "delete"
-        elif key in ("c", "C"):
-            action = "close"
-        else:
-            action = None
-
-        if action:
-            if action == "close":
-                s.menu_open = False
+        if key in _MENU_KEY_MAP:
+            action = _MENU_KEY_MAP[key]
+            if not _dispatch_menu_action(action, s, console, job):
                 return
-
-            elif action == "detail":
-                console.clear()
-                console.print(render_detail(job, "detail"))
-                console.print("\n[dim]按任意键返回...[/dim]")
-                os.read(sys.stdin.fileno(), 1)
-
-            elif action == "open_dir":
-                if job.output_dir:
-                    subprocess.Popen(["ghostty", "--working-directory=" + job.output_dir,
-                                     "-e", "bash", "-c", "echo Open: " + job.access_code + "; exec $SHELL"],
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-            elif action == "output":
-                run_output_browser(job, console)
-
-            elif action == "user_jobs":
-                show_user_jobs_tui(job, s, console)
-                continue
-
-            elif action == "cancel":
-                cancel_job(job.access_code)
-                s._message = f"✅ 任务 {job.access_code} 已取消"
-                s.menu_open = False
-                s.reload(reset_page=False)
-                return
-
-            elif action == "resubmit":
-                checkpoint_str = get_checkpoint(job.access_code)
-                steps = [st.strip() for st in checkpoint_str.split(",") if st.strip()] if checkpoint_str else []
-
-                if steps:
-                    while True:
-                        console.clear()
-                        console.print(render_summary(s.all, s.search_query))
-                        console.print()
-                        console.print(render_table(s))
-                        console.print()
-                        lines = [f"[bold yellow]重新提交任务 {job.access_code}[/]", ""]
-                        lines.append("[dim]选择从哪个步骤重新开始（该步骤及之后将被清除）：[/]")
-                        lines.append("")
-                        for i, step in enumerate(steps):
-                            lines.append(f"  {i+1}. {step}")
-                        lines.append(f"  0. [从头开始]")
-                        lines.append("")
-                        lines.append("[dim]输入数字  Enter=确认  ESC=取消[/dim]")
-                        console.print(Panel("\n".join(lines), border_style="yellow", padding=(1, 2), width=60))
-                        
-                        # Read a single digit
-                        ch = os.read(sys.stdin.fileno(), 1)
-                        if not ch:
-                            continue
-                        c = ch.decode("utf-8", errors="replace")
-                        if c == "\x1b":
-                            break
-                        elif c.isdigit():
-                            choice = int(c)
-                            if choice == 0:
-                                keep_steps = []
-                            elif 1 <= choice <= len(steps):
-                                keep_steps = steps[:choice-1]
-                            else:
-                                continue
-                            try:
-                                msg = resubmit_job(job.access_code, keep_steps=keep_steps)
-                                s.message(msg)
-                                s.menu_open = False
-                                s.reload(reset_page=False)
-                                return
-                            except Exception as e:
-                                s.message(f"❌ 重新提交失败: {e}")
-                                s.menu_open = False
-                                s.reload(reset_page=False)
-                                return
-                else:
-                    console.clear()
-                    console.print(render_summary(s.all, s.search_query))
-                    console.print()
-                    console.print(render_table(s))
-                    console.print()
-                    confirm_panel = Panel(
-                        Align.center(
-                            f"[bold yellow]确定要重新提交任务 {job.access_code} 吗？[/]\n\n"
-                            f"[dim]无检查点，将从头开始。[/]\n\n"
-                            f"[reverse] Y/Enter=确认  N=取消 [/]"
-                        ),
-                        border_style="yellow", padding=(1, 2), width=60,
-                    )
-                    console.print(Align.center(confirm_panel))
-                    while True:
-                        ch = os.read(sys.stdin.fileno(), 1)
-                        if not ch:
-                            continue
-                        ch = ch.decode("utf-8", errors="replace").lower()
-                        if ch in ("y", "\r", "\n"):
-                            msg = resubmit_job(job.access_code)
-                            s._message = msg
-                            s.menu_open = False
-                            s.reload(reset_page=False)
-                            return
-                        elif ch in ("n", "\x1b", "q"):
-                            break
-                continue
-
-            elif action == "delete":
-                console.clear()
-                console.print(render_summary(s.all, s.search_query))
-                console.print()
-                console.print(render_table(s))
-                console.print()
-                confirm_panel = Panel(
-                    Align.center(f"[bold yellow]确定要删除任务 {job.access_code} 吗？[/]\n\n[reverse] Y/Enter=确认  N=取消 [/]"),
-                    border_style="red",
-                    padding=(1, 2),
-                    width=50,
-                )
-                console.print(Align.center(confirm_panel))
-                while True:
-                    ch = os.read(sys.stdin.fileno(), 1)
-                    if not ch:
-                        continue
-                    ch = ch.decode("utf-8", errors="replace").lower()
-                    if ch in ("y", "\r", "\n"):
-                        delete_job(job.access_code)
-                        s._message = f"✅ 任务 {job.access_code} 已删除"
-                        s.menu_open = False
-                        s.reload(reset_page=False)
-                        return
-                    elif ch in ("n", "\x1b", "q"):
-                        break
-                continue
             continue
 
         # ── Job list navigation ──────────────────────────
-        if key == "UP":
-            if s.cursor > 0:
-                s.cursor -= 1
-            elif s.page < s.pages - 1:
-                s.page += 1
-                s.cursor = len(s.visible) - 1
-            s.menu_cursor = 0
-            s.clamp_menu_cursor()
-
-        elif key == "DOWN":
-            max_cursor = len(s.visible) - 1
-            if s.cursor < max_cursor:
-                s.cursor += 1
-            elif s.page > 0:
-                s.page -= 1
-                s.cursor = 0
-            s.menu_cursor = 0
-            s.clamp_menu_cursor()
+        if key in ("UP", "DOWN"):
+            if _navigate_cursor(s, key):
+                s.menu_cursor = 0
+                s.clamp_menu_cursor()
 
         # ── Popup navigation ─────────────────────────────
         elif key in ("LEFT",):
@@ -1509,143 +1505,8 @@ def run_menu_screen(s: State, console: Console):
             opts = s.menu_options()
             if s.menu_cursor >= len(opts):
                 continue
-            action = opts[s.menu_cursor][0]
-
-            if action == "close":
-                s.menu_open = False
+            if not _dispatch_menu_action(opts[s.menu_cursor][0], s, console, job):
                 return
-
-            elif action == "detail":
-                console.clear()
-                console.print(render_detail(job, "detail"))
-                console.print("\n[dim]按任意键返回...[/dim]")
-                os.read(sys.stdin.fileno(), 1)
-
-            elif action == "open_dir":
-                if job.output_dir:
-                    subprocess.Popen(["ghostty", "--working-directory=" + job.output_dir,
-                                     "-e", "bash", "-c", "echo Open: " + job.access_code + "; exec $SHELL"],
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-            elif action == "output":
-                run_output_browser(job, console)
-
-            elif action == "user_jobs":
-                show_user_jobs_tui(job, s, console)
-                continue
-
-            elif action == "cancel":
-                cancel_job(job.access_code)
-                s._message = f"✅ 任务 {job.access_code} 已取消"
-                s.menu_open = False
-                s.reload(reset_page=False)
-                return
-
-            elif action == "resubmit":
-                checkpoint_str = get_checkpoint(job.access_code)
-                steps = [st.strip() for st in checkpoint_str.split(",") if st.strip()] if checkpoint_str else []
-
-                if steps:
-                    while True:
-                        console.clear()
-                        console.print(render_summary(s.all, s.search_query))
-                        console.print()
-                        console.print(render_table(s))
-                        console.print()
-                        lines = [f"[bold yellow]重新提交任务 {job.access_code}[/]", ""]
-                        lines.append("[dim]选择从哪个步骤重新开始（该步骤及之后将被清除）：[/]")
-                        lines.append("")
-                        for i, step in enumerate(steps):
-                            lines.append(f"  {i+1}. {step}")
-                        lines.append(f"  0. [从头开始]")
-                        lines.append("")
-                        lines.append("[dim]输入数字  Enter=确认  ESC=取消[/dim]")
-                        console.print(Panel("\n".join(lines), border_style="yellow", padding=(1, 2), width=60))
-                        
-                        # Read a single digit
-                        ch = os.read(sys.stdin.fileno(), 1)
-                        if not ch:
-                            continue
-                        c = ch.decode("utf-8", errors="replace")
-                        if c == "\x1b":
-                            break
-                        elif c.isdigit():
-                            choice = int(c)
-                            if choice == 0:
-                                keep_steps = []
-                            elif 1 <= choice <= len(steps):
-                                keep_steps = steps[:choice-1]
-                            else:
-                                continue
-                            try:
-                                msg = resubmit_job(job.access_code, keep_steps=keep_steps)
-                                s.message(msg)
-                                s.menu_open = False
-                                s.reload(reset_page=False)
-                                return
-                            except Exception as e:
-                                s.message(f"❌ 重新提交失败: {e}")
-                                s.menu_open = False
-                                s.reload(reset_page=False)
-                                return
-                else:
-                    console.clear()
-                    console.print(render_summary(s.all, s.search_query))
-                    console.print()
-                    console.print(render_table(s))
-                    console.print()
-                    confirm_panel = Panel(
-                        Align.center(
-                            f"[bold yellow]确定要重新提交任务 {job.access_code} 吗？[/]\n\n"
-                            f"[dim]无检查点，将从头开始。[/]\n\n"
-                            f"[reverse] Y/Enter=确认  N=取消 [/]"
-                        ),
-                        border_style="yellow", padding=(1, 2), width=60,
-                    )
-                    console.print(Align.center(confirm_panel))
-                    while True:
-                        ch = os.read(sys.stdin.fileno(), 1)
-                        if not ch:
-                            continue
-                        ch = ch.decode("utf-8", errors="replace").lower()
-                        if ch in ("y", "\r", "\n"):
-                            msg = resubmit_job(job.access_code)
-                            s._message = msg
-                            s.menu_open = False
-                            s.reload(reset_page=False)
-                            return
-                        elif ch in ("n", "\x1b", "q"):
-                            break
-                continue
-
-            elif action == "delete":
-                # ── Confirmation dialog ──
-                console.clear()
-                console.print(render_summary(s.all, s.search_query))
-                console.print()
-                console.print(render_table(s))
-                console.print()
-                confirm_panel = Panel(
-                    Align.center(f"[bold yellow]确定要删除任务 {job.access_code} 吗？[/]\n\n[reverse] Y/Enter=确认  N=取消 [/]"),
-                    border_style="red",
-                    padding=(1, 2),
-                    width=50,
-                )
-                console.print(Align.center(confirm_panel))
-                while True:
-                    ch = os.read(sys.stdin.fileno(), 1)
-                    if not ch:
-                        continue
-                    ch = ch.decode("utf-8", errors="replace").lower()
-                    if ch in ("y", "\r", "\n"):
-                        delete_job(job.access_code)
-                        s._message = f"✅ 任务 {job.access_code} 已删除"
-                        s.menu_open = False
-                        s.reload(reset_page=False)
-                        return
-                    elif ch in ("n", "\x1b", "q"):
-                        break
-                continue
 
 
 # ── Search mode ────────────────────────────────────────
@@ -1671,7 +1532,6 @@ def run_search(s: State, console: Console):
 
         if ch == "\x1b":
             # Could be ESC or escape sequence — check for more bytes
-            import select
             r, _, _ = select.select([sys.stdin.fileno()], [], [], 0.1)
             if not r:
                 # Pure ESC — clear search, keep list filtered

@@ -4,15 +4,11 @@ import logging
 import os
 
 from flask import Blueprint, jsonify, request, session
+from lazy_imports import _lazy
 from middleware import get_video_metadata, login_required, parse_job_params, validate_file_upload
 
 video_bp = Blueprint("video", __name__)
 logger = logging.getLogger(__name__)
-
-
-def _lazy(module_name: str, attr: str):
-    from lazy_imports import _lazy as _l
-    return _l(module_name, attr)
 
 
 # ── Cache helpers ─────────────────────────────────────────

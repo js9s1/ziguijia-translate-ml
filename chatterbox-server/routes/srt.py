@@ -3,15 +3,12 @@
 import logging
 
 from flask import Blueprint, jsonify, request, session
+from jobqueue import get_job_queue
+from lazy_imports import _lazy
 from middleware import login_required, parse_job_params, validate_file_upload
 
 srt_bp = Blueprint("srt", __name__)
 logger = logging.getLogger(__name__)
-
-
-def _lazy(module_name: str, attr: str):
-    from lazy_imports import _lazy as _l
-    return _l(module_name, attr)
 
 
 @srt_bp.route("/srt/process", methods=["POST"])
@@ -37,7 +34,6 @@ def srt_process():
 
 @srt_bp.route("/srt/status/<access_code>", methods=["GET"])
 def srt_status(access_code):
-    from jobqueue import get_job_queue
     status = get_job_queue().get_status(access_code)
     if not status:
         return jsonify({"error": "Job not found"}), 404
@@ -47,7 +43,6 @@ def srt_status(access_code):
 @srt_bp.route("/srt/resubmit/<access_code>", methods=["POST"])
 def srt_resubmit(access_code):
     try:
-        from jobqueue import get_job_queue
         result = get_job_queue().resubmit_job(access_code)
         if result["success"]:
             return jsonify(result)

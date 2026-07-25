@@ -9,7 +9,8 @@ import os
 import zipfile
 
 from flask import Blueprint, jsonify, request, send_file, send_from_directory
-from redis_util import cache_get, cache_set
+from jobqueue import get_job_queue
+from valkey_util import cache_get, cache_set
 
 api_bp = Blueprint("api", __name__)
 logger = logging.getLogger(__name__)
@@ -53,7 +54,6 @@ def api_languages():
 
 @api_bp.route("/api/jobs/<access_code>/status", methods=["GET"])
 def api_job_status(access_code):
-    from jobqueue import get_job_queue
     status = get_job_queue().get_status(access_code)
     if not status:
         return jsonify({"error": "Job not found"}), 404

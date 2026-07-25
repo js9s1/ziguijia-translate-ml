@@ -6,6 +6,7 @@ import re
 
 from config import FILENAME_TO_CHECKPOINT_STEP
 from flask import Blueprint, jsonify, request, send_file
+from jobqueue import get_job_queue
 from middleware import csrf_required, login_required, safe_file_path
 
 files_bp = Blueprint("files", __name__)
@@ -100,7 +101,7 @@ def files_download():
 @csrf_required
 def files_delete():
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
         file_path = data.get("path")
         if not file_path:
             return jsonify({"success": False, "error": "No file specified"}), 400
@@ -113,7 +114,6 @@ def files_delete():
 
         access_code = data.get("access_code")
         if access_code:
-            from jobqueue import get_job_queue
             get_job_queue().clear_checkpoint_for_file(access_code, file_path)
 
         return jsonify({"success": True})
@@ -129,7 +129,7 @@ def files_delete():
 @csrf_required
 def files_save_srt():
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
         file_path = data.get("path")
         content = data.get("content")
         access_code = data.get("access_code")
@@ -151,7 +151,6 @@ def files_save_srt():
         with open(safe, 'w', encoding='utf-8') as f:
             f.write(content)
 
-        from jobqueue import get_job_queue
         jq = get_job_queue()
         basename = os.path.basename(safe)
         step = FILENAME_TO_CHECKPOINT_STEP.get(basename)
@@ -173,7 +172,6 @@ def files_save_srt():
 @csrf_required
 def files_srt_resubmit(access_code):
     try:
-        from jobqueue import get_job_queue
         jq = get_job_queue()
         result = jq.resubmit_job(access_code)
         if result["success"]:
