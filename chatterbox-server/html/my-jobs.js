@@ -34,27 +34,29 @@
       data.jobs.forEach(function (job) {
         var statusLabel = labels[job.status] || job.status;
         var actions = '';
+        // resubmit / cancel (left of view/delete)
+        if (job.status === 'failed' || job.status === 'cancelled') {
+          actions +=
+            '<button class="btn-resubmit" data-code="' +
+            job.access_code +
+            '">重新提交</button> ';
+        } else if (job.status === 'pending' || job.status === 'processing') {
+          actions +=
+            '<button class="btn-cancel" data-code="' +
+            job.access_code +
+            '">取消</button> ';
+        }
+        // view (second from right)
         actions +=
           '<a href="/result?code=' +
           job.access_code +
           '" class="btn-view">查看</a> ';
-
+        // delete (rightmost), for terminal states
         if (job.status === 'failed' || job.status === 'completed' || job.status === 'cancelled' || job.status === 'deleted') {
-          if (job.status === 'failed' || job.status === 'cancelled') {
-            actions +=
-              '<button class="btn-resubmit" data-code="' +
-              job.access_code +
-              '">重新提交</button> ';
-          }
           actions +=
             '<button class="btn-delete" data-code="' +
             job.access_code +
             '">删除</button>';
-        } else {
-          actions +=
-            '<button class="btn-cancel" data-code="' +
-            job.access_code +
-            '">取消</button>';
         }
 
         html +=
