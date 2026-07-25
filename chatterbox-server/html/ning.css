@@ -133,6 +133,24 @@ button {
     cursor: pointer;
     font-size: 16px;
 }
+.btn-view,
+.btn-cancel,
+.btn-delete,
+.btn-resubmit {
+    width: auto;
+    padding: 0 4px;
+    font-size: 0.85em;
+    line-height: 1.5;
+    border-radius: 3px;
+}
+.btn-view { background: #4CAF50; color: white; text-decoration: none; display: inline-block; }
+.btn-view:hover { background: #45a049; }
+.btn-cancel { background: #f44336; }
+.btn-cancel:hover { background: #d32f2f; }
+.btn-delete { background: #999; }
+.btn-delete:hover { background: #777; }
+.btn-resubmit { background: #FF9800; }
+.btn-resubmit:hover { background: #F57C00; }
 button:hover {
     background-color: var(--color-primary-hover);
 }
@@ -437,11 +455,3 @@ audio {
         padding: 8px 10px;
         font-size: 0.85em;
     }
-
-    .btn-view,
-    .btn-cancel,
-    .btn-delete {
-        padding: 4px 10px;
-        font-size: 0.8em;
-    }
-}
