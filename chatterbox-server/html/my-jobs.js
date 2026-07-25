@@ -40,6 +40,12 @@
           '" class="btn-view">查看</a> ';
 
         if (job.status === 'failed' || job.status === 'completed' || job.status === 'cancelled' || job.status === 'deleted') {
+          if (job.status === 'failed' || job.status === 'cancelled') {
+            actions +=
+              '<button class="btn-resubmit" data-code="' +
+              job.access_code +
+              '">重新提交</button> ';
+          }
           actions +=
             '<button class="btn-delete" data-code="' +
             job.access_code +
@@ -96,6 +102,33 @@
               alert('取消失败: ' + err.message);
               self.disabled = false;
               self.textContent = '取消';
+            });
+        });
+      });
+
+      // Resubmit buttons
+      container.querySelectorAll('.btn-resubmit').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var code = this.getAttribute('data-code');
+          if (!confirm('确定要重新提交任务 ' + code + ' 吗？')) return;
+          var self = this;
+          self.disabled = true;
+          self.textContent = '提交中...';
+          fetchWithCsrf('/api/jobs/' + code + '/resubmit', { method: 'POST' })
+            .then(function (r) { return r.json(); })
+            .then(function (result) {
+              if (result.success) {
+                location.reload();
+              } else {
+                alert('重新提交失败: ' + (result.error || '未知错误'));
+                self.disabled = false;
+                self.textContent = '重新提交';
+              }
+            })
+            .catch(function (err) {
+              alert('重新提交失败: ' + err.message);
+              self.disabled = false;
+              self.textContent = '重新提交';
             });
         });
       });
