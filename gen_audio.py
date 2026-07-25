@@ -153,17 +153,21 @@ def _migrate_cache(cache, new_subs, output_dir):
 
     Old entries with no match in the new SRT are discarded.
     New segments with no match are left empty for regeneration.
+
+    Uses a FIFO list per content value to handle duplicate text across
+    multiple segments without one overwriting another.
     """
     if not cache:
         return
 
-    # Build content → (old_idx, duration) from old cache
-    old_map = {}
+    # Build content → list of (old_idx, duration) from old cache
+    # (list preserves order for duplicate content)
+    old_map: dict[str, list[tuple[int, float]]] = {}
     for old_idx_str, entry in list(cache.items()):
         old_idx = int(old_idx_str)
         content = entry.get("content", "")
         if content:
-            old_map[content] = (old_idx, entry.get("duration", 0.0))
+            old_map.setdefault(content, []).append((old_idx, entry.get("duration", 0.0)))
 
     # Match each new segment against old cache
     for i, sub in enumerate(new_subs):
@@ -171,8 +175,11 @@ def _migrate_cache(cache, new_subs, output_dir):
         if not clean_content.strip():
             continue
 
-        if clean_content in old_map:
-            old_idx, dur = old_map.pop(clean_content)
+        entries = old_map.get(clean_content)
+        if entries:
+            old_idx, dur = entries.pop(0)  # FIFO match
+            if not entries:
+                del old_map[clean_content]
             if old_idx != i:
                 old_wav = _combined_seg_path(output_dir, old_idx)
                 new_wav = _combined_seg_path(output_dir, i)
@@ -183,18 +190,22 @@ def _migrate_cache(cache, new_subs, output_dir):
                     os.remove(old_wav)
             cache[str(i)] = {"content": clean_content, "duration": dur}
         else:
-            # No match — clear so it gets regenerated
+            # No match — delete stale WAV so _check_cache won't orphan-recover it
             cache.pop(str(i), None)
-
-    # Remove stale entries
-    for (old_idx, _) in old_map.values():
-        old_key = str(old_idx)
-        if old_key in cache:
-            stale_wav = _combined_seg_path(output_dir, old_idx)
+            stale_wav = _combined_seg_path(output_dir, i)
             if os.path.exists(stale_wav):
                 os.remove(stale_wav)
-            del cache[old_key]
-            print(f"  ↪ cache: removed stale seg {old_idx}")
+
+    # Remove stale entries (remaining entries in old_map had no match)
+    for entries in old_map.values():
+        for (old_idx, _) in entries:
+            old_key = str(old_idx)
+            if old_key in cache:
+                stale_wav = _combined_seg_path(output_dir, old_idx)
+                if os.path.exists(stale_wav):
+                    os.remove(stale_wav)
+                del cache[old_key]
+                print(f"  ↪ cache: removed stale seg {old_idx}")
 
     _save_cache(output_dir, cache)
 
