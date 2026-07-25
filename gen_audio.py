@@ -317,6 +317,9 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
         print("No subtitles found in SRT file")
         return
 
+    # Ensure tmp subdirectory exists (main() does this, but direct callers may not)
+    os.makedirs(os.path.join(output_dir, "tmp"), exist_ok=True)
+
     # ── Load cache and check which segments need generation ───
     # Defer GPU / model init until we know there is uncached work.
     cache = _load_cache(output_dir)
