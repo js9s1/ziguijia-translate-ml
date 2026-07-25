@@ -151,6 +151,25 @@ button {
 .btn-delete:hover { background: #777; }
 .btn-resubmit { background: #FF9800; }
 .btn-resubmit:hover { background: #F57C00; }
+
+/* ── Result page file-action grid buttons ── */
+.file-actions button {
+    padding: 3px 6px;
+    font-size: 0.8em;
+    line-height: 1.5;
+    border-radius: 3px;
+}
+.file-actions .btn-delete { background: #f44336; }
+.file-actions .btn-delete:hover { background: #da190b; }
+.btn-download { width: auto; background: #4CAF50; color: white; text-decoration: none; display: inline-block; }
+.btn-download:hover { background: #45a049; }
+.btn-play { background: #2196F3; }
+.btn-play:hover { background: #1976D2; }
+.btn-edit { background: #9C27B0; }
+.btn-edit:hover { background: #7B1FA2; }
+.btn-edit.resubmit { background: #FF9800; }
+.btn-edit.resubmit:hover { background: #F57C00; }
+.btn-placeholder { visibility: hidden; padding: 3px 6px; font-size: 0.8em; }
 button:hover {
     background-color: var(--color-primary-hover);
 }
