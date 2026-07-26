@@ -155,12 +155,50 @@ function initFloatSliders(containerId) {
 
 function downloadFile(url, filename, fetchOptions) {
     fetchOptions = fetchOptions || {};
-    if (fetchOptions.credentials === undefined) {
-        fetchOptions.credentials = 'same-origin';
+    var isGet = !fetchOptions.method || fetchOptions.method === 'GET';
+
+    // Strategy 1: fetch + blob + createObjectURL (works on desktop, Safari)
+    _tryFetchDownload(url, filename, fetchOptions, function(succeeded) {
+        if (succeeded) return;
+
+        // Strategy 2: direct <a> tag or form POST
+        if (isGet) {
+            _tryDirectLink(url, filename, function(succeeded2) {
+                if (succeeded2) return;
+                // Strategy 3: navigation fallback
+                window.location.href = url;
+            });
+        } else {
+            _tryFormPost(url, filename, fetchOptions, function(succeeded2) {
+                if (succeeded2) return;
+                alert('下载失败: 无法获取文件');
+            });
+        }
+    });
+}
+
+function _tryFetchDownload(url, filename, fetchOptions, callback) {
+    var opts = {};
+    for (var k in fetchOptions) {
+        if (k !== 'body' && k !== 'headers') opts[k] = fetchOptions[k];
     }
-    fetch(url, fetchOptions)
+    if (opts.credentials === undefined) {
+        opts.credentials = 'same-origin';
+    }
+    // Clone headers for the fetch (avoid mutating caller's object)
+    if (fetchOptions.headers) {
+        opts.headers = {};
+        var h = fetchOptions.headers;
+        if (h instanceof Headers) {
+            h.forEach(function(v, k) { opts.headers[k] = v; });
+        } else {
+            for (var kh in h) { opts.headers[kh] = h[kh]; }
+        }
+    }
+
+    fetch(url, opts)
         .then(function(r) {
-            if (!r.ok) throw new Error('下载失败');
+            if (!r.ok) throw new Error('下载失败 (' + r.status + ')');
             return r.blob();
         })
         .then(function(blob) {
@@ -170,11 +208,99 @@ function downloadFile(url, filename, fetchOptions) {
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
-            URL.revokeObjectURL(a.href);
+            setTimeout(function() { URL.revokeObjectURL(a.href); }, 100);
+            callback(true);
         })
         .catch(function(e) {
-            alert('下载失败: ' + e.message);
+            console.warn('Strategy 1 (fetch+blob) failed: ' + e.message + ', trying fallback...');
+            callback(false);
         });
+}
+
+function _tryDirectLink(url, filename, callback) {
+    try {
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        // Give the browser a moment to start the download before reporting success
+        setTimeout(function() { callback(true); }, 200);
+    } catch(e) {
+        console.warn('Strategy 2 (direct link) failed: ' + e.message);
+        callback(false);
+    }
+}
+
+function _tryFormPost(url, filename, fetchOptions, callback) {
+    try {
+        var form = document.createElement('form');
+        form.method = 'POST';
+        form.action = url;
+        form.style.display = 'none';
+        form.target = '_blank';
+
+        var body = fetchOptions.body;
+        if (body && typeof body === 'string') {
+            try {
+                var json = JSON.parse(body);
+                if (json && typeof json === 'object') {
+                    if (Array.isArray(json.files)) {
+                        // Flatten files array into form fields
+                        json.files.forEach(function(f, i) {
+                            for (var key in f) {
+                                var input = document.createElement('input');
+                                input.type = 'hidden';
+                                input.name = 'files[' + i + '][' + key + ']';
+                                input.value = f[key];
+                                form.appendChild(input);
+                            }
+                        });
+                    } else {
+                        for (var key in json) {
+                            var input = document.createElement('input');
+                            input.type = 'hidden';
+                            input.name = key;
+                            input.value = typeof json[key] === 'string' ? json[key] : JSON.stringify(json[key]);
+                            form.appendChild(input);
+                        }
+                    }
+                }
+            } catch(_) {
+                var input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'body';
+                input.value = body;
+                form.appendChild(input);
+            }
+        }
+
+        // Carry over CSRF token if present in headers
+        if (fetchOptions.headers) {
+            var csrf = fetchOptions.headers['X-CSRF-Token'];
+            if (!csrf && fetchOptions.headers instanceof Headers) {
+                csrf = fetchOptions.headers.get('X-CSRF-Token');
+            }
+            if (csrf) {
+                var csrfInput = document.createElement('input');
+                csrfInput.type = 'hidden';
+                csrfInput.name = 'csrf_token';
+                csrfInput.value = csrf;
+                form.appendChild(csrfInput);
+            }
+        }
+
+        document.body.appendChild(form);
+        form.submit();
+        document.body.removeChild(form);
+        setTimeout(function() { callback(true); }, 200);
+    } catch(e) {
+        console.warn('Strategy 2 (form POST) failed: ' + e.message);
+        callback(false);
+    }
 }
 
 /* ── Result section (shared) ──────────────────────────── */

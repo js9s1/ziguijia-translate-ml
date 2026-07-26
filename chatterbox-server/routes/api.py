@@ -84,8 +84,29 @@ def api_oldrun_srt():
 def api_oldrun_srt_download():
     try:
         from oldrun import OLDRUN_SRT_DIR
+
+        # Accept JSON body (fetch) or form-encoded (fallback)
         body = request.get_json(silent=True) or {}
         file_list = body.get("files", [])
+
+        if not file_list:
+            # Try parsing form-encoded fallback: files[0][path], files[0][name], etc.
+            form_files = {}
+            for key in request.form:
+                # key looks like "files[0][path]" or "files[0][name]"
+                if key.startswith("files[") and "][" in key:
+                    try:
+                        idx_str = key[key.index("[") + 1 : key.index("]")]
+                        idx = int(idx_str)
+                        field = key[key.index("][") + 2 : -1]  # path, name, etc.
+                        if idx not in form_files:
+                            form_files[idx] = {}
+                        form_files[idx][field] = request.form[key]
+                    except (ValueError, IndexError):
+                        pass
+            # Sort by index to preserve order
+            file_list = [form_files[i] for i in sorted(form_files.keys())]
+
         if not file_list:
             return jsonify({"error": "No files specified"}), 400
 
