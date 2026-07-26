@@ -157,24 +157,27 @@ function downloadFile(url, filename, fetchOptions) {
     fetchOptions = fetchOptions || {};
     var isGet = !fetchOptions.method || fetchOptions.method === 'GET';
 
-    // Strategy 1: fetch + blob + createObjectURL (works on desktop, Safari)
-    _tryFetchDownload(url, filename, fetchOptions, function(succeeded) {
-        if (succeeded) return;
-
-        // Strategy 2: direct <a> tag or form POST
-        if (isGet) {
-            _tryDirectLink(url, filename, function(succeeded2) {
+    // Strategy 1: direct <a> tag (GET) or form POST (POST) — works everywhere
+    if (isGet) {
+        _tryDirectLink(url, filename, function(succeeded) {
+            if (succeeded) return;
+            // Strategy 2: fetch + blob + createObjectURL
+            _tryFetchDownload(url, filename, fetchOptions, function(succeeded2) {
                 if (succeeded2) return;
                 // Strategy 3: navigation fallback
                 window.location.href = url;
             });
-        } else {
-            _tryFormPost(url, filename, fetchOptions, function(succeeded2) {
+        });
+    } else {
+        _tryFormPost(url, filename, fetchOptions, function(succeeded) {
+            if (succeeded) return;
+            // Strategy 2: fetch + blob + createObjectURL
+            _tryFetchDownload(url, filename, fetchOptions, function(succeeded2) {
                 if (succeeded2) return;
                 alert('下载失败: 无法获取文件');
             });
-        }
-    });
+        });
+    }
 }
 
 function _tryFetchDownload(url, filename, fetchOptions, callback) {
@@ -212,7 +215,7 @@ function _tryFetchDownload(url, filename, fetchOptions, callback) {
             callback(true);
         })
         .catch(function(e) {
-            console.warn('Strategy 1 (fetch+blob) failed: ' + e.message + ', trying fallback...');
+            console.warn('Strategy 2 (fetch+blob) failed: ' + e.message + ', trying next...');
             callback(false);
         });
 }
@@ -230,7 +233,7 @@ function _tryDirectLink(url, filename, callback) {
         // Give the browser a moment to start the download before reporting success
         setTimeout(function() { callback(true); }, 200);
     } catch(e) {
-        console.warn('Strategy 2 (direct link) failed: ' + e.message);
+        console.warn('Strategy 1 (direct link) failed: ' + e.message);
         callback(false);
     }
 }
@@ -298,7 +301,7 @@ function _tryFormPost(url, filename, fetchOptions, callback) {
         document.body.removeChild(form);
         setTimeout(function() { callback(true); }, 200);
     } catch(e) {
-        console.warn('Strategy 2 (form POST) failed: ' + e.message);
+        console.warn('Strategy 1 (form POST) failed: ' + e.message);
         callback(false);
     }
 }
