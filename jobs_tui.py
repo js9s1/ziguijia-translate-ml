@@ -169,33 +169,32 @@ def _batch_load_usernames(user_ids: list[int | None]) -> dict[int, str]:
         return {}
 
 
-def load_jobs(limit: int = MAX_LOAD_JOBS, offset: int = 0, search: str = "") -> tuple[list[Job], int]:
-    """Return (jobs_page, total_count). If search is given, filter by access_code LIKE."""
+def load_jobs(limit: int = MAX_LOAD_JOBS, offset: int = 0, search: str = "",
+              user_id: int | None = None) -> tuple[list[Job], int]:
+    """Return (jobs_page, total_count). Optional filters: search, user_id."""
     conn = get_conn()
     order_clause = """
         ORDER BY
             CASE WHEN status = 'processing' THEN 0 ELSE 1 END,
             created_at DESC
     """
+    where_parts = []
+    params: list = []
     if search:
-        pattern = f"%{search}%"
-        total = conn.execute(
-            "SELECT COUNT(*) FROM jobs WHERE access_code LIKE ?", (pattern,)
-        ).fetchone()[0]
-        rows = conn.execute(
-            "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at, "
-            "temperature, cfg_weight, exaggeration, start_trim, end_trim, text, target_language "
-            "FROM jobs WHERE access_code LIKE ? " + order_clause + " LIMIT ? OFFSET ?",
-            (pattern, limit, offset),
-        ).fetchall()
-    else:
-        total = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
-        rows = conn.execute(
-            "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at, "
-            "temperature, cfg_weight, exaggeration, start_trim, end_trim, text, target_language "
-            "FROM jobs " + order_clause + " LIMIT ? OFFSET ?",
-            (limit, offset),
-        ).fetchall()
+        where_parts.append("access_code LIKE ?")
+        params.append(f"%{search}%")
+    if user_id is not None:
+        where_parts.append("user_id = ?")
+        params.append(user_id)
+    where_clause = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+    count_sql = f"SELECT COUNT(*) FROM jobs {where_clause}"
+    total = conn.execute(count_sql, params).fetchone()[0]
+    data_sql = (
+        "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at, "
+        "temperature, cfg_weight, exaggeration, start_trim, end_trim, text, target_language "
+        f"FROM jobs {where_clause} {order_clause} LIMIT ? OFFSET ?"
+    )
+    rows = conn.execute(data_sql, params + [limit, offset]).fetchall()
     conn.close()
     jobs = [Job(**dict(r)) for r in rows]
     # Batch-load usernames
@@ -483,7 +482,8 @@ def read_log(output_dir: str, max_lines: int = 500) -> str:
 
 
 class State:
-    def __init__(self, jobs: list[Job], total: int):
+    def __init__(self, jobs: list[Job], total: int, user_id: int | None = None,
+                 display_label: str = ""):
         self.all = jobs  # DB returns newest first; reverse within each page
         self.total = total
         self.pages = max(1, (self.total + PAGE_SIZE - 1) // PAGE_SIZE)
@@ -497,12 +497,15 @@ class State:
         self._message: str | None = None
         self._message_time: float = 0.0
         self.search_query: str = ""
+        self.user_id: int | None = user_id
+        self.display_label: str = display_label
         # Orphan tracking
         self._orphans: list[dict] = []
         self._orphans_last_scan: float = 0.0
 
     def reload(self, reset_page=True):
-        self.all, self.total = load_jobs(search=self.search_query)
+        self.all, self.total = load_jobs(search=self.search_query,
+                                         user_id=self.user_id)
         self.pages = max(1, (self.total + PAGE_SIZE - 1) // PAGE_SIZE)
         if reset_page:
             self.page = 0
@@ -798,7 +801,7 @@ def render_orphan_warning(orphans: list[dict]) -> Panel | None:
     )
 
 
-def render_summary(jobs: list[Job], search_query: str = "") -> Panel:
+def render_summary(jobs: list[Job], search_query: str = "", label: str = "") -> Panel:
     total = len(jobs)
     pending = sum(1 for j in jobs if j.status == "pending")
     processing = sum(1 for j in jobs if j.status == "processing")
@@ -811,6 +814,8 @@ def render_summary(jobs: list[Job], search_query: str = "") -> Panel:
         f"[green]完成 {completed}[/]",
         f"[red]失败 {failed}[/]",
     ]
+    if label:
+        parts.insert(0, label)
     if search_query:
         parts.insert(0, f"[cyan]🔍 {search_query}[/]")
     return Panel(Align.center("  |  ".join(parts)), border_style="dim", padding=(0, 0))
@@ -868,7 +873,7 @@ def render_footer(s: State) -> Panel:
 
 
 def render_all(s: State) -> list:
-    items = [render_summary(s.all, s.search_query), "", render_table(s), "", render_footer(s)]
+    items = [render_summary(s.all, s.search_query, s.display_label), "", render_table(s), "", render_footer(s)]
     # Orphan warning, if any
     now = time.monotonic()
     if s._orphans_last_scan and (now - s._orphans_last_scan) > _ORPHAN_CACHE_TTL:
@@ -1041,7 +1046,7 @@ def _pick_resubmit_checkpoint(console: Console, s: State, job: Job) -> bool:
 
     while True:
         console.clear()
-        console.print(render_summary(s.all, s.search_query))
+        console.print(render_summary(s.all, s.search_query, s.display_label))
         console.print()
         console.print(render_table(s))
         console.print()
@@ -1128,102 +1133,13 @@ def _dispatch_menu_action(action: str, s: State, console: Console, job: Job) -> 
         return True
 
     return True
-    """Load all jobs for a given user_id."""
-    conn = get_conn()
-    rows = conn.execute(
-        "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at, "
-        "text, target_language "
-        "FROM jobs WHERE user_id = ?"
-        " ORDER BY"
-        "   CASE WHEN status = 'processing' THEN 0 ELSE 1 END,"
-        "   COALESCE(status_changed_at, created_at) DESC",
-        (user_id,),
-    ).fetchall()
-    conn.close()
-    jobs = [Job(**dict(r)) for r in rows]
-    username_map = _batch_load_usernames([j.user_id for j in jobs])
-    for j in jobs:
-        j.username = username_map.get(j.user_id, "")
-    return jobs
 
 
 def show_user_jobs_tui(current_job: Job, state: State, console: Console):
-    """Show a paginated job list filtered to the current job's user."""
-    jobs = load_user_jobs(current_job.user_id)
-    if not jobs:
-        console.clear()
-        console.print(f"[yellow]用户 {current_job.username} 没有其他任务[/]")
-        console.print("\n[dim]按任意键返回...[/dim]")
-        os.read(sys.stdin.fileno(), 1)
-        return
+    """Show the full job TUI filtered to the current job's user."""
+    interactive(console, user_id=current_job.user_id,
+                display_label=f"用户: {current_job.username}")
 
-    total = len(jobs)
-    pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
-    page = 0
-    cursor = 0
-
-    while True:
-        start = page * PAGE_SIZE
-        end = min(start + PAGE_SIZE, total)
-        page_jobs = jobs[start:end]
-
-        # Build a temporary State-like view for rendering
-        class TempState:
-            def __init__(self):
-                self.all = jobs
-                self.total = total
-                self.pages = pages
-                self.page = page
-                self.cursor = cursor
-                self.start = start
-                self.end = end
-                self.visible = list(reversed(page_jobs))
-                self.search_query = ""
-                self._message = None
-                self._message_time = 0.0
-
-        s = TempState()
-
-        console.clear()
-        console.print(render_summary(jobs, f"用户: {current_job.username}"))
-        console.print()
-        console.print(render_table(s))
-        console.print()
-        console.print(Align.center("[dim]↑↓ 移动  ←→翻页  Q=返回[/dim]"))
-
-        with raw_mode():
-            key = read_key()
-
-        if key in ("q", "Q", "ESC", "\x1b"):
-            return
-
-        elif key == "UP":
-            if cursor > 0:
-                cursor -= 1
-            elif page > 0:
-                page -= 1
-                cursor = PAGE_SIZE - 1
-
-        elif key == "DOWN":
-            max_cursor = len(s.visible) - 1
-            if cursor < max_cursor:
-                cursor += 1
-            elif page < pages - 1:
-                page += 1
-                cursor = 0
-
-        elif key == "LEFT":
-            if page > 0:
-                page -= 1
-                cursor = 0
-
-        elif key == "RIGHT":
-            if page + 1 < pages:
-                page += 1
-                cursor = 0
-
-
-# ── Output browser ──────────────────────────────────────
 
 AUDIO_VIDEO_EXTS = {".mp4", ".wav", ".mp3", ".m4a", ".avi", ".mkv", ".mov"}
 
@@ -1462,7 +1378,7 @@ def run_menu_screen(s: State, console: Console):
 
     while True:
         console.clear()
-        console.print(render_summary(s.all, s.search_query))
+        console.print(render_summary(s.all, s.search_query, s.display_label))
         console.print()
         console.print(render_table(s))
         console.print()
@@ -1517,7 +1433,7 @@ def run_search(s: State, console: Console):
     query = ""
     while True:
         console.clear()
-        console.print(render_summary(s.all, s.search_query))
+        console.print(render_summary(s.all, s.search_query, s.display_label))
         console.print()
         console.print(render_table(s))
         console.print()
@@ -1563,13 +1479,17 @@ def run_search(s: State, console: Console):
 # ── Main interactive loop ─────────────────────────────────
 
 
-def interactive(console: Console):
-    raw_jobs, total = load_jobs()
+def interactive(console: Console, user_id: int | None = None,
+                display_label: str = ""):
+    raw_jobs, total = load_jobs(user_id=user_id)
     if not raw_jobs:
-        console.print("[yellow]数据库中没有任务[/]")
+        if display_label:
+            console.print(f"[yellow]{display_label} 没有任务[/]")
+        else:
+            console.print("[yellow]数据库中没有任务[/]")
         return
 
-    s = State(raw_jobs, total)
+    s = State(raw_jobs, total, user_id=user_id, display_label=display_label)
     s.clamp_cursor(at_bottom=True)
     s._orphans = detect_orphans(force=True)
     s._orphans_last_scan = time.monotonic()
