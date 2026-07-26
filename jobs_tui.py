@@ -99,6 +99,7 @@ _MENU_KEY_MAP: dict[str, str] = {
     "u": "user_jobs", "U": "user_jobs",
     "r": "delete",
     "c": "close", "C": "close",
+    "b": "output", "B": "output",
 }
 
 
@@ -347,7 +348,6 @@ def resubmit_job(code: str, keep_steps: list[str] | None = None) -> str:
         return f"任务 {code} 不存在"
 
     status = job["status"]
-    checkpoint_edited = job["checkpoint_edited"]
 
     if status == "deleted":
         conn.close()
@@ -552,7 +552,8 @@ class State:
 
     def menu_options(self) -> list[tuple[str, str]]:
         """Return list of (action_id, label) for the popup menu."""
-        opts: list[tuple[str, str]] = [("detail", r"\[D]详情"), ("open_dir", r"\[o]打开目录")]
+        opts: list[tuple[str, str]] = [("detail", r"\[D]详情"), ("open_dir", r"\[o]打开目录"),
+                                       ("output", r"\[b]浏览文件")]
         if self.selected_job and self.selected_job.status in ("pending", "processing"):
             opts.append(("cancel", r"\[k]取消"))
         if self.selected_job and self.selected_job.status in ("failed", "completed", "cancelled"):
@@ -1079,7 +1080,6 @@ def _pick_resubmit_checkpoint(console: Console, s: State, job: Job) -> bool:
             s.menu_open = False
             s.reload(reset_page=False)
             return True
-    return False
 
 
 def _dispatch_menu_action(action: str, s: State, console: Console, job: Job) -> bool:
@@ -1352,16 +1352,6 @@ def make_menu_popup(s: State) -> Panel:
     )
 
 
-def render_menu_overlay(s: State) -> Group:
-    """Full layout when the menu popup is open."""
-    job = s.selected_job
-    items = render_all(s)
-    if job:
-        items.append("")
-        items.append(Align.center(make_menu_popup(s)))
-        items.append(Align.center("[dim]← → 选择  Enter=确认  D/l/o/k/s/r/c=直接操作  Q=关闭[/dim]"))
-    return Group(*items)
-
 
 # ── Menu interaction ─────────────────────────────────────
 
@@ -1383,7 +1373,7 @@ def run_menu_screen(s: State, console: Console):
         console.print(render_table(s))
         console.print()
         console.print(Align.center(make_menu_popup(s)))
-        console.print(Align.center("[dim]↑↓ 选择任务  ← → 选择操作  Enter=确认  D/l/o/k/s/r/c=直接操作[/dim]"))
+        console.print(Align.center("[dim]↑↓ 选择任务  ← → 选择操作  Enter=确认  d/o/k/s/u/r/c/b=直接操作[/dim]"))
 
         key = read_key()
 
