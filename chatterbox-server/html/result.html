@@ -254,6 +254,56 @@
         // Any .srt file is editable except output_adjusted.srt (the final generated output).
         const isEditableSrt = name => name.toLowerCase().endsWith('.srt') && name !== 'output_adjusted.srt';
 
+        const FILENAME_TO_CHECKPOINT_STEP = {
+            "ocr_screen.srt": "ocr",
+            "translated.srt": "translate",
+            "whisper.srt": "whisper",
+            "output_adjusted.srt": "audio",
+        };
+
+        const CHECKPOINT_ORDER = [
+            "download", "decompress", "trim", "extract_audio",
+            "whisper", "ocr", "translate", "audio", "video",
+        ];
+
+        function sortFilesWithCheckpoints(files) {
+            const hasCheckpoint = files.some(f => f.name in FILENAME_TO_CHECKPOINT_STEP);
+            if (!hasCheckpoint) {
+                return files.slice().sort((a, b) => a.name.localeCompare(b.name));
+            }
+            const VIDEO_EXTS = ['.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv'];
+            const isVideo = name => VIDEO_EXTS.some(ext => name.toLowerCase().endsWith(ext));
+            const isOutput = name => name.toLowerCase().startsWith('output');
+            const groups = {};
+            const inputs = [];
+            const others = [];
+            for (const f of files) {
+                const step = FILENAME_TO_CHECKPOINT_STEP[f.name];
+                if (step) {
+                    if (!groups[step]) groups[step] = [];
+                    groups[step].push(f);
+                } else if (isVideo(f.name) && !isOutput(f.name)) {
+                    inputs.push(f);
+                } else {
+                    others.push(f);
+                }
+            }
+            for (const step of Object.keys(groups)) {
+                groups[step].sort((a, b) => a.name.localeCompare(b.name));
+            }
+            inputs.sort((a, b) => a.name.localeCompare(b.name));
+            others.sort((a, b) => a.name.localeCompare(b.name));
+            const result = [];
+            result.push(...inputs);
+            for (const step of CHECKPOINT_ORDER) {
+                if (groups[step]) {
+                    result.push(...groups[step]);
+                }
+            }
+            result.push(...others);
+            return result;
+        }
+
         function shortPath(p) {
             if (!p) return 'N/A';
             return p.replace('/home/js9s', '~');
@@ -419,6 +469,7 @@
                         document.getElementById('fileList').innerHTML = '<li class="no-files">没有生成的文件</li>';
                         return;
                     }
+                    const sortedFiles = sortFilesWithCheckpoints(filteredFiles);
                     const downloadPath = f => '/files/download?path=' + encodeURIComponent(outputDir + '/' + f.name);
                     const ext = f => f.name.split('.').pop().toLowerCase();
                     const playBtn = f => {
@@ -439,10 +490,10 @@
                         return `<button onclick="${onclick}" class="${cls}">${label}</button>`;
                     };
                     // Check if any SRT files exist — if so non-SRT files get 4-column grid
-                    const hasSrt = filteredFiles.some(f => isEditableSrt(f.name));
+                    const hasSrt = sortedFiles.some(f => isEditableSrt(f.name));
                     // SRT files use the same 4-column grid so all buttons have matching widths
                     const actionsClass = f => isEditableSrt(f.name) || hasSrt ? 'file-actions editable' : 'file-actions';
-                    document.getElementById('fileList').innerHTML = filteredFiles.map(file => `
+                    document.getElementById('fileList').innerHTML = sortedFiles.map(file => `
                         <li>
                             <div class="file-info">
                                 <span class="file-name">${file.name}</span>
