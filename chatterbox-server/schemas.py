@@ -39,29 +39,6 @@ class ResendCodeRequest(BaseModel):
     email: str = Field(..., min_length=1)
 
 
-# ── Job schemas ─────────────────────────────────────────────
-
-MAX_TEXT_LENGTH = 500
-
-
-class TTSRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=MAX_TEXT_LENGTH)
-    filename: str = "output.wav"
-    temperature: float = Field(0.6, ge=0.1, le=2.0)
-    target_language: str = Field("en", min_length=2, max_length=5)
-    cfg_weight: float = Field(0.5, ge=0.0, le=2.0)
-    exaggeration: float = Field(0.5, ge=0.0, le=2.0)
-
-
-class AudioTextRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=MAX_TEXT_LENGTH)
-    filename: str = "output.wav"
-    temperature: float = Field(0.6, ge=0.1, le=2.0)
-    target_language: str = Field("en", min_length=2, max_length=5)
-    cfg_weight: float = Field(0.5, ge=0.0, le=2.0)
-    exaggeration: float = Field(0.5, ge=0.0, le=2.0)
-
-
 # ── File schemas ────────────────────────────────────────────
 
 class FileDeleteRequest(BaseModel):
@@ -77,12 +54,3 @@ class SRTSaveRequest(BaseModel):
 
 class SRTOldrunDownloadRequest(BaseModel):
     files: list[dict] = Field(..., min_length=1)
-
-
-# ── Job management schemas ──────────────────────────────────
-
-class JobParams(BaseModel):
-    temperature: float = Field(0.6, ge=0.1, le=2.0)
-    target_language: str = Field("en", min_length=2, max_length=5)
-    cfg_weight: float = Field(0.5, ge=0.0, le=2.0)
-    exaggeration: float = Field(0.5, ge=0.0, le=2.0)

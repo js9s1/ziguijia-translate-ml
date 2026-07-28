@@ -6,8 +6,8 @@ from pydantic import ValidationError
 from schemas import (
     RegisterRequest, LoginRequest, VerifyRequest,
     ChangePasswordRequest, ResetPasswordRequest,
-    ResetPasswordConfirmRequest, TTSRequest,
-    FileDeleteRequest, SRTSaveRequest, JobParams, MAX_TEXT_LENGTH,
+    ResetPasswordConfirmRequest,
+    FileDeleteRequest, SRTSaveRequest,
 )
 
 
@@ -24,27 +24,6 @@ class TestRegisterRequest:
     def test_empty_password(self):
         with pytest.raises(ValidationError):
             RegisterRequest(email="a@b.com", password="")
-
-
-class TestTTSRequest:
-    def test_valid(self):
-        r = TTSRequest(text="hello", temperature=0.6, target_language="en")
-        assert r.text == "hello"
-        assert r.temperature == 0.6
-
-    def test_text_too_long(self):
-        with pytest.raises(ValidationError):
-            TTSRequest(text="x" * (MAX_TEXT_LENGTH + 1))
-
-    def test_temperature_bounds(self):
-        with pytest.raises(ValidationError):
-            TTSRequest(text="hi", temperature=3.0)
-
-    def test_defaults(self):
-        r = TTSRequest(text="hi")
-        assert r.temperature == 0.6
-        assert r.target_language == "en"
-        assert r.cfg_weight == 0.5
 
 
 class TestFileDeleteRequest:
@@ -66,15 +45,3 @@ class TestSRTSaveRequest:
     def test_empty_content(self):
         with pytest.raises(ValidationError):
             SRTSaveRequest(path="/tmp/x.srt", content="", access_code="A")
-
-
-class TestJobParams:
-    def test_valid(self):
-        r = JobParams(temperature=0.8, target_language="zh")
-        assert r.temperature == 0.8
-        assert r.target_language == "zh"
-
-    def test_defaults(self):
-        r = JobParams()
-        assert r.temperature == 0.6
-        assert r.target_language == "en"

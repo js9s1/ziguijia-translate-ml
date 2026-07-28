@@ -7,6 +7,7 @@ import uuid
 from config import MARKER_INTRO, MARKER_OUTRO, VIDEO_DIR
 from jobqueue import get_job_queue
 from log_utils import job_log, job_log_lines
+from middleware import get_audio_params
 from pipeline import (
     _adjust_original_audio_nonfatal,
     run_audio_ckpt,
@@ -41,10 +42,7 @@ def _run_video_job(job_data: dict):
     access_code = job_data["access_code"]
     srt_path = job_data["srt_path"]
     output_dir = job_data["output_dir"]
-    temperature = job_data.get("temperature", 0.8)
-    target_language = job_data.get("target_language", "en")
-    cfg_weight = job_data.get("cfg_weight", 0.5)
-    exaggeration = job_data.get("exaggeration", 0.5)
+    ap = get_audio_params(job_data)
     blur = job_data.get("blur", "yes")
 
     os.makedirs(output_dir, exist_ok=True)
@@ -56,9 +54,9 @@ def _run_video_job(job_data: dict):
 
         video_path = run_download_ckpt(video_number, output_dir, access_code, ckpt, proc_log, job_data)
         audio_out = run_audio_ckpt(
-            srt_path, output_dir, temperature, access_code,
-            target_language=target_language, cfg_weight=cfg_weight,
-            exaggeration=exaggeration, ckpt=ckpt, audio_subdir="audio",
+            srt_path, output_dir, ap["temperature"], access_code,
+            target_language=ap["target_language"], cfg_weight=ap["cfg_weight"],
+            exaggeration=ap["exaggeration"], ckpt=ckpt, audio_subdir="audio",
         )
         run_video_ckpt(video_path, srt_path, audio_out, output_dir,
                        access_code, ckpt=ckpt, output_filename="output_modified.mp4",
@@ -110,10 +108,7 @@ def _run_video_ning_ocr_job(job_data: dict):
     video_number = job_data["video_number"]
     access_code = job_data["access_code"]
     output_dir = job_data["output_dir"]
-    temperature = job_data.get("temperature", 0.8)
-    target_language = job_data.get("target_language", "en")
-    cfg_weight = job_data.get("cfg_weight", 0.5)
-    exaggeration = job_data.get("exaggeration", 0.5)
+    ap = get_audio_params(job_data)
     blur = job_data.get("blur", "yes")
 
     os.makedirs(output_dir, exist_ok=True)
@@ -126,13 +121,13 @@ def _run_video_ning_ocr_job(job_data: dict):
         video_path = run_download_ckpt(video_number, output_dir, access_code, ckpt, proc_log, job_data)
         translated_srt = run_translate_ckpt(
             run_ocr_ckpt(video_path, output_dir, access_code, ckpt, proc_log),
-            output_dir, access_code, ckpt, proc_log, log_file, target_language,
+            output_dir, access_code, ckpt, proc_log, log_file, ap["target_language"],
             intro_marker=MARKER_INTRO, outro_marker=MARKER_OUTRO,
         )
         audio_out = run_audio_ckpt(
-            translated_srt, output_dir, temperature, access_code,
-            target_language=target_language, cfg_weight=cfg_weight,
-            exaggeration=exaggeration, ckpt=ckpt, audio_subdir="audio",
+            translated_srt, output_dir, ap["temperature"], access_code,
+            target_language=ap["target_language"], cfg_weight=ap["cfg_weight"],
+            exaggeration=ap["exaggeration"], ckpt=ckpt, audio_subdir="audio",
         )
         run_video_ckpt(video_path, translated_srt, audio_out, output_dir,
                        access_code, ckpt=ckpt, output_filename="output_modified.mp4",

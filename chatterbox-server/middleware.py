@@ -117,8 +117,8 @@ def login_required(f):
 _DEFAULT_PARAMS = {
     "temperature": 0.6,
     "target_language": "en",
-    "cfg_weight": 0.5,
-    "exaggeration": 0.5,
+    "cfg_weight": 0.25,
+    "exaggeration": 0.3,
 }
 
 
@@ -142,6 +142,16 @@ def parse_job_params(source: dict) -> dict:
         }
     except ValueError as e:
         abort(400, description=str(e))
+
+
+def get_audio_params(job_data: dict) -> dict:
+    """Extract audio parameters from a job_data dict using shared defaults."""
+    return {
+        "temperature": job_data.get("temperature", _DEFAULT_PARAMS["temperature"]),
+        "target_language": job_data.get("target_language", _DEFAULT_PARAMS["target_language"]),
+        "cfg_weight": job_data.get("cfg_weight", _DEFAULT_PARAMS["cfg_weight"]),
+        "exaggeration": job_data.get("exaggeration", _DEFAULT_PARAMS["exaggeration"]),
+    }
 
 
 # ── File path security ────────────────────────────────────

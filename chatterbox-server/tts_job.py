@@ -6,6 +6,7 @@ import uuid
 from config import AUDIO_TRACKS_DIR
 from jobqueue import get_job_queue
 from log_utils import job_log
+from middleware import get_audio_params
 
 
 def _run_tts_job(job_data: dict):
@@ -16,10 +17,7 @@ def _run_tts_job(job_data: dict):
     text = job_data["text"]
     output_dir = job_data["output_dir"]
     filename = job_data.get("filename", "output.wav")
-    temperature = job_data.get("temperature", 0.8)
-    target_language = job_data.get("target_language", "en")
-    cfg_weight = job_data.get("cfg_weight", 0.5)
-    exaggeration = job_data.get("exaggeration", 0.5)
+    ap = get_audio_params(job_data)
     access_code = job_data["access_code"]
     os.makedirs(output_dir, exist_ok=True)
 
@@ -27,7 +25,7 @@ def _run_tts_job(job_data: dict):
     log_file = os.path.join(output_dir, "job.log")
     with open(log_file, "a") as lf:
         with redirect_stdout(lf):
-            wav_data = NingAudio().text_to_wave_with_silence(text, temperature=temperature, target_language=target_language, cfg_weight=cfg_weight, exaggeration=exaggeration)
+            wav_data = NingAudio().text_to_wave_with_silence(text, temperature=ap["temperature"], target_language=ap["target_language"], cfg_weight=ap["cfg_weight"], exaggeration=ap["exaggeration"])
 
     output_path = os.path.join(output_dir, filename)
     with open(output_path, "wb") as f:

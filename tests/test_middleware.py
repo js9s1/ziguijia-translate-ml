@@ -64,7 +64,8 @@ class TestParseJobParams:
         result = parse_job_params({})
         assert result["temperature"] == 0.6
         assert result["target_language"] == "en"
-        assert result["cfg_weight"] == 0.5
+        assert result["cfg_weight"] == 0.25
+        assert result["exaggeration"] == 0.3
 
 
 class TestSRTTimingRegex:

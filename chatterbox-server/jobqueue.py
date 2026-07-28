@@ -30,6 +30,7 @@ except RuntimeError:
 
 from config import CHECKPOINT_ORDER, FILENAME_TO_CHECKPOINT_STEP
 from db_schema import JOB_COLUMNS, ConnectionManager, init_jobs_schema
+from middleware import _DEFAULT_PARAMS
 from valkey_util import publish_job_status
 from singleton import singleton
 
@@ -464,8 +465,8 @@ class JobQueue:
             job_data.get("text"),
             job_data.get("blur", "yes"),
             job_data.get("target_language", "en"),
-            job_data.get("cfg_weight", 0.5),
-            job_data.get("exaggeration", 0.5),
+            job_data.get("cfg_weight", _DEFAULT_PARAMS["cfg_weight"]),
+            job_data.get("exaggeration", _DEFAULT_PARAMS["exaggeration"]),
             job_data.get("start_trim"),
             job_data.get("end_trim"),
             job_data.get("cached_path"),

@@ -10,6 +10,7 @@ from config import (
 )
 from jobqueue import get_job_queue
 from log_utils import job_log
+from middleware import get_audio_params
 from pipeline import (
     _adjust_original_audio_nonfatal,
     run_audio_ckpt,
@@ -32,10 +33,11 @@ def _run_video_custom_job(job_data: dict):
     os.makedirs(output_dir, exist_ok=True)
     gen_audio_dir = os.path.join(output_dir, "audio_tracks")
     job_log(access_code, output_dir, "Step 1: Generating audio from SRT")
-    audio_out = run_gen_audio_step(srt_path, gen_audio_dir, job_data.get("temperature", 0.8), access_code,
-                                   target_language=job_data.get("target_language", "en"),
-                                   cfg_weight=job_data.get("cfg_weight", 0.5),
-                                   exaggeration=job_data.get("exaggeration", 0.5))
+    ap = get_audio_params(job_data)
+    audio_out = run_gen_audio_step(srt_path, gen_audio_dir, ap["temperature"], access_code,
+                                   target_language=ap["target_language"],
+                                   cfg_weight=ap["cfg_weight"],
+                                   exaggeration=ap["exaggeration"])
 
     job_log(access_code, output_dir, "Step 2: Processing video")
     run_video_ckpt(video_file, srt_path, audio_out, output_dir, access_code,
@@ -73,10 +75,7 @@ def _run_video_auto_job(job_data: dict):
     video_file = job_data["video_file"]
     access_code = job_data["access_code"]
     output_dir = job_data["output_dir"]
-    temperature = job_data.get("temperature", 0.8)
-    target_language = job_data.get("target_language", "en")
-    cfg_weight = job_data.get("cfg_weight", 0.5)
-    exaggeration = job_data.get("exaggeration", 0.5)
+    ap = get_audio_params(job_data)
 
     os.makedirs(output_dir, exist_ok=True)
     log_file = os.path.join(output_dir, "job.log")
@@ -87,13 +86,13 @@ def _run_video_auto_job(job_data: dict):
         audio_path = run_extract_audio_ckpt(video_file, output_dir, access_code, ckpt, proc_log)
         translated_srt = run_translate_ckpt(
             run_whisper_ckpt(audio_path, output_dir, access_code, ckpt, proc_log),
-            output_dir, access_code, ckpt, proc_log, log_file, target_language,
+            output_dir, access_code, ckpt, proc_log, log_file, ap["target_language"],
             intro_marker=MARKER_INTRO, outro_marker=MARKER_OUTRO,
         )
         audio_out = run_audio_ckpt(
-            translated_srt, output_dir, temperature, access_code,
-            target_language=target_language, cfg_weight=cfg_weight,
-            exaggeration=exaggeration, ckpt=ckpt, audio_subdir="audio_tracks",
+            translated_srt, output_dir, ap["temperature"], access_code,
+            target_language=ap["target_language"], cfg_weight=ap["cfg_weight"],
+            exaggeration=ap["exaggeration"], ckpt=ckpt, audio_subdir="audio_tracks",
         )
         run_video_ckpt(video_file, translated_srt, audio_out, output_dir, access_code,
                        ckpt=ckpt, output_filename="output_modified.mp4")
@@ -128,10 +127,7 @@ def _run_video_ocr_job(job_data: dict):
     video_file = job_data["video_file"]
     access_code = job_data["access_code"]
     output_dir = job_data["output_dir"]
-    temperature = job_data.get("temperature", 0.8)
-    target_language = job_data.get("target_language", "en")
-    cfg_weight = job_data.get("cfg_weight", 0.5)
-    exaggeration = job_data.get("exaggeration", 0.5)
+    ap = get_audio_params(job_data)
 
     os.makedirs(output_dir, exist_ok=True)
     log_file = os.path.join(output_dir, "job.log")
@@ -142,13 +138,13 @@ def _run_video_ocr_job(job_data: dict):
 
         translated_srt = run_translate_ckpt(
             run_ocr_ckpt(video_file, output_dir, access_code, ckpt, proc_log),
-            output_dir, access_code, ckpt, proc_log, log_file, target_language,
+            output_dir, access_code, ckpt, proc_log, log_file, ap["target_language"],
             intro_marker=MARKER_INTRO, outro_marker=MARKER_OUTRO,
         )
         audio_out = run_audio_ckpt(
-            translated_srt, output_dir, temperature, access_code,
-            target_language=target_language, cfg_weight=cfg_weight,
-            exaggeration=exaggeration, ckpt=ckpt, audio_subdir="audio_tracks",
+            translated_srt, output_dir, ap["temperature"], access_code,
+            target_language=ap["target_language"], cfg_weight=ap["cfg_weight"],
+            exaggeration=ap["exaggeration"], ckpt=ckpt, audio_subdir="audio_tracks",
         )
         run_video_ckpt(video_file, translated_srt, audio_out, output_dir, access_code,
                        ckpt=ckpt, output_filename="output_modified.mp4")

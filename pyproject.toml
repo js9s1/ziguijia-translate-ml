@@ -33,3 +33,8 @@ indent-style = "space"
 [tool.isort]
 profile = "black"
 line_length = 120
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]

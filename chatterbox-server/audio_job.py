@@ -10,18 +10,20 @@ from audio_utils import NingAudio
 from config import AUDIO_TRACKS_DIR
 from jobqueue import get_job_queue
 from log_utils import job_log
+from middleware import get_audio_params
 from pipeline import run_gen_audio_step
 
 
 def _run_gen_audio(job_data: dict):
+    ap = get_audio_params(job_data)
     run_gen_audio_step(
         srt_path=job_data["srt_path"],
         output_dir=job_data["output_dir"],
-        temperature=job_data.get("temperature", 0.8),
+        temperature=ap["temperature"],
         access_code=job_data["access_code"],
-        target_language=job_data.get("target_language", "en"),
-        cfg_weight=job_data.get("cfg_weight", 0.5),
-        exaggeration=job_data.get("exaggeration", 0.5),
+        target_language=ap["target_language"],
+        cfg_weight=ap["cfg_weight"],
+        exaggeration=ap["exaggeration"],
     )
 
 
@@ -84,15 +86,12 @@ def _run_audio_segmentation_job(job_data: dict):
     content = job_data["content"]
     output_dir = job_data["output_dir"]
     filename = job_data.get("filename", "output.wav")
-    temperature = job_data.get("temperature", 0.8)
-    target_language = job_data.get("target_language", "en")
-    cfg_weight = job_data.get("cfg_weight", 0.5)
-    exaggeration = job_data.get("exaggeration", 0.5)
+    ap = get_audio_params(job_data)
     os.makedirs(output_dir, exist_ok=True)
 
     ning = NingAudio()
-    ning._ensure_model(target_language)
-    if target_language == "id":
+    ning._ensure_model(ap["target_language"])
+    if ap["target_language"] == "id":
         import gpu_manage as _gm
         sample_rate = _gm._indonesian_model.sr
     else:
@@ -121,10 +120,10 @@ def _run_audio_segmentation_job(job_data: dict):
     for silence_sec, text in segments:
         chunks = _split_text(text, 500)
         for chunk in chunks:
-            wav_bytes = ning.text_to_wave(chunk, temperature=temperature,
-                                          target_language=target_language,
-                                          cfg_weight=cfg_weight,
-                                          exaggeration=exaggeration)
+            wav_bytes = ning.text_to_wave(chunk, temperature=ap["temperature"],
+                                          target_language=ap["target_language"],
+                                          cfg_weight=ap["cfg_weight"],
+                                          exaggeration=ap["exaggeration"])
             wav, sr = ta.load(wav_bytes)
             if wav.dim() == 1:
                 wav = wav.unsqueeze(0)

@@ -119,8 +119,8 @@ function validateFloatInput(input, min, max) {
 
 var _floatSlidersConfig = [
     { id: 'temperature',   label: '温度',       min: 0.5, max: 1.5, step: 0.01, val: 0.6 },
-    { id: 'cfg_weight',    label: 'CFG 权重',    min: 0,   max: 1.5, step: 0.01, val: 0.26 },
-    { id: 'exaggeration',  label: '口音夸张度',  min: 0,   max: 1.0, step: 0.01, val: 0.3 },
+    { id: 'cfg_weight',    label: 'CFG 权重',    min: 0,   max: 1.5, step: 0.01, val: 0.25 },
+    { id: 'exaggeration',  label: '口音夸张度',  min: 0,   max: 1.0, step: 0.01, val: 0.5 },
 ];
 
 function initFloatSliders(containerId) {
