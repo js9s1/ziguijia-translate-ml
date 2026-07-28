@@ -3,6 +3,7 @@
 Extracted from chatterbox_server.py.
 """
 
+import gzip
 import json
 import logging
 import os
@@ -87,6 +88,9 @@ def _collect_incremental(force: bool = False) -> tuple[list[dict], list[dict], l
             zh.extend(z)
             en.extend(e)
             zh_en.extend(ze)
+        zh.sort(key=lambda x: x["name"])
+        en.sort(key=lambda x: x["name"])
+        zh_en.sort(key=lambda x: x["name"])
         _save_index({"zh": zh, "en": en, "zh_en": zh_en, "scanned_dirs": current_dirs})
         return zh, en, zh_en, True
 
@@ -133,13 +137,19 @@ def _write_static_html(lang: str, files: list[dict]):
         flag=flag,
         lang=lang,
         lang_options=lang_options,
-        data_json=json.dumps(files, ensure_ascii=False),
     )
 
     filepath = os.path.join(HTML_DIR, f"srt-{lang}.html")
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(html)
     logger.info("Wrote static srt list: %s (%d files)", filepath, len(files))
+
+    json_bytes = json.dumps(files, ensure_ascii=False).encode("utf-8")
+    gz_path = os.path.join(HTML_DIR, f"srt-{lang}.json.gz")
+    with gzip.open(gz_path, "wb", compresslevel=9) as f:
+        f.write(json_bytes)
+    gz_size = os.path.getsize(gz_path)
+    logger.info("Wrote compressed srt data: %s (%d bytes, %.0f%%)", gz_path, gz_size, 100 * gz_size / len(json_bytes))
 
 
 def build_all_static_srt():

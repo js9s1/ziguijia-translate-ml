@@ -10,9 +10,6 @@ all route blueprints.
 
 from app import create_app
 
-# Backward-compatible build_all_static_srt import for gunicorn_config.
-from oldrun import build_all_static_srt as _build_all_static_srt  # noqa: F401
-
 app = create_app()
 
 if __name__ == "__main__":
