@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 # ── Connection management ────────────────────────────────────────
 
+
 class ConnectionManager:
     """Thread-local SQLite connection with WAL mode and busy timeout.
 
@@ -76,6 +77,7 @@ def add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, col
 
 # ── jobs table (used by jobqueue.JobQueue) ───────────────────────
 
+
 def _create_jobs_table(conn: sqlite3.Connection):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS jobs (
@@ -115,19 +117,9 @@ def _migrate_jobs_table(conn: sqlite3.Connection):
     add_column_if_missing(conn, "jobs", "cached_path", "TEXT")
     add_column_if_missing(conn, "jobs", "filename", "TEXT")
 
-    # Fix legacy UTC created_at vs local status_changed_at mismatch.
-    # created_at was set by CURRENT_TIMESTAMP (UTC) while status_changed_at
-    # used local time.  Align created_at to status_changed_at when available.
-    conn.execute("""
-        UPDATE jobs
-        SET created_at = status_changed_at
-        WHERE status_changed_at IS NOT NULL
-          AND created_at IS NOT NULL
-          AND created_at != status_changed_at
-    """)
-
 
 # ── users table (used by auth.UserManager) ──────────────────────
+
 
 def _create_users_table(conn: sqlite3.Connection):
     conn.execute("""
@@ -154,10 +146,26 @@ def _migrate_users_table(conn: sqlite3.Connection):
 # Canonical column list for the jobs table. Shared between schema
 # migration and query construction so there is a single source of truth.
 JOB_COLUMNS = [
-    "access_code", "srt_path", "output_dir", "temperature", "status",
-    "error", "run_func_name", "video_number", "created_at", "video_file",
-    "user_id", "text", "blur", "target_language", "cfg_weight",
-    "exaggeration", "start_trim", "end_trim", "cached_path", "filename",
+    "access_code",
+    "srt_path",
+    "output_dir",
+    "temperature",
+    "status",
+    "error",
+    "run_func_name",
+    "video_number",
+    "created_at",
+    "video_file",
+    "user_id",
+    "text",
+    "blur",
+    "target_language",
+    "cfg_weight",
+    "exaggeration",
+    "start_trim",
+    "end_trim",
+    "cached_path",
+    "filename",
 ]
 
 
