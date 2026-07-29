@@ -42,6 +42,7 @@ def _make_srt(dirpath, *filenames):
 class TestScanDir:
     def test_empty_dir(self, tmp_path):
         from oldrun import _scan_dir
+
         zh, en, zh_en = _scan_dir(str(tmp_path))
         assert zh == []
         assert en == []
@@ -49,6 +50,7 @@ class TestScanDir:
 
     def test_categorizes_by_suffix(self, tmp_path):
         from oldrun import _scan_dir
+
         _make_srt(str(tmp_path), "00001.srt", "00002.en.srt", "00003.zh+en.srt", "notes.txt")
         zh, en, zh_en = _scan_dir(str(tmp_path))
         assert len(zh) == 1 and zh[0]["name"] == "00001.srt"
@@ -57,12 +59,14 @@ class TestScanDir:
 
     def test_path_is_absolute(self, tmp_path):
         from oldrun import _scan_dir
+
         _make_srt(str(tmp_path), "00001.srt")
         zh, _, _ = _scan_dir(str(tmp_path))
         assert os.path.isabs(zh[0]["path"])
 
     def test_recursive_walk(self, tmp_path):
         from oldrun import _scan_dir
+
         sub = tmp_path / "sub"
         sub.mkdir()
         _make_srt(str(tmp_path), "a.srt")
@@ -72,6 +76,7 @@ class TestScanDir:
 
     def test_ignores_non_srt(self, tmp_path):
         from oldrun import _scan_dir
+
         _make_srt(str(tmp_path), "a.srt", "b.txt", "c.py", "d.SRT")  # .SRT is uppercase — should match
         zh, en, zh_en = _scan_dir(str(tmp_path))
         assert len(zh) == 2  # a.srt and d.SRT
@@ -80,6 +85,7 @@ class TestScanDir:
 
     def test_en_suffix_has_priority_over_zh(self, tmp_path):
         from oldrun import _scan_dir
+
         _make_srt(str(tmp_path), "foo.en.srt")
         zh, en, zh_en = _scan_dir(str(tmp_path))
         assert zh == []
@@ -88,6 +94,7 @@ class TestScanDir:
 
     def test_zh_en_suffix_has_priority_over_en(self, tmp_path):
         from oldrun import _scan_dir
+
         _make_srt(str(tmp_path), "foo.zh+en.srt")
         zh, en, zh_en = _scan_dir(str(tmp_path))
         assert zh == []
@@ -101,12 +108,14 @@ class TestScanDir:
 class TestCollectIncremental:
     def test_empty_srt_dir(self, oldrun_dirs):
         from oldrun import _collect_incremental
+
         zh, en, zh_en, changed = _collect_incremental(force=True)
         assert (zh, en, zh_en) == ([], [], [])
         assert changed is True
 
     def test_scans_multiple_runs(self, oldrun_dirs):
         from oldrun import _collect_incremental
+
         srt_dir = oldrun_dirs["srt_dir"]
         (srt_dir / "run1" / "srts").mkdir(parents=True)
         (srt_dir / "run2" / "srts").mkdir(parents=True)
@@ -120,6 +129,7 @@ class TestCollectIncremental:
 
     def test_incremental_skips_when_no_new_dirs(self, oldrun_dirs):
         from oldrun import _collect_incremental
+
         srt_dir = oldrun_dirs["srt_dir"]
         (srt_dir / "run1" / "srts").mkdir(parents=True)
         _make_srt(str(srt_dir / "run1" / "srts"), "a.srt")
@@ -130,6 +140,7 @@ class TestCollectIncremental:
 
     def test_incremental_picks_up_new_dirs(self, oldrun_dirs):
         from oldrun import _collect_incremental
+
         srt_dir = oldrun_dirs["srt_dir"]
         (srt_dir / "run1" / "srts").mkdir(parents=True)
         _make_srt(str(srt_dir / "run1" / "srts"), "a.srt")
@@ -142,6 +153,7 @@ class TestCollectIncremental:
 
     def test_sorts_when_merging_new_dirs(self, oldrun_dirs):
         from oldrun import _collect_incremental
+
         srt_dir = oldrun_dirs["srt_dir"]
         (srt_dir / "run1" / "srts").mkdir(parents=True)
         _make_srt(str(srt_dir / "run1" / "srts"), "c.srt", "a.srt")
@@ -154,6 +166,7 @@ class TestCollectIncremental:
 
     def test_missing_srt_dir_returns_empty(self, tmp_path, monkeypatch):
         from oldrun import _collect_incremental
+
         monkeypatch.setattr("oldrun.OLDRUN_SRT_DIR", str(tmp_path / "no_such_dir"))
         monkeypatch.setattr("oldrun.OLDRUN_SRT_TIMESTAMP", str(tmp_path / "ts"))
         zh, en, zh_en, changed = _collect_incremental()
@@ -167,6 +180,7 @@ class TestCollectIncremental:
 class TestWriteStaticHtml:
     def test_creates_html_and_gz(self, oldrun_dirs):
         from oldrun import _write_static_html
+
         html_dir = oldrun_dirs["html_dir"]
         files = [{"name": "test.srt", "path": "/tmp/test.srt"}]
         _write_static_html("zh", files)
@@ -175,6 +189,7 @@ class TestWriteStaticHtml:
 
     def test_html_no_embedded_data_json(self, oldrun_dirs):
         from oldrun import _write_static_html
+
         html_dir = oldrun_dirs["html_dir"]
         files = [{"name": "test.srt", "path": "/tmp/test.srt"}]
         _write_static_html("zh", files)
@@ -184,6 +199,7 @@ class TestWriteStaticHtml:
 
     def test_html_contains_decompress_fetch(self, oldrun_dirs):
         from oldrun import _write_static_html
+
         html_dir = oldrun_dirs["html_dir"]
         _write_static_html("en", [])
         content = (html_dir / "srt-en.html").read_text()
@@ -193,6 +209,7 @@ class TestWriteStaticHtml:
 
     def test_gz_is_valid_compressed_json(self, oldrun_dirs):
         from oldrun import _write_static_html
+
         html_dir = oldrun_dirs["html_dir"]
         files = [
             {"name": "a.srt", "path": "/tmp/a.srt"},
@@ -205,6 +222,7 @@ class TestWriteStaticHtml:
 
     def test_gz_smaller_than_raw_json(self, oldrun_dirs):
         from oldrun import _write_static_html
+
         html_dir = oldrun_dirs["html_dir"]
         many = [{"name": f"{i:05d}.srt", "path": f"/x/y/{i:05d}.srt"} for i in range(100)]
         _write_static_html("zh", many)
@@ -214,6 +232,7 @@ class TestWriteStaticHtml:
 
     def test_all_three_lang_flavors(self, oldrun_dirs):
         from oldrun import _write_static_html
+
         html_dir = oldrun_dirs["html_dir"]
         _write_static_html("zh", [{"name": "z.srt", "path": "/z.srt"}])
         _write_static_html("en", [{"name": "e.srt", "path": "/e.srt"}])
@@ -232,6 +251,7 @@ class TestWriteStaticHtml:
 class TestBuildAllStaticSrt:
     def test_full_workflow_generates_everything(self, oldrun_dirs):
         from oldrun import _collect_incremental, build_all_static_srt
+
         srt_dir = oldrun_dirs["srt_dir"]
         html_dir = oldrun_dirs["html_dir"]
 
@@ -246,6 +266,7 @@ class TestBuildAllStaticSrt:
 
     def test_no_rebuild_when_html_newer_than_timestamp(self, oldrun_dirs):
         from oldrun import _collect_incremental, build_all_static_srt
+
         srt_dir = oldrun_dirs["srt_dir"]
         html_dir = oldrun_dirs["html_dir"]
 
@@ -254,19 +275,18 @@ class TestBuildAllStaticSrt:
         _collect_incremental(force=True)
         build_all_static_srt()
 
-        mtimes_before = {
-            lang: os.path.getmtime(str(html_dir / f"srt-{lang}.html"))
-            for lang in ("zh", "en", "zh+en")
-        }
+        mtimes_before = {lang: os.path.getmtime(str(html_dir / f"srt-{lang}.html")) for lang in ("zh", "en", "zh+en")}
 
         build_all_static_srt()  # second call — should be a no-op
 
         for lang in ("zh", "en", "zh+en"):
-            assert os.path.getmtime(str(html_dir / f"srt-{lang}.html")) == mtimes_before[lang], \
+            assert os.path.getmtime(str(html_dir / f"srt-{lang}.html")) == mtimes_before[lang], (
                 f"{lang}.html was unexpectedly rewritten"
+            )
 
     def test_rebuilds_when_html_missing(self, oldrun_dirs):
         from oldrun import _collect_incremental, build_all_static_srt
+
         srt_dir = oldrun_dirs["srt_dir"]
         html_dir = oldrun_dirs["html_dir"]
 
@@ -288,7 +308,8 @@ class TestBuildAllStaticSrt:
 
 class TestIndexPersistence:
     def test_save_and_load_roundtrip(self, oldrun_dirs):
-        from oldrun import _save_index, _load_index
+        from oldrun import _load_index, _save_index
+
         idx = {"zh": [{"name": "a.srt"}], "en": [], "scanned_dirs": ["/tmp/d1"]}
         _save_index(idx)
         loaded = _load_index()
@@ -298,12 +319,14 @@ class TestIndexPersistence:
 
     def test_load_returns_none_on_missing_file(self, oldrun_dirs):
         from oldrun import _load_index
+
         # ts_file doesn't exist yet — should return None
         result = _load_index()
         assert result is None
 
     def test_load_returns_none_on_corrupt_file(self, oldrun_dirs):
         from oldrun import _load_index
+
         oldrun_dirs["ts_file"].write_text("not valid pickle or json")
         result = _load_index()
         assert result is None

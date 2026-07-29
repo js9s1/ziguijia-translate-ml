@@ -23,9 +23,14 @@ def srt_process():
         params = parse_job_params(request.form)
 
         process_srt_file = _lazy("audio_job", "process_srt_file")
-        result = process_srt_file(srt_file, params["temperature"], session["user_id"],
-                                  target_language=params["target_language"], cfg_weight=params["cfg_weight"],
-                                  exaggeration=params["exaggeration"])
+        result = process_srt_file(
+            srt_file,
+            params["temperature"],
+            session["user_id"],
+            target_language=params["target_language"],
+            cfg_weight=params["cfg_weight"],
+            exaggeration=params["exaggeration"],
+        )
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error processing SRT: {str(e)}", exc_info=True)

@@ -69,7 +69,7 @@ def looks_untranslated(text: str, source_has_cjk: bool = True) -> bool:
     """Heuristic: if source was CJK and output still has CJK, model likely refused to translate."""
     if not source_has_cjk:
         return False
-    cjk_count = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+    cjk_count = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
     return cjk_count >= 3
 
 
@@ -78,6 +78,7 @@ def _get_hy_mt():
     if HY_MT_DIR not in sys.path:
         sys.path.insert(0, HY_MT_DIR)
     import importlib
+
     if HY_MT_BACKEND == "openvino":
         return importlib.import_module("hy_mt_openvino")
     return importlib.import_module("hy_mt")
@@ -98,23 +99,32 @@ def translate_segment(text: str, target_language: str, source_has_cjk: bool = Tr
         else:
             model, tokenizer = hy_mt._get_model()
             messages = [
-                {"role": "user",
-                 "content": f"Translate the following Chinese sentence into {target_language}. Output ONLY the {target_language} translation, nothing else:\n\n{text}"},
+                {
+                    "role": "user",
+                    "content": f"Translate the following Chinese sentence into {target_language}. Output ONLY the {target_language} translation, nothing else:\n\n{text}",
+                },
             ]
             tokenized_chat = tokenizer.apply_chat_template(
                 messages, tokenize=True, add_generation_prompt=False, return_tensors="pt"
             )
             outputs = model.generate(tokenized_chat.to(model.device), **hy_mt.GENERATION_KWARGS)
-            result = tokenizer.decode(outputs[0][len(tokenized_chat[0]):], skip_special_tokens=True)
+            result = tokenizer.decode(outputs[0][len(tokenized_chat[0]) :], skip_special_tokens=True)
         if not looks_untranslated(result, source_has_cjk):
             return result
     return result
 
 
-def translate_srt_file(srt_path: str, output_path: str, access_code: str, output_dir: str,
-                       target_language_name: str, proc_log, log_file,
-                       intro_marker: str | None = None,
-                       outro_marker: str | None = None):
+def translate_srt_file(
+    srt_path: str,
+    output_path: str,
+    access_code: str,
+    output_dir: str,
+    target_language_name: str,
+    proc_log,
+    log_file,
+    intro_marker: str | None = None,
+    outro_marker: str | None = None,
+):
     """Translate all subtitle blocks in an SRT file and write the result.
 
     Args:
@@ -171,7 +181,7 @@ def translate_srt_file(srt_path: str, output_path: str, access_code: str, output
                 translated = translate_segment(text, target_language_name)
             translated_blocks.append(f"{idx}\n{time_range}\n{translated}")
             if (i + 1) % 10 == 0 or (i + 1) == n_total:
-                job_log(access_code, output_dir, f"  翻译进度: {i+1}/{n_total}")
+                job_log(access_code, output_dir, f"  翻译进度: {i + 1}/{n_total}")
 
         with open(output_path, "w", encoding="utf-8") as f:
             f.write("\n\n".join(translated_blocks) + "\n")

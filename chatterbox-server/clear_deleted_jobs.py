@@ -20,9 +20,7 @@ from jobqueue import get_job_queue
 def main():
     parser = argparse.ArgumentParser(description="Clear deleted jobs from the job queue")
     parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be removed without actually removing anything"
+        "--dry-run", action="store_true", help="Show what would be removed without actually removing anything"
     )
     args = parser.parse_args()
 

@@ -9,20 +9,21 @@ from schemas import (
     ChangePasswordRequest,
     LoginRequest,
     RegisterRequest,
-    ResendCodeRequest,
     ResetPasswordConfirmRequest,
     ResetPasswordRequest,
-    VerifyRequest,
 )
 
 auth_bp = Blueprint("auth", __name__)
 logger = logging.getLogger(__name__)
 
-HTML_DIR = __import__("os").path.join(__import__("os").path.dirname(__import__("os").path.abspath(__file__)), "..", "html")
+HTML_DIR = __import__("os").path.join(
+    __import__("os").path.dirname(__import__("os").path.abspath(__file__)), "..", "html"
+)
 
 
 def _get_user_manager():
     from auth import get_user_manager
+
     return get_user_manager()
 
 
@@ -106,16 +107,19 @@ def auth_resend():
 def auth_me():
     if "user_id" not in session:
         return jsonify({"authenticated": False})
-    return jsonify({
-        "authenticated": True,
-        "user": {"id": session["user_id"], "email": session["user_email"]},
-    })
+    return jsonify(
+        {
+            "authenticated": True,
+            "user": {"id": session["user_id"], "email": session["user_email"]},
+        }
+    )
 
 
 @auth_bp.route("/auth/csrf-token", methods=["GET"])
 def auth_csrf_token():
     """Return a CSRF token for the current session."""
     from middleware import generate_csrf_token
+
     return jsonify({"csrf_token": generate_csrf_token()})
 
 

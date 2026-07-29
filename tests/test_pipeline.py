@@ -81,8 +81,7 @@ class TestBuildAtempoFilter:
 
 class TestValidateFiles:
     def test_all_files_exist(self):
-        with tempfile.NamedTemporaryFile(delete=False) as f1, \
-             tempfile.NamedTemporaryFile(delete=False) as f2:
+        with tempfile.NamedTemporaryFile(delete=False) as f1, tempfile.NamedTemporaryFile(delete=False) as f2:
             f1.write(b"a")
             f2.write(b"b")
         try:

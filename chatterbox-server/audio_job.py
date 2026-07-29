@@ -27,7 +27,14 @@ def _run_gen_audio(job_data: dict):
     )
 
 
-def process_srt_file(srt_file, temperature: float, user_id: int = None, target_language: str = "en", cfg_weight: float = 0.5, exaggeration: float = 0.5) -> dict:
+def process_srt_file(
+    srt_file,
+    temperature: float,
+    user_id: int = None,
+    target_language: str = "en",
+    cfg_weight: float = 0.5,
+    exaggeration: float = 0.5,
+) -> dict:
     access_code = str(uuid.uuid4())[:8].upper()
     output_dir = os.path.join(AUDIO_TRACKS_DIR, access_code)
     os.makedirs(output_dir, exist_ok=True)
@@ -62,7 +69,7 @@ def _split_text(text, max_len=500):
 
         chunk = text[:max_len]
         last_boundary = -1
-        for sep in ('. ', '! ', '? ', '.\n', '!\n', '?\n', '.\r\n', '!\r\n', '?\r\n'):
+        for sep in (". ", "! ", "? ", ".\n", "!\n", "?\n", ".\r\n", "!\r\n", "?\r\n"):
             pos = chunk.rfind(sep)
             if pos > last_boundary:
                 last_boundary = pos + 1
@@ -71,7 +78,7 @@ def _split_text(text, max_len=500):
             chunks.append(text[:last_boundary])
             text = text[last_boundary:].lstrip()
         else:
-            last_space = chunk.rfind(' ')
+            last_space = chunk.rfind(" ")
             if last_space > 0:
                 chunks.append(text[:last_space])
                 text = text[last_space:].lstrip()
@@ -93,11 +100,12 @@ def _run_audio_segmentation_job(job_data: dict):
     ning._ensure_model(ap["target_language"])
     if ap["target_language"] == "id":
         import gpu_manage as _gm
+
         sample_rate = _gm._indonesian_model.sr
     else:
         sample_rate = ning.sample_rate
 
-    pattern = r'<(\d+(?:\.\d+)?)>\s*'
+    pattern = r"<(\d+(?:\.\d+)?)>\s*"
     parts = re.split(pattern, content)
 
     segments = []
@@ -120,10 +128,13 @@ def _run_audio_segmentation_job(job_data: dict):
     for silence_sec, text in segments:
         chunks = _split_text(text, 500)
         for chunk in chunks:
-            wav_bytes = ning.text_to_wave(chunk, temperature=ap["temperature"],
-                                          target_language=ap["target_language"],
-                                          cfg_weight=ap["cfg_weight"],
-                                          exaggeration=ap["exaggeration"])
+            wav_bytes = ning.text_to_wave(
+                chunk,
+                temperature=ap["temperature"],
+                target_language=ap["target_language"],
+                cfg_weight=ap["cfg_weight"],
+                exaggeration=ap["exaggeration"],
+            )
             wav, sr = ta.load(wav_bytes)
             if wav.dim() == 1:
                 wav = wav.unsqueeze(0)
@@ -136,10 +147,18 @@ def _run_audio_segmentation_job(job_data: dict):
 
     output_path = os.path.join(output_dir, filename)
     ta.save(output_path, combined, sample_rate)
-    job_log(job_data['access_code'], output_dir, f"Wrote {output_path}")
+    job_log(job_data["access_code"], output_dir, f"Wrote {output_path}")
 
 
-def process_audio_file(content: str, original_filename: str, temperature: float, user_id: int = None, target_language: str = "en", cfg_weight: float = 0.5, exaggeration: float = 0.5) -> dict:
+def process_audio_file(
+    content: str,
+    original_filename: str,
+    temperature: float,
+    user_id: int = None,
+    target_language: str = "en",
+    cfg_weight: float = 0.5,
+    exaggeration: float = 0.5,
+) -> dict:
     access_code = str(uuid.uuid4())[:8].upper()
     output_dir = os.path.join(AUDIO_TRACKS_DIR, access_code)
     os.makedirs(output_dir, exist_ok=True)

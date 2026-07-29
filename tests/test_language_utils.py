@@ -1,14 +1,12 @@
 """Tests for language/script detection utilities."""
 
-import pytest
-
 from language_utils import (
-    detect_dominant_script,
-    detect_mixed_scripts,
-    is_srt_timing_line,
-    is_srt_index_line,
     CODE_POINT_RANGES,
     UNICODE_SCRIPTS,
+    detect_dominant_script,
+    detect_mixed_scripts,
+    is_srt_index_line,
+    is_srt_timing_line,
 )
 
 
@@ -82,5 +80,4 @@ class TestCodePointRanges:
 
     def test_all_unicode_scripts_compiled(self):
         for name, pattern in UNICODE_SCRIPTS.items():
-            assert name in ("CJK", "Latin", "Cyrillic", "Arabic", "Devanagari",
-                            "Thai", "Greek", "Hebrew")
+            assert name in ("CJK", "Latin", "Cyrillic", "Arabic", "Devanagari", "Thai", "Greek", "Hebrew")

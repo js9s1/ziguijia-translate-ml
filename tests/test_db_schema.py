@@ -1,17 +1,14 @@
 """Tests for database schema creation and migration."""
 
-import os
 import sqlite3
-import tempfile
 
 import pytest
-
 from db_schema import (
+    JOB_COLUMNS,
     ConnectionManager,
+    add_column_if_missing,
     init_jobs_schema,
     init_users_schema,
-    add_column_if_missing,
-    JOB_COLUMNS,
 )
 
 

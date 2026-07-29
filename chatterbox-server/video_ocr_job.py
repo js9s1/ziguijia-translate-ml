@@ -19,7 +19,7 @@ def _detect_srt_language(srt_path: str) -> str:
 
     try:
         content = read_srt_text(srt_path)
-    except Exception:
+    except (OSError, UnicodeDecodeError, FileNotFoundError):
         return "en"
 
     # Remove SRT timing lines and indices — keep only text lines
@@ -57,9 +57,10 @@ def _run_ocr_only_job(job_data: dict):
         frames_dir = os.path.join(output_dir, "frames")
 
         result = subprocess.run(
-            ["/usr/bin/bash", RAPID_VIDEOCR_PIPELINE_SCRIPT, "-i", video_file,
-             "-o", ocr_srt, "-d", frames_dir],
-            stdout=proc_log, stderr=proc_log, timeout=14400,
+            ["/usr/bin/bash", RAPID_VIDEOCR_PIPELINE_SCRIPT, "-i", video_file, "-o", ocr_srt, "-d", frames_dir],
+            stdout=proc_log,
+            stderr=proc_log,
+            timeout=14400,
         )
 
     if result.returncode != 0:

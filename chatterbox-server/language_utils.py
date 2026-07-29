@@ -9,27 +9,46 @@ import re
 # Language code → full name mapping (single source of truth for the backend).
 # Frontend fetches this via /api/languages.
 LANG_NAME_MAP: dict[str, str] = {
-    "ar": "Arabic", "da": "Danish", "de": "German", "el": "Greek",
-    "en": "English", "es": "Spanish", "fi": "Finnish", "fr": "French",
-    "he": "Hebrew", "hi": "Hindi", "it": "Italian", "ja": "Japanese",
-    "ko": "Korean", "ms": "Malay", "nl": "Dutch", "no": "Norwegian",
-    "pl": "Polish", "pt": "Portuguese", "ru": "Russian", "sv": "Swedish",
-    "sw": "Swahili", "tr": "Turkish", "zh": "Chinese",
-    "vi": "Vietnamese", "th": "Thai", "id": "Indonesian",
+    "ar": "Arabic",
+    "da": "Danish",
+    "de": "German",
+    "el": "Greek",
+    "en": "English",
+    "es": "Spanish",
+    "fi": "Finnish",
+    "fr": "French",
+    "he": "Hebrew",
+    "hi": "Hindi",
+    "it": "Italian",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "ms": "Malay",
+    "nl": "Dutch",
+    "no": "Norwegian",
+    "pl": "Polish",
+    "pt": "Portuguese",
+    "ru": "Russian",
+    "sv": "Swedish",
+    "sw": "Swahili",
+    "tr": "Turkish",
+    "zh": "Chinese",
+    "vi": "Vietnamese",
+    "th": "Thai",
+    "id": "Indonesian",
 }
 
 # Unicode script ranges for language detection/validation.
 # Keys are script names; values are compiled regexes that match a single
 # character in the range.
 UNICODE_SCRIPTS: dict[str, re.Pattern] = {
-    "CJK":        re.compile(r'[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]'),
-    "Latin":      re.compile(r'[a-zA-Z]'),
-    "Cyrillic":   re.compile(r'[\u0400-\u04ff]'),
-    "Arabic":     re.compile(r'[\u0600-\u06ff]'),
-    "Devanagari": re.compile(r'[\u0900-\u097f]'),
-    "Thai":       re.compile(r'[\u0e00-\u0e7f]'),
-    "Greek":      re.compile(r'[\u0370-\u03ff]'),
-    "Hebrew":     re.compile(r'[\u0590-\u05ff]'),
+    "CJK": re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]"),
+    "Latin": re.compile(r"[a-zA-Z]"),
+    "Cyrillic": re.compile(r"[\u0400-\u04ff]"),
+    "Arabic": re.compile(r"[\u0600-\u06ff]"),
+    "Devanagari": re.compile(r"[\u0900-\u097f]"),
+    "Thai": re.compile(r"[\u0e00-\u0e7f]"),
+    "Greek": re.compile(r"[\u0370-\u03ff]"),
+    "Hebrew": re.compile(r"[\u0590-\u05ff]"),
 }
 
 # Code-point ranges for more detailed detection (used by video_ocr_job).

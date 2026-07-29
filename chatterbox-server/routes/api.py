@@ -21,6 +21,7 @@ HTML_DIR = os.path.join(BASE_DIR, "html")
 
 # ── Health ────────────────────────────────────────────────
 
+
 @api_bp.route("/health", methods=["GET"])
 def health_check():
     cached = cache_get("health:gpu")
@@ -28,29 +29,35 @@ def health_check():
         cuda_ok = cached == "1"
     else:
         import importlib
+
         cuda_ok = importlib.import_module("torch").cuda.is_available()
         cache_set("health:gpu", "1" if cuda_ok else "0", ttl=60)
-    return jsonify({
-        "status": "healthy", "message": "Server is running",
-        "cuda": cuda_ok,
-        "hsa_override": os.environ.get("HSA_OVERRIDE_GFX_VERSION", "not set"),
-    })
+    return jsonify(
+        {
+            "status": "healthy",
+            "message": "Server is running",
+            "cuda": cuda_ok,
+            "hsa_override": os.environ.get("HSA_OVERRIDE_GFX_VERSION", "not set"),
+        }
+    )
 
 
 # ── Languages ─────────────────────────────────────────────
 
+
 @api_bp.route("/api/languages", methods=["GET"])
 def api_languages():
     from config import LANG_MAP
-    return jsonify({
-        "languages": [
-            {"code": code, "name": name}
-            for code, name in sorted(LANG_MAP.items())
-        ],
-    })
+
+    return jsonify(
+        {
+            "languages": [{"code": code, "name": name} for code, name in sorted(LANG_MAP.items())],
+        }
+    )
 
 
 # ── Generic job status ───────────────────────────────────
+
 
 @api_bp.route("/api/jobs/<access_code>/status", methods=["GET"])
 def api_job_status(access_code):
@@ -62,11 +69,13 @@ def api_job_status(access_code):
 
 # ── Oldrun SRT list API ──────────────────────────────────
 
+
 @api_bp.route("/api/oldrun-srt", methods=["GET"])
 def api_oldrun_srt():
     lang = request.args.get("lang", "zh")
     try:
         from oldrun import _collect_incremental
+
         zh, en, zh_en, _changed = _collect_incremental()
         if lang == "en":
             files = en
@@ -138,6 +147,7 @@ def api_oldrun_srt_download():
 
 # ── Static pages (GET) ───────────────────────────────────
 
+
 @api_bp.route("/", methods=["GET"])
 @api_bp.route("/index.html", methods=["GET"])
 def index():
@@ -185,6 +195,7 @@ def my_jobs_page():
 
 
 # ── Catch-all static file serving (must be last) ─────────
+
 
 @api_bp.route("/<path:filename>", methods=["GET"])
 def serve_static(filename):

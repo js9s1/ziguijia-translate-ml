@@ -1,10 +1,9 @@
 """Tests for jobs_tui.py — load_jobs, State, render_summary, show_user_jobs_tui."""
 
 import os
-import sys
 import sqlite3
+import sys
 import tempfile
-import importlib
 
 import pytest
 
@@ -100,6 +99,7 @@ def _tui_env():
         os.environ.pop("USERS_DB", None)
 
     import shutil
+
     shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -108,6 +108,7 @@ def tuimod(_tui_env):
     """Import jobs_tui after environment is set up."""
     sys.path.insert(0, os.getcwd())
     import jobs_tui
+
     return jobs_tui
 
 
@@ -158,6 +159,7 @@ def seed_db(_tui_env):
 
 
 # ── load_jobs tests ────────────────────────────────────────
+
 
 class TestLoadJobsBackwardCompat:
     def test_load_all(self, tuimod, seed_db):
@@ -240,6 +242,7 @@ class TestLoadJobsOrdering:
 
 # ── State tests ─────────────────────────────────────────────
 
+
 class TestStateBackwardCompat:
     def test_no_user_id_no_label(self, tuimod, seed_db):
         jobs, total = tuimod.load_jobs()
@@ -304,7 +307,7 @@ class TestStateProperties:
         s = tuimod.State(jobs, total)
         # visible is reversed — last element of page slice is first
         assert len(s.visible) <= tuimod.PAGE_SIZE
-        first_slice = s.all[s.start:s.end]
+        first_slice = s.all[s.start : s.end]
         if first_slice:
             assert s.visible[-1] == first_slice[0]
 
@@ -328,6 +331,7 @@ class TestStateProperties:
 
 
 # ── render_summary tests ────────────────────────────────────
+
 
 class TestRenderSummary:
     def test_no_label_no_search(self, tuimod, seed_db):
@@ -364,6 +368,7 @@ class TestRenderSummary:
 
 # ── show_user_jobs_tui tests ─────────────────────────────────
 
+
 class TestShowUserJobsTui:
     def test_function_is_callable(self, tuimod):
         assert callable(tuimod.show_user_jobs_tui)
@@ -371,6 +376,7 @@ class TestShowUserJobsTui:
     def test_calls_interactive_not_explode(self, tuimod, seed_db):
         """show_user_jobs_tui is a thin wrapper — just verify it imports cleanly."""
         import inspect
+
         source = inspect.getsource(tuimod.show_user_jobs_tui)
         assert "interactive(console" in source
         assert "user_id=" in source
@@ -379,16 +385,19 @@ class TestShowUserJobsTui:
     def test_no_load_user_jobs_reference(self, tuimod):
         """Verify we no longer depend on the removed load_user_jobs import."""
         import inspect
+
         source = inspect.getsource(tuimod.show_user_jobs_tui)
         assert "load_user_jobs" not in source
 
 
 # ── interactive() entry point tests ──────────────────────────
 
+
 class TestInteractiveEntry:
     def test_accepts_user_id_optional(self, tuimod):
         """interactive() should accept user_id=None by default."""
         import inspect
+
         sig = inspect.signature(tuimod.interactive)
         params = list(sig.parameters.keys())
         assert "user_id" in params
@@ -397,16 +406,15 @@ class TestInteractiveEntry:
     def test_accepts_only_console(self, tuimod):
         """interactive(console) should still work (backward compat)."""
         import inspect
+
         sig = inspect.signature(tuimod.interactive)
         # No required params besides console
-        required = [
-            p for p, v in sig.parameters.items()
-            if v.default is inspect.Parameter.empty
-        ]
+        required = [p for p, v in sig.parameters.items() if v.default is inspect.Parameter.empty]
         assert required == ["console"]
 
 
 # ── Edge case tests ─────────────────────────────────────────
+
 
 class TestEdgeCases:
     def test_state_no_jobs(self, tuimod):

@@ -1,13 +1,13 @@
 """Tests for JobQueue: add, status, cancel, resubmit, delete, checkpoints."""
 
-import os
-import tempfile
-
 import pytest
-
 from jobqueue import (
-    get_job_queue, JobStatus, _get_run_func, _get_job_type_label,
-    _safe_close_proc, _safe_close_psutil_procs,
+    JobStatus,
+    _get_job_type_label,
+    _get_run_func,
+    _safe_close_proc,
+    _safe_close_psutil_procs,
+    get_job_queue,
 )
 
 
@@ -23,23 +23,35 @@ def user_id():
 
 class TestJobQueueAdd:
     def test_add_job_pending(self, jq, user_id):
-        access_code = jq.add_job({
-            "temperature": 0.5,
-            "target_language": "en",
-        }, _run_gen_audio_stub, user_id)
+        access_code = jq.add_job(
+            {
+                "temperature": 0.5,
+                "target_language": "en",
+            },
+            _run_gen_audio_stub,
+            user_id,
+        )
         assert access_code is not None
         assert len(access_code) == 8
         assert access_code.isupper()
 
     def test_add_preserves_checkpoint(self, jq, user_id):
-        code = jq.add_job({
-            "checkpoint": "",
-        }, _run_gen_audio_stub, user_id)
+        code = jq.add_job(
+            {
+                "checkpoint": "",
+            },
+            _run_gen_audio_stub,
+            user_id,
+        )
         jq.set_checkpoint(code, "ocr")
         # Re-add same job (simulating resubmit)
-        code2 = jq.add_job({
-            "access_code": code,
-        }, _run_gen_audio_stub, user_id)
+        code2 = jq.add_job(
+            {
+                "access_code": code,
+            },
+            _run_gen_audio_stub,
+            user_id,
+        )
         assert code2 == code
         ckpt = jq.get_checkpoint(code)
         assert "ocr" in ckpt
@@ -50,9 +62,13 @@ class TestJobQueueStatus:
         assert jq.get_status("DEADBEEF") is None
 
     def test_get_status_after_add(self, jq, user_id):
-        code = jq.add_job({
-            "temperature": 0.5,
-        }, _run_gen_audio_stub, user_id)
+        code = jq.add_job(
+            {
+                "temperature": 0.5,
+            },
+            _run_gen_audio_stub,
+            user_id,
+        )
         status = jq.get_status(code)
         assert status is not None
         assert status["access_code"] == code
@@ -73,7 +89,6 @@ class TestJobQueueCancel:
         assert result["success"] is False
 
     def test_cancel_already_failed(self, jq, user_id):
-        from jobqueue import _now_str
         code = jq.add_job({}, _run_gen_audio_stub, user_id)
         conn = jq._get_conn()
         conn.execute(
@@ -87,7 +102,6 @@ class TestJobQueueCancel:
 
 class TestJobQueueResubmit:
     def test_resubmit_failed(self, jq, user_id):
-        from jobqueue import _now_str
         code = jq.add_job({}, _run_gen_audio_stub, user_id)
         conn = jq._get_conn()
         conn.execute(
@@ -101,7 +115,6 @@ class TestJobQueueResubmit:
         assert status["status"] == JobStatus.PENDING.value
 
     def test_resubmit_cancelled(self, jq, user_id):
-        from jobqueue import _now_str
         code = jq.add_job({}, _run_gen_audio_stub, user_id)
         conn = jq._get_conn()
         conn.execute(
@@ -113,7 +126,6 @@ class TestJobQueueResubmit:
         assert result["success"] is True
 
     def test_resubmit_completed_without_edit(self, jq, user_id):
-        from jobqueue import _now_str
         code = jq.add_job({}, _run_gen_audio_stub, user_id)
         conn = jq._get_conn()
         conn.execute(
@@ -129,7 +141,6 @@ class TestJobQueueResubmit:
         assert result["success"] is False
 
     def test_resubmit_deleted(self, jq, user_id):
-        from jobqueue import _now_str
         code = jq.add_job({}, _run_gen_audio_stub, user_id)
         conn = jq._get_conn()
         conn.execute(
@@ -253,22 +264,26 @@ class TestHelperFunctions:
 
 class TestJobQueueAddJobParams:
     def test_add_job_with_all_params(self, jq, user_id):
-        code = jq.add_job({
-            "srt_path": "/tmp/test.srt",
-            "output_dir": "/tmp/out",
-            "temperature": 0.5,
-            "video_number": "123",
-            "video_file": "video.mp4",
-            "text": "test text",
-            "blur": "yes",
-            "target_language": "fr",
-            "cfg_weight": 0.5,
-            "exaggeration": 1.0,
-            "start_trim": 1.0,
-            "end_trim": 10.0,
-            "cached_path": "/cache/v.mp4",
-            "filename": "input.srt",
-        }, _run_gen_audio_stub, user_id)
+        code = jq.add_job(
+            {
+                "srt_path": "/tmp/test.srt",
+                "output_dir": "/tmp/out",
+                "temperature": 0.5,
+                "video_number": "123",
+                "video_file": "video.mp4",
+                "text": "test text",
+                "blur": "yes",
+                "target_language": "fr",
+                "cfg_weight": 0.5,
+                "exaggeration": 1.0,
+                "start_trim": 1.0,
+                "end_trim": 10.0,
+                "cached_path": "/cache/v.mp4",
+                "filename": "input.srt",
+            },
+            _run_gen_audio_stub,
+            user_id,
+        )
         status = jq.get_status(code)
         assert status["temperature"] == 0.5
         assert status["target_language"] == "fr"

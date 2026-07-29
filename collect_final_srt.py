@@ -61,8 +61,7 @@ def collect(dry_run: bool = False) -> int:
 
         src_path = _find_srt(output_dir)
         if src_path is None:
-            skipped_reason["no_output_adjusted_srt"] = \
-                skipped_reason.get("no_output_adjusted_srt", 0) + 1
+            skipped_reason["no_output_adjusted_srt"] = skipped_reason.get("no_output_adjusted_srt", 0) + 1
             continue
 
         dst_path = os.path.join(output_dir, DEST_NAME)
@@ -78,12 +77,11 @@ def collect(dry_run: bool = False) -> int:
             copied += 1
         except OSError as e:
             print(f"  ✗ {ac}: {e}", file=sys.stderr)
-            skipped_reason["copy_error"] = \
-                skipped_reason.get("copy_error", 0) + 1
+            skipped_reason["copy_error"] = skipped_reason.get("copy_error", 0) + 1
 
     total = len(rows)
     print()
-    print(f"── Summary ──────────────────────────────────")
+    print("── Summary ──────────────────────────────────")
     print(f"  Completed jobs with output_dir: {total}")
     print(f"  output-final-modified.srt created: {copied}")
     for reason, count in sorted(skipped_reason.items()):
@@ -92,13 +90,8 @@ def collect(dry_run: bool = False) -> int:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Create output-final-modified.srt in each completed job's directory."
-    )
-    parser.add_argument(
-        "--dry", "-n", action="store_true",
-        help="Preview without copying."
-    )
+    parser = argparse.ArgumentParser(description="Create output-final-modified.srt in each completed job's directory.")
+    parser.add_argument("--dry", "-n", action="store_true", help="Preview without copying.")
     args = parser.parse_args()
     if args.dry:
         print("DRY RUN\n")

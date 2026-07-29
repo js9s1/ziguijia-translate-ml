@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 from functools import wraps
 
+import valkey
 from config import AUDIO_TRACKS_DIR, VIDEO_DIR
 from flask import abort, jsonify, request, session
 from valkey_util import (
@@ -39,13 +40,14 @@ def _check_ip_rate_limit(ip_key: str) -> bool:
     if r is not None:
         try:
             return check_rate_limit(ip_key, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW)
-        except Exception:
+        except valkey.ValkeyError:
             pass
     return _ip_limiter.check(ip_key)
 
 
 def rate_limit(f):
     """Rate limiter: uses Redis when available, in-memory fallback otherwise."""
+
     @wraps(f)
     def decorated(*args, **kwargs):
         ip = request.remote_addr or "unknown"
@@ -54,6 +56,7 @@ def rate_limit(f):
             logger.warning(f"Rate limit exceeded for IP {ip}")
             return jsonify({"error": "请求过于频繁，请稍后再试"}), 429
         return f(*args, **kwargs)
+
     return decorated
 
 
@@ -65,7 +68,7 @@ def email_rate_limit(email: str) -> tuple[bool, str]:
     if r is not None:
         try:
             allowed = check_rate_limit(key, EMAIL_RATE_LIMIT_MAX, EMAIL_RATE_LIMIT_WINDOW)
-        except Exception:
+        except valkey.ValkeyError:
             pass
     if not allowed:
         return False, "该邮箱的密码重置请求过于频繁，请稍后再试"
@@ -75,6 +78,7 @@ def email_rate_limit(email: str) -> tuple[bool, str]:
 
 
 # ── CSRF protection ───────────────────────────────────────
+
 
 def generate_csrf_token() -> str:
     """Return a random CSRF token, creating one if the session has none."""
@@ -90,6 +94,7 @@ def csrf_required(f):
     Auth-related endpoints (/auth/*) are exempt because they establish
     the session in the first place.
     """
+
     @wraps(f)
     def decorated(*args, **kwargs):
         token = request.headers.get("X-CSRF-Token", "")
@@ -98,10 +103,12 @@ def csrf_required(f):
             logger.warning(f"CSRF token mismatch from {request.remote_addr}")
             return jsonify({"error": "CSRF token missing or invalid"}), 403
         return f(*args, **kwargs)
+
     return decorated
 
 
 # ── Login required ────────────────────────────────────────
+
 
 def login_required(f):
     @wraps(f)
@@ -109,6 +116,7 @@ def login_required(f):
         if "user_id" not in session:
             return jsonify({"error": "请先登录"}), 401
         return f(*args, **kwargs)
+
     return decorated
 
 
@@ -183,9 +191,10 @@ def get_video_metadata(path: str) -> dict:
     """Get duration (seconds) and resolution (WxH) of a video file via ffprobe."""
     try:
         result = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-print_format", "json",
-             "-show_format", "-show_streams", path],
-            capture_output=True, text=True, timeout=30,
+            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", path],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         info = __import__("json").loads(result.stdout)
         duration = float(info.get("format", {}).get("duration", 0))
@@ -206,7 +215,7 @@ def get_video_metadata(path: str) -> dict:
         if resolution:
             meta["resolution"] = resolution
         return meta
-    except Exception:
+    except (subprocess.TimeoutExpired, ValueError, OSError):
         return {}
 
 
@@ -228,25 +237,28 @@ def validate_file_upload(uploaded_file, label: str = "file"):
     if "srt" in label.lower():
         try:
             text = content.decode("utf-8", errors="replace")
-        except Exception:
+        except UnicodeDecodeError:
             text = ""
         if not _SRT_TIMING_RE.search(text):
             raise ValueError(
                 f"Uploaded {label} file does not appear to be a valid SRT file. "
-                f"Expected timing lines like '00:00:01,000 --> 00:00:03,000'.")
+                f"Expected timing lines like '00:00:01,000 --> 00:00:03,000'."
+            )
         _validate_srt_language(text)
 
 
 def _validate_video_codec(content: bytes):
     import json
+
     tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
     try:
         tmp.write(content)
         tmp.close()
         result = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-print_format", "json",
-             "-show_streams", "-select_streams", "v:0", tmp.name],
-            capture_output=True, text=True, timeout=30,
+            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", "-select_streams", "v:0", tmp.name],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if result.returncode != 0:
             raise ValueError("Cannot probe video codec — file may be corrupt.")
@@ -263,6 +275,7 @@ def _validate_video_codec(content: bytes):
 
 def _validate_srt_language(text: str):
     from language_utils import UNICODE_SCRIPTS
+
     lines = text.splitlines()
     found_scripts = set()
     for line in lines:
@@ -271,12 +284,10 @@ def _validate_srt_language(text: str):
             continue
         if stripped.isdigit():
             continue
-        if '-->' in stripped:
+        if "-->" in stripped:
             continue
         for name, pattern in UNICODE_SCRIPTS.items():
             if pattern.search(stripped):
                 found_scripts.add(name)
         if len(found_scripts) > 1:
-            raise ValueError(
-                "SRT file contains mixed languages. "
-                "Please upload an SRT file in a single language.")
+            raise ValueError("SRT file contains mixed languages. Please upload an SRT file in a single language.")

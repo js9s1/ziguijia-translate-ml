@@ -35,6 +35,7 @@ PAGE_SIZE = 20
 
 # ── Data types ────────────────────────────────────────────
 
+
 @dataclass
 class User:
     id: int
@@ -44,6 +45,7 @@ class User:
 
 
 # ── DB helpers ────────────────────────────────────────────
+
 
 def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(str(USERS_DB))
@@ -115,6 +117,7 @@ def load_user_jobs(user_id: int) -> list[dict]:
 
 # ── Rendering ─────────────────────────────────────────────
 
+
 def render_table(users: list[User], cursor: int, page: int, pages: int, total: int) -> Panel:
     t = Table(box=box.SIMPLE, header_style="bold", show_edge=False, padding=(0, 1))
     t.add_column("", width=2)
@@ -142,10 +145,11 @@ def render_table(users: list[User], cursor: int, page: int, pages: int, total: i
 
     summary = f"总计 {total}  |  已验证 {sum(1 for u in users if u.verified)}/{total}"
     header = Panel(summary, padding=(0, 1))
-    return Panel(t, title=f"用户列表 — 第 {page+1}/{pages} 页", border_style="cyan")
+    return Panel(t, title=f"用户列表 — 第 {page + 1}/{pages} 页", border_style="cyan")
 
 
 # ── Key input ─────────────────────────────────────────────
+
 
 @contextmanager
 def raw_mode():
@@ -189,6 +193,7 @@ def read_key() -> str:
 
 # ── Job listing screen ───────────────────────────────────
 
+
 def show_user_jobs(user: User, console: Console):
     """Show all jobs belonging to a user. Press any key to return."""
     jobs = load_user_jobs(user.id)
@@ -228,6 +233,7 @@ def show_user_jobs(user: User, console: Console):
 
 
 # ── Main ──────────────────────────────────────────────────
+
 
 def main():
     console = Console()

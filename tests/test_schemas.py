@@ -2,12 +2,10 @@
 
 import pytest
 from pydantic import ValidationError
-
 from schemas import (
-    RegisterRequest, LoginRequest, VerifyRequest,
-    ChangePasswordRequest, ResetPasswordRequest,
-    ResetPasswordConfirmRequest,
-    FileDeleteRequest, SRTSaveRequest,
+    FileDeleteRequest,
+    RegisterRequest,
+    SRTSaveRequest,
 )
 
 

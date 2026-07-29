@@ -76,13 +76,32 @@ PORT = 18789
 
 # ── Language code → full name mapping for translation ─────
 LANG_MAP = {
-    "ar": "Arabic", "da": "Danish", "de": "German", "el": "Greek",
-    "en": "English", "es": "Spanish", "fi": "Finnish", "fr": "French",
-    "he": "Hebrew", "hi": "Hindi", "it": "Italian", "ja": "Japanese",
-    "ko": "Korean", "ms": "Malay", "nl": "Dutch", "no": "Norwegian",
-    "pl": "Polish", "pt": "Portuguese", "ru": "Russian", "sv": "Swedish",
-    "sw": "Swahili", "tr": "Turkish", "zh": "Chinese",
-    "vi": "Vietnamese", "th": "Thai", "id": "Indonesian",
+    "ar": "Arabic",
+    "da": "Danish",
+    "de": "German",
+    "el": "Greek",
+    "en": "English",
+    "es": "Spanish",
+    "fi": "Finnish",
+    "fr": "French",
+    "he": "Hebrew",
+    "hi": "Hindi",
+    "it": "Italian",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "ms": "Malay",
+    "nl": "Dutch",
+    "no": "Norwegian",
+    "pl": "Polish",
+    "pt": "Portuguese",
+    "ru": "Russian",
+    "sv": "Swedish",
+    "sw": "Swahili",
+    "tr": "Turkish",
+    "zh": "Chinese",
+    "vi": "Vietnamese",
+    "th": "Thai",
+    "id": "Indonesian",
 }
 
 # ── SMTP / Email ─────────────────────────────────────────────
@@ -118,8 +137,15 @@ FILENAME_TO_CHECKPOINT_STEP = {
 # invalidation and by jobs_tui.py for purge logic. The single
 # definition here keeps both in sync.
 CHECKPOINT_ORDER = [
-    "download", "decompress", "trim", "extract_audio",
-    "whisper", "ocr", "translate", "audio", "video",
+    "download",
+    "decompress",
+    "trim",
+    "extract_audio",
+    "whisper",
+    "ocr",
+    "translate",
+    "audio",
+    "video",
 ]
 
 MARKER_INTRO = "杨宁随缘开示"

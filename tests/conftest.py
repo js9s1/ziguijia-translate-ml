@@ -1,10 +1,10 @@
 """Shared test fixtures — Flask test client, in-memory DB, auth helpers."""
 
 import os
-import sys
-import tempfile
 import shutil
 import sqlite3
+import sys
+import tempfile
 
 import pytest
 
@@ -23,6 +23,7 @@ try:
     import valkey  # noqa: F401
 except ImportError:
     from unittest import mock as _um  # noqa: E402
+
     _valkey_module = _um.MagicMock()
     _valkey_module.ConnectionError = type("ConnectionError", (Exception,), {})
     _valkey_module.ValkeyError = type("ValkeyError", (Exception,), {})
@@ -35,6 +36,7 @@ try:
     import werkzeug.security  # noqa: F401
 except ImportError:
     from unittest import mock as _um2  # noqa: E402
+
     _wz = _um2.MagicMock()
     _wz.check_password_hash = lambda h, p: h == f"hashed:{p}"
     _wz.generate_password_hash = lambda p: f"hashed:{p}"
@@ -44,6 +46,7 @@ except ImportError:
 
 # ── Prevent JobQueue singleton from starting worker thread ──
 import jobqueue as _jq  # noqa: E402
+
 _jq._SKIP_QUEUE_INIT = True
 
 
@@ -63,28 +66,25 @@ def _patch_db_paths(temp_db_dir, monkeypatch):
     UserManager are singletons that open their DB files in __init__.
     """
     # Patch the paths in every module that references DB_FILE
-    monkeypatch.setattr("jobqueue.DB_FILE",
-                        os.path.join(temp_db_dir, "jobs.db"))
-    monkeypatch.setattr("auth.DB_FILE",
-                        os.path.join(temp_db_dir, "users.db"))
+    monkeypatch.setattr("jobqueue.DB_FILE", os.path.join(temp_db_dir, "jobs.db"))
+    monkeypatch.setattr("auth.DB_FILE", os.path.join(temp_db_dir, "users.db"))
 
     # Also patch the config to use temp dirs for audio/video
-    monkeypatch.setattr("config.AUDIO_TRACKS_DIR",
-                        os.path.join(temp_db_dir, "audio_tracks"))
-    monkeypatch.setattr("config.VIDEO_DIR",
-                        os.path.join(temp_db_dir, "video"))
-    monkeypatch.setattr("config.ASSETS_DIR",
-                        os.path.join(temp_db_dir, "assets"))
+    monkeypatch.setattr("config.AUDIO_TRACKS_DIR", os.path.join(temp_db_dir, "audio_tracks"))
+    monkeypatch.setattr("config.VIDEO_DIR", os.path.join(temp_db_dir, "video"))
+    monkeypatch.setattr("config.ASSETS_DIR", os.path.join(temp_db_dir, "assets"))
     monkeypatch.setattr("config.SMTP_HOST", "")
     monkeypatch.setattr("config.SMTP_PORT", 587)
 
     # Clear singletons before each test module so DBs are fresh
-    from jobqueue import JobQueue
     from auth import UserManager
+    from jobqueue import JobQueue
+
     JobQueue.clear()
     UserManager.clear()
     try:
         from audio_utils import NingAudio
+
         NingAudio.clear()
     except Exception:
         pass  # GPU modules not available — fine for pure-unit tests
@@ -95,6 +95,7 @@ def _patch_db_paths(temp_db_dir, monkeypatch):
     UserManager.clear()
     try:
         from audio_utils import NingAudio
+
         NingAudio.clear()
     except Exception:
         pass
@@ -104,6 +105,7 @@ def _patch_db_paths(temp_db_dir, monkeypatch):
 def app():
     """Create a Flask app configured for testing."""
     from app import create_app
+
     app = create_app()
     app.config["TESTING"] = True
     app.config["SECRET_KEY"] = "test-secret"
@@ -111,6 +113,7 @@ def app():
     # Stop the job queue worker if it started
     try:
         from jobqueue import get_job_queue
+
         get_job_queue().stop()
     except Exception:
         pass
@@ -129,6 +132,7 @@ def isolated_db(temp_db_dir):
     Each test gets its own file so table names don't clash.
     """
     import uuid
+
     db_path = os.path.join(temp_db_dir, f"unittest_{uuid.uuid4().hex[:8]}.db")
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL")
@@ -146,7 +150,8 @@ def auth_client(client):
     sharing the same IP don't get blocked.
     """
     # Bypass rate limit for test
-    from middleware import _ip_limiter, _email_limiter, RATE_LIMIT_MAX
+    from middleware import _email_limiter, _ip_limiter
+
     _ip_limiter.limit = 10000
     _email_limiter.limit = 10000
 
@@ -154,6 +159,7 @@ def auth_client(client):
     client.post("/auth/register", json=user_data)
 
     from auth import get_user_manager
+
     um = get_user_manager()
     conn = um._get_conn()
     conn.execute(

@@ -1,6 +1,7 @@
 import io
-import os
 
+# ── GPU / model management lives in gpu_manage.py ──
+import gpu_manage as _gm
 import srt
 import torch
 import torchaudio as ta
@@ -8,9 +9,6 @@ from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 from config import AUDIO_PROMPT_PATH
 from singleton import singleton
 from video_util import read_srt_text
-
-# ── GPU / model management lives in gpu_manage.py ──
-import gpu_manage as _gm
 
 _default_audio_prompt_path = AUDIO_PROMPT_PATH
 
@@ -58,7 +56,7 @@ class NingAudio:
 
     def wav_to_bytes(self, wav: torch.Tensor, sample_rate: int) -> io.BytesIO:
         buffer = io.BytesIO()
-        ta.save(buffer, wav, sample_rate, format='wav')
+        ta.save(buffer, wav, sample_rate, format="wav")
         buffer.seek(0)
         return buffer
 
@@ -74,8 +72,7 @@ class NingAudio:
         if target_language == "id":
             self.model = None  # break ref to old model
             _gm._acquire_gpu_for("id")
-            wav = _gm._generate_indonesian(text, prompt_file=prompt_file,
-                                       temperature=temperature)
+            wav = _gm._generate_indonesian(text, prompt_file=prompt_file, temperature=temperature)
             return self.wav_to_bytes(wav, _gm._indonesian_model.sr)
 
         self._ensure_model(target_language)
@@ -83,24 +80,24 @@ class NingAudio:
             self.model.prepare_conditionals(prompt_file)
         try:
             wav = self.model.generate(
-                    text,
-                    language_id=target_language,
-                    temperature=temperature,
-                    cfg_weight=cfg_weight,
-                    exaggeration=exaggeration,
-                )
+                text,
+                language_id=target_language,
+                temperature=temperature,
+                cfg_weight=cfg_weight,
+                exaggeration=exaggeration,
+            )
         except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
             if not self._fallback_to_cpu(e):
                 raise
             if prompt_file:
                 self.model.prepare_conditionals(prompt_file)
             wav = self.model.generate(
-                    text,
-                    language_id=target_language,
-                    temperature=temperature,
-                    cfg_weight=cfg_weight,
-                    exaggeration=exaggeration,
-                )
+                text,
+                language_id=target_language,
+                temperature=temperature,
+                cfg_weight=cfg_weight,
+                exaggeration=exaggeration,
+            )
         return self.wav_to_bytes(wav, self.model.sr)
 
     def generate_silence(self, duration_sec, sample_rate):
@@ -126,7 +123,7 @@ class NingAudio:
             self._ensure_model(target_language)
             sample_rate = self.model.sr
 
-        pattern = r'<(\d+(?:\.\d+)?)>\s*'
+        pattern = r"<(\d+(?:\.\d+)?)>\s*"
         parts = re.split(pattern, text)
 
         segments = []
@@ -143,17 +140,23 @@ class NingAudio:
             i += 2
 
         if not segments:
-            return self.text_to_wave(text, temperature=temperature,
-                                     target_language=target_language,
-                                     cfg_weight=cfg_weight,
-                                     exaggeration=exaggeration)
+            return self.text_to_wave(
+                text,
+                temperature=temperature,
+                target_language=target_language,
+                cfg_weight=cfg_weight,
+                exaggeration=exaggeration,
+            )
 
         all_parts = []
         for silence_sec, seg_text in segments:
-            wav_bytes = self.text_to_wave(seg_text, temperature=temperature,
-                                          target_language=target_language,
-                                          cfg_weight=cfg_weight,
-                                          exaggeration=exaggeration)
+            wav_bytes = self.text_to_wave(
+                seg_text,
+                temperature=temperature,
+                target_language=target_language,
+                cfg_weight=cfg_weight,
+                exaggeration=exaggeration,
+            )
             wav, sr = ta.load(wav_bytes)
             if wav.dim() == 1:
                 wav = wav.unsqueeze(0)
@@ -178,6 +181,7 @@ class NingAudio:
         torch.cuda.empty_cache()
         try:
             import warnings
+
             warnings.filterwarnings("ignore")
             _gm._model = ChatterboxMultilingualTTS.from_pretrained(device="cpu")
             _gm._model.prepare_conditionals(self.audio_prompt_path)
@@ -189,14 +193,23 @@ class NingAudio:
             print(f"CPU fallback also failed: {e2}")
             return False
 
-    def generate_audio(self, text, output_path, sample_rate, temperature=None, prompt_file=None, target_language="en", cfg_weight=0.5, exaggeration=0.5):
+    def generate_audio(
+        self,
+        text,
+        output_path,
+        sample_rate,
+        temperature=None,
+        prompt_file=None,
+        target_language="en",
+        cfg_weight=0.5,
+        exaggeration=0.5,
+    ):
         # ── Indonesian fine-tuned model path ──
         if target_language == "id":
             self.model = None  # break ref to old model
             _gm._acquire_gpu_for("id")
             temp = temperature if temperature is not None else 0.6
-            wav = _gm._generate_indonesian(text, prompt_file=prompt_file,
-                                       temperature=temp)
+            wav = _gm._generate_indonesian(text, prompt_file=prompt_file, temperature=temp)
             if wav.dim() == 1:
                 wav = wav.unsqueeze(0)
             ta.save(output_path, wav, _gm._indonesian_model.sr)
@@ -209,14 +222,26 @@ class NingAudio:
         if prompt_file:
             self.model.prepare_conditionals(prompt_file)
         try:
-            wav = self.model.generate(text, language_id=target_language, temperature=temperature, cfg_weight=cfg_weight, exaggeration=exaggeration)
+            wav = self.model.generate(
+                text,
+                language_id=target_language,
+                temperature=temperature,
+                cfg_weight=cfg_weight,
+                exaggeration=exaggeration,
+            )
         except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
             if not self._fallback_to_cpu(e):
                 raise
             # Retry with CPU model
             if prompt_file:
                 self.model.prepare_conditionals(prompt_file)
-            wav = self.model.generate(text, language_id=target_language, temperature=temperature, cfg_weight=cfg_weight, exaggeration=exaggeration)
+            wav = self.model.generate(
+                text,
+                language_id=target_language,
+                temperature=temperature,
+                cfg_weight=cfg_weight,
+                exaggeration=exaggeration,
+            )
         # Ensure wav is 2D tensor [1, samples]
         if wav.dim() == 1:
             wav = wav.unsqueeze(0)
@@ -248,7 +273,7 @@ class NingAudio:
             end_sample = start_sample + wav_data.shape[1]
             if end_sample > combined.shape[1]:
                 new_combined = torch.zeros(1, end_sample)
-                new_combined[:, :combined.shape[1]] = combined
+                new_combined[:, : combined.shape[1]] = combined
                 combined = new_combined
             combined[:, start_sample:end_sample] = wav_data
         return combined

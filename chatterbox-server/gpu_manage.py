@@ -15,8 +15,8 @@ from config import AUDIO_PROMPT_PATH
 
 # ── Model globals (exactly one may be non-None) ──────────────
 
-_model = None               # ChatterboxMultilingualTTS
-_indonesian_model = None    # ChatterboxTTS (fine-tuned)
+_model = None  # ChatterboxMultilingualTTS
+_indonesian_model = None  # ChatterboxTTS (fine-tuned)
 
 
 # ── GPU acquisition / release ───────────────────────────────
@@ -88,8 +88,10 @@ def _load_multilingual_model():
     """Load ChatterboxMultilingualTTS to GPU."""
     global _model
     import warnings
+
     warnings.filterwarnings("ignore")
     from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+
     print("Loading multilingual TTS model to GPU...")
     _model = ChatterboxMultilingualTTS.from_pretrained(device="cuda")
     _model.prepare_conditionals(AUDIO_PROMPT_PATH)
@@ -125,8 +127,7 @@ def _load_indonesian_model():
 # ── Indonesian generation helper ────────────────────────────
 
 
-def _generate_indonesian(text: str, prompt_file: str | None = None,
-                         temperature: float = 0.6) -> torch.Tensor:
+def _generate_indonesian(text: str, prompt_file: str | None = None, temperature: float = 0.6) -> torch.Tensor:
     """Generate Indonesian speech via the fine-tuned ChatterboxTTS model.
 
     Falls back to *AUDIO_PROMPT_PATH* (the same default voice as the
@@ -197,5 +198,5 @@ def _choose_device(preferred: str = "cuda") -> str:
             print(f"GPU free memory {free_gb:.1f} GiB — too low, using CPU")
             return "cpu"
         return "cuda"
-    except Exception:
+    except (torch.cuda.CudaError, RuntimeError, AttributeError):
         return "cpu"

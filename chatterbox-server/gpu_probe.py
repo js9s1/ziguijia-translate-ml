@@ -26,12 +26,16 @@ def _build_probe_script(sizes: list[int], include_softmax: bool, reset_peak_memo
     """Build the inline Python script for GPU probing."""
     softmax_line = "        c = torch.softmax(c, dim=-1)    # reduction path\n" if include_softmax else ""
     reset_line = (
-        "    # Attempt HIP device reset (ROCm) — helps clear driver state\n"
-        "    try:\n"
-        "        torch.cuda.reset_peak_memory_stats()\n"
-        "    except Exception:\n"
-        "        pass\n"
-    ) if reset_peak_memory else ""
+        (
+            "    # Attempt HIP device reset (ROCm) — helps clear driver state\n"
+            "    try:\n"
+            "        torch.cuda.reset_peak_memory_stats()\n"
+            "    except Exception:\n"
+            "        pass\n"
+        )
+        if reset_peak_memory
+        else ""
+    )
 
     sizes_repr = repr(sizes)
     return (
@@ -47,12 +51,10 @@ def _build_probe_script(sizes: list[int], include_softmax: bool, reset_peak_memo
         "        b = torch.randn(size, size, device='cuda')\n"
         "        c = a @ b                     # GEMM — catches HIPBLAS errors\n"
         "        c = torch.nn.functional.relu(c)  # activation path\n"
-        + softmax_line +
-        "        torch.cuda.synchronize()\n"
+        + softmax_line
+        + "        torch.cuda.synchronize()\n"
         "    torch.cuda.empty_cache()\n"
-        "    torch.cuda.synchronize()\n"
-        + reset_line +
-        "except Exception as e:\n"
+        "    torch.cuda.synchronize()\n" + reset_line + "except Exception as e:\n"
         "    print(f'GPU probe failed: {e}', flush=True)\n"
         "    ok = False\n"
         "print('OK' if ok else 'FAIL', flush=True)\n"
@@ -89,7 +91,9 @@ def run_gpu_probe(
     try:
         return subprocess.run(
             [sys.executable, "-c", probe_code],
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
             env={**os.environ, **_ROCm_ENV},
         )
     except subprocess.TimeoutExpired:

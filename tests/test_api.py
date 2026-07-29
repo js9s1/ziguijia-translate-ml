@@ -1,9 +1,5 @@
 """Tests for API endpoints: health, languages, job status, static pages."""
 
-import json
-
-import pytest
-
 
 class TestHealthEndpoint:
     def test_health_returns_200(self, client):

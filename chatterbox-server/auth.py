@@ -36,9 +36,7 @@ class UserManager:
 
     def register(self, email: str, password: str) -> dict:
         conn = self._get_conn()
-        existing = conn.execute(
-            "SELECT id FROM users WHERE email = ?", (email,)
-        ).fetchone()
+        existing = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
         if existing:
             return {"success": False, "error": "该邮箱已被注册"}
 
@@ -58,9 +56,7 @@ class UserManager:
 
     def verify(self, email: str, code: str) -> dict:
         conn = self._get_conn()
-        user = conn.execute(
-            "SELECT * FROM users WHERE email = ?", (email,)
-        ).fetchone()
+        user = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
         if not user:
             return {"success": False, "error": "用户不存在"}
         if user["verified"]:
@@ -76,9 +72,7 @@ class UserManager:
 
     def login(self, email: str, password: str) -> dict:
         conn = self._get_conn()
-        user = conn.execute(
-            "SELECT * FROM users WHERE email = ?", (email,)
-        ).fetchone()
+        user = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
         if not user:
             # Hash against a dummy to equalize timing with valid users
             check_password_hash(_DUMMY_HASH, password)
@@ -95,15 +89,11 @@ class UserManager:
 
     def get_user_by_email(self, email: str):
         conn = self._get_conn()
-        return conn.execute(
-            "SELECT id, email, verified FROM users WHERE email = ?", (email,)
-        ).fetchone()
+        return conn.execute("SELECT id, email, verified FROM users WHERE email = ?", (email,)).fetchone()
 
     def change_password(self, email: str, old_password: str, new_password: str) -> dict:
         conn = self._get_conn()
-        user = conn.execute(
-            "SELECT * FROM users WHERE email = ?", (email,)
-        ).fetchone()
+        user = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
         if not user:
             return {"success": False, "error": "用户不存在"}
         if not check_password_hash(user["password_hash"], old_password):
@@ -121,9 +111,7 @@ class UserManager:
 
     def resend_code(self, email: str) -> dict:
         conn = self._get_conn()
-        user = conn.execute(
-            "SELECT * FROM users WHERE email = ?", (email,)
-        ).fetchone()
+        user = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
         if not user:
             return {"success": False, "error": "用户不存在"}
         if user["verified"]:
@@ -143,9 +131,7 @@ class UserManager:
     def request_reset(self, email: str) -> dict:
         """Generate a reset code and send it via email."""
         conn = self._get_conn()
-        user = conn.execute(
-            "SELECT * FROM users WHERE email = ?", (email,)
-        ).fetchone()
+        user = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
         if not user:
             # Don't reveal whether the email exists
             return {"success": True, "message": "如果该邮箱已注册，重置密码的邮件已发送"}
@@ -168,9 +154,7 @@ class UserManager:
         email enumeration and timing oracle attacks.
         """
         conn = self._get_conn()
-        user = conn.execute(
-            "SELECT * FROM users WHERE email = ?", (email,)
-        ).fetchone()
+        user = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
         if not user:
             return {"success": False, "error": "链接无效或已过期"}
         if not user["reset_code"] or not user["reset_code_expires"]:
@@ -193,7 +177,9 @@ class UserManager:
     def _send_email(self, email: str, subject: str, body: str) -> bool:
         """Send an email via SMTP. Returns True on success, False otherwise."""
         if not (SMTP_HOST and SMTP_USER):
-            logger.warning(f"SMTP not configured (SMTP_HOST={SMTP_HOST!r}, SMTP_USER={SMTP_USER!r}), cannot send email to {email}")
+            logger.warning(
+                f"SMTP not configured (SMTP_HOST={SMTP_HOST!r}, SMTP_USER={SMTP_USER!r}), cannot send email to {email}"
+            )
             return False
         try:
             msg = MIMEText(body, "plain", "utf-8")

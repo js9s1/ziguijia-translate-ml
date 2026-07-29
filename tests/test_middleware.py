@@ -1,17 +1,13 @@
 """Tests for middleware: rate limiting, CSRF, login_required, file validation."""
 
 import os
-import io
-import tempfile
 
 import pytest
-
 from middleware import (
-    safe_file_path,
+    _SRT_TIMING_RE,
     parse_float_param,
     parse_job_params,
-    validate_file_upload,
-    _SRT_TIMING_RE,
+    safe_file_path,
 )
 
 
@@ -21,6 +17,7 @@ class TestSafeFilePath:
         f.write_text("hello")
         # tmp_path won't be in ALLOWED_FILE_DIRS, so we add it
         from middleware import ALLOWED_FILE_DIRS as _dirs
+
         original = list(_dirs)
         _dirs.append(os.path.realpath(str(tmp_path)))
         try:

@@ -16,6 +16,7 @@ MAX_TEXT_LENGTH = 500
 
 # ── TTS routes ────────────────────────────────────────────
 
+
 @tts_bp.route("/tts/process", methods=["POST"])
 @login_required
 def tts_process():
@@ -28,11 +29,15 @@ def tts_process():
             return jsonify({"error": f"文字长度超过限制（最多{MAX_TEXT_LENGTH}字符）"}), 400
         process_tts = _lazy("tts_job", "process_tts")
         params = parse_job_params(data)
-        result = process_tts(text, data.get("filename", "output.wav"), session["user_id"],
-                             temperature=params["temperature"],
-                             target_language=params["target_language"],
-                             cfg_weight=params["cfg_weight"],
-                             exaggeration=params["exaggeration"])
+        result = process_tts(
+            text,
+            data.get("filename", "output.wav"),
+            session["user_id"],
+            temperature=params["temperature"],
+            target_language=params["target_language"],
+            cfg_weight=params["cfg_weight"],
+            exaggeration=params["exaggeration"],
+        )
         return jsonify(result)
     except Exception as e:
         logger.error(f"TTS process error: {e}", exc_info=True)
@@ -50,8 +55,10 @@ def tts_status(access_code):
 @tts_bp.route("/tts/status-stream/<access_code>", methods=["GET"])
 def tts_status_stream(access_code):
     """SSE endpoint: pushes job status updates until the job finishes."""
+
     def generate():
         from valkey_util import get_valkey
+
         r = get_valkey()
         if r is None:
             status = get_job_queue().get_status(access_code)
@@ -81,11 +88,13 @@ def tts_status_stream(access_code):
                 pass
         pubsub.unsubscribe()
 
-    return Response(generate(), mimetype="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return Response(
+        generate(), mimetype="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
 
 
 # ── Audio routes ──────────────────────────────────────────
+
 
 @tts_bp.route("/audio/process", methods=["POST"])
 @login_required
@@ -98,9 +107,15 @@ def audio_process():
             content = file.read().decode("utf-8")
             params = parse_job_params(request.form)
             process_audio_file = _lazy("audio_job", "process_audio_file")
-            result = process_audio_file(content, file.filename, params["temperature"], session["user_id"],
-                                        target_language=params["target_language"], cfg_weight=params["cfg_weight"],
-                                        exaggeration=params["exaggeration"])
+            result = process_audio_file(
+                content,
+                file.filename,
+                params["temperature"],
+                session["user_id"],
+                target_language=params["target_language"],
+                cfg_weight=params["cfg_weight"],
+                exaggeration=params["exaggeration"],
+            )
             return jsonify(result)
         else:
             data = request.get_json(silent=True) or {}
@@ -111,11 +126,15 @@ def audio_process():
                 return jsonify({"error": f"文字长度超过限制（最多{MAX_TEXT_LENGTH}字符）"}), 400
             process_tts = _lazy("tts_job", "process_tts")
             params = parse_job_params(data)
-            result = process_tts(text, data.get("filename", "output.wav"), session["user_id"],
-                                 temperature=params["temperature"],
-                                 target_language=params["target_language"],
-                                 cfg_weight=params["cfg_weight"],
-                                 exaggeration=params["exaggeration"])
+            result = process_tts(
+                text,
+                data.get("filename", "output.wav"),
+                session["user_id"],
+                temperature=params["temperature"],
+                target_language=params["target_language"],
+                cfg_weight=params["cfg_weight"],
+                exaggeration=params["exaggeration"],
+            )
             return jsonify(result)
     except Exception as e:
         logger.error(f"Audio process error: {e}", exc_info=True)

@@ -18,7 +18,6 @@ from contextlib import redirect_stderr, redirect_stdout
 
 from config import (
     AUDIO_PROMPT_PATH,
-    GEN_AUDIO_SCRIPT,
     GEN_VIDEO_SCRIPT,
     LANG_MAP,
     PROJECT_ROOT,
@@ -64,25 +63,29 @@ def run_gen_audio_step(
     log_path = os.path.join(output_dir, "job.log")
     job_log(access_code, output_dir, "--- gen_audio ---")
 
-    with open(log_path, "a") as proc_log:
-        with redirect_stdout(proc_log), redirect_stderr(proc_log):
-            import sys
-            sys.path.insert(0, PROJECT_ROOT)
-            from gen_audio import process_with_direct
-            try:
-                result = process_with_direct(
-                    srt_path, audio_prompt, temperature, output_dir,
-                    assets_dir=os.path.join(PROJECT_ROOT, "..", "assets"),
-                    target_language=target_language,
-                    cfg_weight=cfg_weight,
-                    exaggeration=exaggeration,
-                )
-            except SystemExit:
-                raise
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                raise
+    with open(log_path, "a") as proc_log, redirect_stdout(proc_log), redirect_stderr(proc_log):
+        import sys
+
+        sys.path.insert(0, PROJECT_ROOT)
+        from gen_audio import process_with_direct
+
+        try:
+            result = process_with_direct(
+                srt_path,
+                audio_prompt,
+                temperature,
+                output_dir,
+                assets_dir=os.path.join(PROJECT_ROOT, "..", "assets"),
+                target_language=target_language,
+                cfg_weight=cfg_weight,
+                exaggeration=exaggeration,
+            )
+        except SystemExit:
+            raise
+        except BaseException:
+            import traceback
+            traceback.print_exc()
+            raise
 
     if result is None:
         raise RuntimeError("gen_audio produced no output (no subtitles?)")
@@ -90,21 +93,25 @@ def run_gen_audio_step(
     combined_tensor, adjusted_subs, changed_segments, sample_rate, total_duration = result
 
     import srt as srt_mod
+
     with open(srt_path_out, "w", encoding="utf-8") as f:
         for i, sub in enumerate(adjusted_subs):
-            f.write(f"{i+1}\n")
-            f.write(f"{srt_mod.timedelta_to_srt_timestamp(sub.start)} --> {srt_mod.timedelta_to_srt_timestamp(sub.end)}\n")
+            f.write(f"{i + 1}\n")
+            f.write(
+                f"{srt_mod.timedelta_to_srt_timestamp(sub.start)} --> {srt_mod.timedelta_to_srt_timestamp(sub.end)}\n"
+            )
             f.write(sub.content + "\n\n")
 
     import torchaudio as ta
+
     ta.save(wav_path_out, combined_tensor, sample_rate)
 
     import json
+
     with open(changed_json_out, "w") as f:
         json.dump(changed_segments, f)
 
-    job_log(access_code, output_dir,
-            f"Generated {len(adjusted_subs)} audio segments (duration: {total_duration:.2f}s)")
+    job_log(access_code, output_dir, f"Generated {len(adjusted_subs)} audio segments (duration: {total_duration:.2f}s)")
 
     return {
         "output_srt_path": srt_path_out,
@@ -145,7 +152,8 @@ def run_gen_video_step(
             srt_path,
             adjusted_srt,
             changed_json,
-            "--output", output_path,
+            "--output",
+            output_path,
         ]
         if blur:
             cmd.append("--blur")
@@ -168,13 +176,8 @@ def run_gen_video_step(
                 if elapsed > timeout:
                     process.kill()
                     process.wait()
-                    raise RuntimeError(
-                        f"gen_video timed out after {elapsed // 3600}h"
-                    )
-                get_job_queue().update_job_progress(
-                    access_code,
-                    f"正在合成视频... ({elapsed // 60}分{elapsed % 60}秒)"
-                )
+                    raise RuntimeError(f"gen_video timed out after {elapsed // 3600}h")
+                get_job_queue().update_job_progress(access_code, f"正在合成视频... ({elapsed // 60}分{elapsed % 60}秒)")
 
     # Read back only the output written by this subprocess invocation
     with open(log_path) as f:
@@ -236,7 +239,10 @@ def run_audio_ckpt(
 
     job_log(access_code, output_dir, "Generating audio from translated SRT...")
     audio_out = run_gen_audio_step(
-        translated_srt, audio_dir, temperature, access_code,
+        translated_srt,
+        audio_dir,
+        temperature,
+        access_code,
         target_language=target_language,
         cfg_weight=cfg_weight,
         exaggeration=exaggeration,
@@ -270,9 +276,12 @@ def run_video_ckpt(
     else:
         job_log(access_code, output_dir, "Processing video...")
         run_gen_video_step(
-            video_file, translated_srt,
-            audio_out["output_srt_path"], audio_out["changed_json_path"],
-            video_output, access_code,
+            video_file,
+            translated_srt,
+            audio_out["output_srt_path"],
+            audio_out["changed_json_path"],
+            video_output,
+            access_code,
             blur=blur,
         )
         if ckpt:
@@ -315,13 +324,14 @@ def run_download_ckpt(
         for attempt in range(1, max_attempts + 1):
             result = subprocess.run(
                 [PYTHON_BIN, download_script, video_number, output_dir, "--codec", codec],
-                stdout=proc_log, stderr=proc_log, timeout=3600,
+                stdout=proc_log,
+                stderr=proc_log,
+                timeout=3600,
             )
             if result.returncode == 0 and os.path.exists(video_path):
                 break
             if attempt < max_attempts:
-                job_log(access_code, output_dir,
-                        f"Download failed, retrying ({attempt}/{max_attempts})...")
+                job_log(access_code, output_dir, f"Download failed, retrying ({attempt}/{max_attempts})...")
                 time.sleep(20)
 
     if not os.path.exists(video_path):
@@ -354,9 +364,10 @@ def run_ocr_ckpt(
     job_log(access_code, output_dir, "Running RapidVideOCR pipeline...")
     frames_dir = os.path.join(output_dir, "frames")
     subprocess.run(
-        ["/usr/bin/bash", RAPID_VIDEOCR_PIPELINE_SCRIPT, "-i", video_path,
-         "-o", ocr_srt, "-d", frames_dir],
-        stdout=proc_log, stderr=proc_log, timeout=14400,
+        ["/usr/bin/bash", RAPID_VIDEOCR_PIPELINE_SCRIPT, "-i", video_path, "-o", ocr_srt, "-d", frames_dir],
+        stdout=proc_log,
+        stderr=proc_log,
+        timeout=14400,
         env={**os.environ, "RAPID_VIDEOCR_BIN": RAPID_VIDEOCR_BIN},
     )
     if not os.path.exists(ocr_srt):
@@ -390,15 +401,27 @@ def run_translate_ckpt(
         job_log(access_code, output_dir, "  ↪ translation already done, skipping")
         return translated_srt
 
-    job_log(access_code, output_dir, "Translating subtitles..."
-            + (" (intro/outro auto-detected)" if intro_marker or outro_marker else ""))
+    job_log(
+        access_code,
+        output_dir,
+        "Translating subtitles..." + (" (intro/outro auto-detected)" if intro_marker or outro_marker else ""),
+    )
     target_language_name = LANG_MAP.get(target_language, target_language)
 
     # Defer import to avoid circular dependency with video_util
     from video_util import translate_srt_file
-    translate_srt_file(input_srt, translated_srt, access_code, output_dir,
-                       target_language_name, proc_log, log_file,
-                       intro_marker=intro_marker, outro_marker=outro_marker)
+
+    translate_srt_file(
+        input_srt,
+        translated_srt,
+        access_code,
+        output_dir,
+        target_language_name,
+        proc_log,
+        log_file,
+        intro_marker=intro_marker,
+        outro_marker=outro_marker,
+    )
     if ckpt:
         ckpt.mark("translate")
     return translated_srt
@@ -426,9 +449,10 @@ def run_extract_audio_ckpt(
 
     job_log(access_code, output_dir, "Extracting audio from video...")
     subprocess.run(
-        ["ffmpeg", "-i", video_file, "-vn", "-acodec", "pcm_s16le",
-         "-ar", "16000", "-ac", "1", audio_path, "-y"],
-        stdout=proc_log, stderr=proc_log, timeout=3600,
+        ["ffmpeg", "-i", video_file, "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", audio_path, "-y"],
+        stdout=proc_log,
+        stderr=proc_log,
+        timeout=3600,
     )
     if ckpt:
         ckpt.mark("extract_audio")
@@ -455,13 +479,25 @@ def run_whisper_ckpt(
         job_log(access_code, output_dir, "  ↪ whisper already done, skipping")
         return whisper_srt
 
-    job_log(access_code, output_dir,
-            f"Running whisper speech recognition (OpenVINO device={WHISPER_OV_DEVICE})...")
+    job_log(access_code, output_dir, f"Running whisper speech recognition (OpenVINO device={WHISPER_OV_DEVICE})...")
     subprocess.run(
-        ["whisper-cli", "-m", WHISPER_MODEL, "-f", audio_path,
-         "-osrt", "-of", whisper_srt.replace(".srt", ""), "-l", "zh",
-         "-oved", WHISPER_OV_DEVICE],
-        stdout=proc_log, stderr=proc_log, timeout=7200,
+        [
+            "whisper-cli",
+            "-m",
+            WHISPER_MODEL,
+            "-f",
+            audio_path,
+            "-osrt",
+            "-of",
+            whisper_srt.replace(".srt", ""),
+            "-l",
+            "zh",
+            "-oved",
+            WHISPER_OV_DEVICE,
+        ],
+        stdout=proc_log,
+        stderr=proc_log,
+        timeout=7200,
     )
     if not os.path.exists(whisper_srt):
         raise RuntimeError("Whisper failed to generate SRT")
@@ -476,10 +512,10 @@ def run_whisper_ckpt(
 def _adjust_original_audio_nonfatal(video_path, translated_srt, audio_out, output_dir, access_code):
     """Call adjust_original_audio, logging a warning on failure (non-fatal)."""
     try:
-        adjust_original_audio(video_path, translated_srt,
-                              audio_out["output_srt_path"], output_dir,
-                              access_code=access_code)
-    except Exception:
+        adjust_original_audio(
+            video_path, translated_srt, audio_out["output_srt_path"], output_dir, access_code=access_code
+        )
+    except subprocess.SubprocessError:
         job_log(access_code, output_dir, "Warning: zh audio adjustment failed (non-fatal)")
 
 
@@ -488,9 +524,9 @@ def _adjust_original_audio_nonfatal(video_path, translated_srt, audio_out, outpu
 
 def _get_video_duration(video_path: str) -> float:
     result = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-print_format", "json",
-         "-show_format", video_path],
-        capture_output=True, text=True,
+        ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", video_path],
+        capture_output=True,
+        text=True,
     )
     info = json.loads(result.stdout)
     return float(info["format"]["duration"])
@@ -563,9 +599,11 @@ def adjust_original_audio(
     adj_subs = list(srt.parse(read_srt_text(adjusted_srt_path)))
 
     if len(orig_subs) != len(adj_subs):
-        job_log(access_code, output_dir,
-                f"Segment count mismatch ({len(orig_subs)} vs {len(adj_subs)}), "
-                f"skipping zh audio adjustment")
+        job_log(
+            access_code,
+            output_dir,
+            f"Segment count mismatch ({len(orig_subs)} vs {len(adj_subs)}), skipping zh audio adjustment",
+        )
         return
 
     if not orig_subs:
@@ -576,11 +614,20 @@ def adjust_original_audio(
     extract_cmd = ["ffmpeg", "-y"]
     if audio_offset > 0:
         extract_cmd.extend(["-ss", str(audio_offset)])
-    extract_cmd.extend([
-        "-i", video_path,
-        "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
-        orig_audio_path,
-    ])
+    extract_cmd.extend(
+        [
+            "-i",
+            video_path,
+            "-vn",
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            orig_audio_path,
+        ]
+    )
     subprocess.run(extract_cmd, check=True, capture_output=True)
 
     if not os.path.exists(orig_audio_path):
@@ -598,11 +645,13 @@ def adjust_original_audio(
     first_orig_start = orig_subs[0].start.total_seconds() - audio_offset
     if first_adj_start > 0 and first_orig_start > 0:
         stretch = first_adj_start / first_orig_start
-        seg_defs.append({
-            "start": 0,
-            "end": min(first_orig_start, video_duration),
-            "stretch": stretch,
-        })
+        seg_defs.append(
+            {
+                "start": 0,
+                "end": min(first_orig_start, video_duration),
+                "stretch": stretch,
+            }
+        )
         video_cumul += first_orig_start * stretch
 
     for i in range(len(orig_subs)):
@@ -633,28 +682,37 @@ def adjust_original_audio(
                 orig_gap = 0.0
             if orig_gap > 0:
                 stretch = max(0.0, min(100.0, needed_gap / orig_gap))
-                seg_defs.append({
-                    "start": gap_start, "end": gap_end,
-                    "stretch": stretch,
-                })
+                seg_defs.append(
+                    {
+                        "start": gap_start,
+                        "end": gap_end,
+                        "stretch": stretch,
+                    }
+                )
                 video_cumul += orig_gap * stretch
 
         # Subtitle segment (never squeeze, only stretch)
         stretch = adj_dur / orig_dur if orig_dur > 0 else 1.0
         stretch = max(1.0, min(10.0, stretch))
-        seg_defs.append({
-            "start": orig_start, "end": orig_end,
-            "stretch": stretch,
-        })
+        seg_defs.append(
+            {
+                "start": orig_start,
+                "end": orig_end,
+                "stretch": stretch,
+            }
+        )
         video_cumul += orig_dur * stretch
 
     # Trailing gap
     last_orig_end = orig_subs[-1].end.total_seconds() - audio_offset
     if last_orig_end < video_duration:
-        seg_defs.append({
-            "start": last_orig_end, "end": video_duration,
-            "stretch": 1.0,
-        })
+        seg_defs.append(
+            {
+                "start": last_orig_end,
+                "end": video_duration,
+                "stretch": 1.0,
+            }
+        )
 
     # ── Process audio segments ───────────────────────────────
     tmp_dir = tempfile.mkdtemp(prefix="adj_zh_audio_")
@@ -668,14 +726,29 @@ def adjust_original_audio(
             # setpts=2.0 → slower/longer.  We want audio to stretch the same
             # way as video, so use 1/stretch for the atempo factor.
             atempo = _build_atempo_filter(1.0 / seg["stretch"]) if seg["stretch"] > 0 else _build_atempo_filter(100.0)
-            subprocess.run([
-                "ffmpeg", "-y",
-                "-ss", str(seg["start"]), "-to", str(seg["end"]),
-                "-i", orig_audio_path,
-                "-af", atempo,
-                "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
-                seg_path,
-            ], check=True, capture_output=True)
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-ss",
+                    str(seg["start"]),
+                    "-to",
+                    str(seg["end"]),
+                    "-i",
+                    orig_audio_path,
+                    "-af",
+                    atempo,
+                    "-acodec",
+                    "pcm_s16le",
+                    "-ar",
+                    "16000",
+                    "-ac",
+                    "1",
+                    seg_path,
+                ],
+                check=True,
+                capture_output=True,
+            )
             seg_files.append(seg_path)
 
         if not seg_files:
@@ -689,11 +762,23 @@ def adjust_original_audio(
                 f.write(f"file '{sf}'\n")
 
         out_path = os.path.join(output_dir, "orig_zh_adjusted.wav")
-        subprocess.run([
-            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-            "-i", concat_list, "-c", "copy",
-            out_path,
-        ], check=True, capture_output=True)
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                concat_list,
+                "-c",
+                "copy",
+                out_path,
+            ],
+            check=True,
+            capture_output=True,
+        )
 
         job_log(access_code, output_dir, f"  ✓ orig_zh_adjusted.wav saved ({len(seg_files)} segments)")
 

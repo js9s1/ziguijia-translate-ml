@@ -8,6 +8,7 @@ params from ``jobs.db``, and writes ``segment_*_meta.json``.
 No heavy torch/tts imports — safe to run on a server.
 """
 
+import argparse
 import glob
 import json
 import os
@@ -15,19 +16,18 @@ import re
 import sqlite3
 import subprocess
 import sys
-import argparse
-from pathlib import Path
 
 # ── Helpers ──────────────────────────────────────────────────────
+
 
 def _get_wav_duration(wav_path: str) -> float:
     """Return duration in seconds, or -1 on failure."""
     try:
         r = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-print_format", "json",
-             "-show_format", "-select_streams", "a:0",
-             wav_path],
-            capture_output=True, text=True, timeout=15,
+            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-select_streams", "a:0", wav_path],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         if r.returncode != 0:
             return -1
@@ -57,7 +57,7 @@ def _split_text(text: str, max_len: int = 120):
             break
         chunk = text[:max_len]
         last_boundary = -1
-        for sep in ('. ', '! ', '? ', '.\n', '!\n', '?\n'):
+        for sep in (". ", "! ", "? ", ".\n", "!\n", "?\n"):
             pos = chunk.rfind(sep)
             if pos > last_boundary:
                 last_boundary = pos + 1
@@ -65,7 +65,7 @@ def _split_text(text: str, max_len: int = 120):
             chunks.append(text[:last_boundary])
             text = text[last_boundary:].lstrip()
         else:
-            last_space = chunk.rfind(' ')
+            last_space = chunk.rfind(" ")
             if last_space > 0:
                 chunks.append(text[:last_space])
                 text = text[last_space:].lstrip()
@@ -76,6 +76,7 @@ def _split_text(text: str, max_len: int = 120):
 
 
 # ── Main ─────────────────────────────────────────────────────────
+
 
 def backfill_one(output_dir: str, db_path: str, dry_run: bool = False):
     """Backfill meta JSONs for a single job output directory."""
@@ -105,6 +106,7 @@ def backfill_one(output_dir: str, db_path: str, dry_run: bool = False):
 
     # Load SRT if available
     import srt as srt_mod
+
     srt_map = {}
     if os.path.exists(srt_path):
         with open(srt_path, encoding="utf-8") as f:
@@ -119,8 +121,8 @@ def backfill_one(output_dir: str, db_path: str, dry_run: bool = False):
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         row = conn.execute(
-            "SELECT temperature, target_language, cfg_weight, exaggeration "
-            "FROM jobs WHERE access_code = ?", (access_code,)
+            "SELECT temperature, target_language, cfg_weight, exaggeration FROM jobs WHERE access_code = ?",
+            (access_code,),
         ).fetchone()
         if row:
             params = dict(row)
@@ -158,10 +160,7 @@ def backfill_one(output_dir: str, db_path: str, dry_run: bool = False):
         created += 1
 
     cache_path = os.path.join(tmp_dir, "cache_meta.json")
-    old_format_exists = any(
-        os.path.exists(os.path.join(tmp_dir, f"segment_{i}_meta.json"))
-        for i in range(10000)
-    )
+    old_format_exists = any(os.path.exists(os.path.join(tmp_dir, f"segment_{i}_meta.json")) for i in range(10000))
 
     if not dry_run:
         with open(cache_path, "w", encoding="utf-8") as f:
@@ -200,9 +199,7 @@ def main():
             # Find by access_code
             conn = sqlite3.connect(DB)
             conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                "SELECT output_dir FROM jobs WHERE access_code = ?", (args.job,)
-            ).fetchone()
+            row = conn.execute("SELECT output_dir FROM jobs WHERE access_code = ?", (args.job,)).fetchone()
             conn.close()
             if not row:
                 print(f"Job {args.job} not found in DB", file=sys.stderr)
@@ -228,9 +225,11 @@ def main():
         if result["status"] == "done":
             total_created += result.get("created", 0)
             total_errors += result.get("errors", 0)
-            print(f"{os.path.basename(jd)}: +{result['created']} meta JSONs "
-                  f"({result.get('pre_existing', 0)} already exist)"
-                  f"{' (' + str(result['errors']) + ' errors)' if result.get('errors') else ''}")
+            print(
+                f"{os.path.basename(jd)}: +{result['created']} meta JSONs "
+                f"({result.get('pre_existing', 0)} already exist)"
+                f"{' (' + str(result['errors']) + ' errors)' if result.get('errors') else ''}"
+            )
 
     print()
     print(f"Total created: {total_created}")

@@ -6,10 +6,7 @@ GPU, PyTorch, or database infrastructure.
 
 import os
 import sys
-import tempfile
 from unittest import mock
-
-import pytest
 
 # ── Module-level mocks so we can import video_util without pulling in
 #     the full chatterbox-server dependency tree ──
@@ -60,19 +57,11 @@ class TestNormalizeSRTTimestamps:
         assert "0:00:01,000" in result
 
     def test_full_srt_block_unaffected(self):
-        block = (
-            "1\n"
-            "00:00:00,000 --> 00:00:02,000\n"
-            "Hello world\n"
-        )
+        block = "1\n00:00:00,000 --> 00:00:02,000\nHello world\n"
         assert _normalize_srt_timestamps(block) == block
 
     def test_ffmpeg_style_in_full_block(self):
-        block = (
-            "1\n"
-            "00:00:00.000 --> 00:00:02.000\n"
-            "Hello world\n"
-        )
+        block = "1\n00:00:00.000 --> 00:00:02.000\nHello world\n"
         result = _normalize_srt_timestamps(block)
         assert "00:00:00,000 --> 00:00:02,000" in result
 

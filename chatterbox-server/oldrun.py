@@ -75,11 +75,13 @@ def _collect_incremental(force: bool = False) -> tuple[list[dict], list[dict], l
 
     if not os.path.isdir(OLDRUN_SRT_DIR):
         return [], [], [], False
-    current_dirs = sorted({
-        os.path.join(OLDRUN_SRT_DIR, d)
-        for d in os.listdir(OLDRUN_SRT_DIR)
-        if os.path.isdir(os.path.join(OLDRUN_SRT_DIR, d))
-    })
+    current_dirs = sorted(
+        {
+            os.path.join(OLDRUN_SRT_DIR, d)
+            for d in os.listdir(OLDRUN_SRT_DIR)
+            if os.path.isdir(os.path.join(OLDRUN_SRT_DIR, d))
+        }
+    )
 
     if force or index is None:
         zh, en, zh_en = [], [], []
@@ -119,18 +121,19 @@ def _collect_incremental(force: bool = False) -> tuple[list[dict], list[dict], l
 
 def _write_static_html(lang: str, files: list[dict]):
     """Write a static HTML file to HTML_DIR with embedded data and search."""
-    flag = "\U0001F1E8\U0001F1F3" if lang == "zh" else ("\U0001F1EC\U0001F1E7" if lang == "en" else "\U0001F1E8\U0001F1F3\U0001F1EC\U0001F1E7")
+    flag = (
+        "\U0001f1e8\U0001f1f3"
+        if lang == "zh"
+        else ("\U0001f1ec\U0001f1e7" if lang == "en" else "\U0001f1e8\U0001f1f3\U0001f1ec\U0001f1e7")
+    )
     title = f"字幕列表 - {flag} {lang}"
 
     LANGUAGES = [
-        ("zh", "\U0001F1E8\U0001F1F3", "zh"),
-        ("en", "\U0001F1EC\U0001F1E7", "en"),
-        ("zh+en", "\U0001F1E8\U0001F1F3\U0001F1EC\U0001F1E7", "zh+en"),
+        ("zh", "\U0001f1e8\U0001f1f3", "zh"),
+        ("en", "\U0001f1ec\U0001f1e7", "en"),
+        ("zh+en", "\U0001f1e8\U0001f1f3\U0001f1ec\U0001f1e7", "zh+en"),
     ]
-    lang_options = [
-        {"url": f"/srt-{l}.html", "flag": f, "label": lb, "active": l == lang}
-        for l, f, lb in LANGUAGES
-    ]
+    lang_options = [{"url": f"/srt-{l}.html", "flag": f, "label": lb, "active": l == lang} for l, f, lb in LANGUAGES]
 
     html = _SRT_LIST_TEMPLATE.render(
         title=title,
@@ -173,6 +176,7 @@ def build_all_static_srt():
                 force_full = True
                 break
         else:
+            logger.info("no rebuild needed — HTML files are up to date")
             return
 
     zh, en, zh_en, changed = _collect_incremental(force=force_full)

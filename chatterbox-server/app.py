@@ -49,6 +49,7 @@ def create_app():
         from cachelib.file import FileSystemCache
 
         from flask_session import Session
+
         app.config["SESSION_TYPE"] = "cachelib"
         app.config["SESSION_CACHELIB"] = FileSystemCache(
             cache_dir=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "flask_session"),
@@ -113,6 +114,7 @@ def create_app():
 
     # ── Register route blueprints ──────────────────────────
     from routes import register_all
+
     register_all(app)
 
     return app

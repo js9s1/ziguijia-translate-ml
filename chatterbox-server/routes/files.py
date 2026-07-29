@@ -17,6 +17,7 @@ _SRT_TIMING_RE = re.compile(r"\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{
 
 def _allowed_dirs():
     from middleware import ALLOWED_FILE_DIRS
+
     return ALLOWED_FILE_DIRS
 
 
@@ -42,15 +43,12 @@ def files_list():
 
         files = []
         for name in os.listdir(resolved):
-            if name.startswith('.'):
+            if name.startswith("."):
                 continue
             file_path = os.path.join(resolved, name)
             if not os.path.isfile(file_path):
                 continue
-            files.append({
-                "name": name,
-                "size": os.path.getsize(file_path)
-            })
+            files.append({"name": name, "size": os.path.getsize(file_path)})
 
         return jsonify({"files": files})
     except Exception as e:
@@ -70,9 +68,9 @@ def files_read():
         if not safe:
             return jsonify({"error": "File not allowed or not found"}), 404
 
-        with open(safe, encoding='utf-8') as f:
+        with open(safe, encoding="utf-8") as f:
             content = f.read()
-        return content, 200, {'Content-Type': 'text/plain; charset=utf-8'}
+        return content, 200, {"Content-Type": "text/plain; charset=utf-8"}
     except Exception as e:
         logger.error(f"Error reading file: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -124,6 +122,7 @@ def files_delete():
 
 # ── SRT save/edit endpoint ────────────────────────────────
 
+
 @files_bp.route("/files/save-srt", methods=["POST"])
 @login_required
 @csrf_required
@@ -145,10 +144,14 @@ def files_save_srt():
             return jsonify({"success": False, "error": "Only .srt files can be saved via this endpoint"}), 400
 
         if not _SRT_TIMING_RE.search(content):
-            return jsonify({"success": False,
-                    "error": "Saved content does not appear to be valid SRT. Expected timing lines like '00:00:01,000 --> 00:00:03,000'."}), 400
+            return jsonify(
+                {
+                    "success": False,
+                    "error": "Saved content does not appear to be valid SRT. Expected timing lines like '00:00:01,000 --> 00:00:03,000'.",
+                }
+            ), 400
 
-        with open(safe, 'w', encoding='utf-8') as f:
+        with open(safe, "w", encoding="utf-8") as f:
             f.write(content)
 
         jq = get_job_queue()

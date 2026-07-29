@@ -31,9 +31,7 @@ def get_valkey() -> valkey.Valkey | None:
             kwargs = dict(decode_responses=True, socket_timeout=2)
             if VALKEY_PASSWORD:
                 kwargs["password"] = VALKEY_PASSWORD
-            _valkey_client = valkey.Valkey(
-                host=VALKEY_HOST, port=VALKEY_PORT, db=VALKEY_DB, **kwargs
-            )
+            _valkey_client = valkey.Valkey(host=VALKEY_HOST, port=VALKEY_PORT, db=VALKEY_DB, **kwargs)
         _valkey_client.ping()
         _available = True
         logger.info("Valkey connected")
@@ -51,6 +49,7 @@ def is_available() -> bool:
 
 
 # ── Rate limiting ───────────────────────────────────────────────
+
 
 def check_rate_limit(key: str, limit: int, window: int) -> bool:
     """Return True if the request is *within* the limit.
@@ -78,6 +77,7 @@ def check_rate_limit(key: str, limit: int, window: int) -> bool:
 
 
 # ── Caching ─────────────────────────────────────────────────────
+
 
 def cache_get(key: str) -> str | None:
     """Get a cached value. Returns None on miss or Valkey failure."""
@@ -124,6 +124,7 @@ def publish_job_status(access_code: str, status: str, **extra):
 
 
 # ── In-memory rate limiter (fallback) ───────────────────────────
+
 
 class InMemoryRateLimiter:
     """Sliding-window rate limiter using a plain dict.

@@ -1,14 +1,12 @@
 """Tests for file management routes: list, read, download, delete, SRT save."""
 
-import os
-import tempfile
-
 import pytest
 
 
 @pytest.fixture(autouse=True)
 def _bypass_rate_limit():
     from middleware import _ip_limiter
+
     old = _ip_limiter.limit
     _ip_limiter.limit = 10000
     yield
@@ -72,39 +70,54 @@ class TestFilesDownload:
 
 class TestSRTSave:
     def test_unauthorized(self, client):
-        resp = client.post("/files/save-srt", json={
-            "path": "/tmp/x.srt",
-            "content": "00:00:01,000 --> 00:00:03,000\ntest",
-            "access_code": "ABC",
-        })
+        resp = client.post(
+            "/files/save-srt",
+            json={
+                "path": "/tmp/x.srt",
+                "content": "00:00:01,000 --> 00:00:03,000\ntest",
+                "access_code": "ABC",
+            },
+        )
         assert resp.status_code == 401
 
     def test_missing_content(self, auth_client, csrf_headers):
         client, _ = auth_client
-        resp = client.post("/files/save-srt", json={
-            "path": "/tmp/x.srt",
-            "access_code": "ABC",
-        }, headers=csrf_headers)
+        resp = client.post(
+            "/files/save-srt",
+            json={
+                "path": "/tmp/x.srt",
+                "access_code": "ABC",
+            },
+            headers=csrf_headers,
+        )
         assert resp.status_code == 400
 
     def test_non_srt_file(self, auth_client, csrf_headers):
         client, _ = auth_client
-        resp = client.post("/files/save-srt", json={
-            "path": "/tmp/x.txt",
-            "content": "not srt",
-            "access_code": "ABC",
-        }, headers=csrf_headers)
+        resp = client.post(
+            "/files/save-srt",
+            json={
+                "path": "/tmp/x.txt",
+                "content": "not srt",
+                "access_code": "ABC",
+            },
+            headers=csrf_headers,
+        )
         assert resp.status_code in (400, 404)
 
     def test_invalid_srt_content(self, auth_client, csrf_headers, tmp_path):
         client, _ = auth_client
         f = tmp_path / "test.srt"
         f.write_text("dummy")
-        resp = client.post("/files/save-srt", json={
-            "path": str(f),
-            "content": "no timing line here",
-            "access_code": "ABC",
-        }, headers=csrf_headers)
+        resp = client.post(
+            "/files/save-srt",
+            json={
+                "path": str(f),
+                "content": "no timing line here",
+                "access_code": "ABC",
+            },
+            headers=csrf_headers,
+        )
         assert resp.status_code in (400, 404)  # path not allowed, or content invalid
 
 

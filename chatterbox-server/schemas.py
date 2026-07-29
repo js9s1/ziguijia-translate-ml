@@ -1,9 +1,9 @@
 """Pydantic request validation schemas for API endpoints."""
 
-
 from pydantic import BaseModel, Field
 
 # ── Auth schemas ────────────────────────────────────────────
+
 
 class RegisterRequest(BaseModel):
     email: str = Field(..., min_length=1)
@@ -40,6 +40,7 @@ class ResendCodeRequest(BaseModel):
 
 
 # ── File schemas ────────────────────────────────────────────
+
 
 class FileDeleteRequest(BaseModel):
     path: str = Field(..., min_length=1)

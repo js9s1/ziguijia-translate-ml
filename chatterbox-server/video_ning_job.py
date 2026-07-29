@@ -54,30 +54,58 @@ def _run_video_job(job_data: dict):
 
         video_path = run_download_ckpt(video_number, output_dir, access_code, ckpt, proc_log, job_data)
         audio_out = run_audio_ckpt(
-            srt_path, output_dir, ap["temperature"], access_code,
-            target_language=ap["target_language"], cfg_weight=ap["cfg_weight"],
-            exaggeration=ap["exaggeration"], ckpt=ckpt, audio_subdir="audio",
+            srt_path,
+            output_dir,
+            ap["temperature"],
+            access_code,
+            target_language=ap["target_language"],
+            cfg_weight=ap["cfg_weight"],
+            exaggeration=ap["exaggeration"],
+            ckpt=ckpt,
+            audio_subdir="audio",
         )
-        run_video_ckpt(video_path, srt_path, audio_out, output_dir,
-                       access_code, ckpt=ckpt, output_filename="output_modified.mp4",
-                       blur=(blur == "yes"))
+        run_video_ckpt(
+            video_path,
+            srt_path,
+            audio_out,
+            output_dir,
+            access_code,
+            ckpt=ckpt,
+            output_filename="output_modified.mp4",
+            blur=(blur == "yes"),
+        )
         _adjust_original_audio_nonfatal(video_path, srt_path, audio_out, output_dir, access_code)
 
-    validate_files([
-        os.path.join(output_dir, "audio", "output_adjusted.srt"),
-        os.path.join(output_dir, "audio", "output.wav"),
-        os.path.join(output_dir, "output_modified.mp4"),
-    ], label="宁视频翻译")
+    validate_files(
+        [
+            os.path.join(output_dir, "audio", "output_adjusted.srt"),
+            os.path.join(output_dir, "audio", "output.wav"),
+            os.path.join(output_dir, "output_modified.mp4"),
+        ],
+        label="宁视频翻译",
+    )
     shutil.copy2(os.path.join(output_dir, "audio", "output_adjusted.srt"), output_dir)
     job_log(access_code, output_dir, "Done!")
 
 
-def process_video_ning(number: str, srt_file, temperature: float, user_id: int = None, blur: str = "yes", target_language: str = "en", cfg_weight: float = 0.5, exaggeration: float = 0.5, cached_path: str | None = None) -> dict:
+def process_video_ning(
+    number: str,
+    srt_file,
+    temperature: float,
+    user_id: int = None,
+    blur: str = "yes",
+    target_language: str = "en",
+    cfg_weight: float = 0.5,
+    exaggeration: float = 0.5,
+    cached_path: str | None = None,
+) -> dict:
     jq = get_job_queue()
     existing = jq._find_failed_ning_job(number, user_id)
     if existing:
         access_code, output_dir = existing
-        job_log_lines(access_code, output_dir, [f"--- resubmit (temperature={temperature}, lang={target_language}) ---"])
+        job_log_lines(
+            access_code, output_dir, [f"--- resubmit (temperature={temperature}, lang={target_language}) ---"]
+        )
     else:
         access_code = str(uuid.uuid4())[:8].upper()
         output_dir = os.path.join(VIDEO_DIR, f"{number}-{access_code}")
@@ -121,34 +149,67 @@ def _run_video_ning_ocr_job(job_data: dict):
         video_path = run_download_ckpt(video_number, output_dir, access_code, ckpt, proc_log, job_data)
         translated_srt = run_translate_ckpt(
             run_ocr_ckpt(video_path, output_dir, access_code, ckpt, proc_log),
-            output_dir, access_code, ckpt, proc_log, log_file, ap["target_language"],
-            intro_marker=MARKER_INTRO, outro_marker=MARKER_OUTRO,
+            output_dir,
+            access_code,
+            ckpt,
+            proc_log,
+            log_file,
+            ap["target_language"],
+            intro_marker=MARKER_INTRO,
+            outro_marker=MARKER_OUTRO,
         )
         audio_out = run_audio_ckpt(
-            translated_srt, output_dir, ap["temperature"], access_code,
-            target_language=ap["target_language"], cfg_weight=ap["cfg_weight"],
-            exaggeration=ap["exaggeration"], ckpt=ckpt, audio_subdir="audio",
+            translated_srt,
+            output_dir,
+            ap["temperature"],
+            access_code,
+            target_language=ap["target_language"],
+            cfg_weight=ap["cfg_weight"],
+            exaggeration=ap["exaggeration"],
+            ckpt=ckpt,
+            audio_subdir="audio",
         )
-        run_video_ckpt(video_path, translated_srt, audio_out, output_dir,
-                       access_code, ckpt=ckpt, output_filename="output_modified.mp4",
-                       blur=(blur == "yes"))
+        run_video_ckpt(
+            video_path,
+            translated_srt,
+            audio_out,
+            output_dir,
+            access_code,
+            ckpt=ckpt,
+            output_filename="output_modified.mp4",
+            blur=(blur == "yes"),
+        )
         _adjust_original_audio_nonfatal(video_path, translated_srt, audio_out, output_dir, access_code)
 
-    validate_files([
-        audio_out["output_srt_path"],
-        audio_out["output_wav_path"],
-        os.path.join(output_dir, "output_modified.mp4"),
-    ], label="宁视频OCR翻译")
+    validate_files(
+        [
+            audio_out["output_srt_path"],
+            audio_out["output_wav_path"],
+            os.path.join(output_dir, "output_modified.mp4"),
+        ],
+        label="宁视频OCR翻译",
+    )
     job_log(access_code, output_dir, "Done!")
 
 
-def process_video_ning_ocr(number: str, temperature: float, user_id: int = None, blur: str = "yes", target_language: str = "en", cfg_weight: float = 0.5, exaggeration: float = 0.5, cached_path: str | None = None) -> dict:
+def process_video_ning_ocr(
+    number: str,
+    temperature: float,
+    user_id: int = None,
+    blur: str = "yes",
+    target_language: str = "en",
+    cfg_weight: float = 0.5,
+    exaggeration: float = 0.5,
+    cached_path: str | None = None,
+) -> dict:
     jq = get_job_queue()
     existing = jq._find_failed_ocr_job(number, user_id)
     if existing:
         access_code, output_dir = existing
         jq.invalidate_checkpoints_after(access_code, "download")
-        job_log_lines(access_code, output_dir, [f"--- resubmit (temperature={temperature}, lang={target_language}) ---"])
+        job_log_lines(
+            access_code, output_dir, [f"--- resubmit (temperature={temperature}, lang={target_language}) ---"]
+        )
     else:
         access_code = str(uuid.uuid4())[:8].upper()
         output_dir = os.path.join(VIDEO_DIR, f"{number}-{access_code}")
@@ -188,8 +249,14 @@ def _run_video_ning_ocr_translate_only_job(job_data: dict):
         video_path = run_download_ckpt(video_number, output_dir, access_code, ckpt, proc_log, job_data)
         translated_srt = run_translate_ckpt(
             run_ocr_ckpt(video_path, output_dir, access_code, ckpt, proc_log),
-            output_dir, access_code, ckpt, proc_log, log_file, target_language,
-            intro_marker=MARKER_INTRO, outro_marker=MARKER_OUTRO,
+            output_dir,
+            access_code,
+            ckpt,
+            proc_log,
+            log_file,
+            target_language,
+            intro_marker=MARKER_INTRO,
+            outro_marker=MARKER_OUTRO,
         )
         if os.path.exists(translated_srt):
             shutil.copy2(translated_srt, os.path.join(output_dir, "output_adjusted.srt"))
@@ -197,7 +264,16 @@ def _run_video_ning_ocr_translate_only_job(job_data: dict):
     job_log(access_code, output_dir, "Done! OCR → translation complete (audio/video skipped)")
 
 
-def process_video_ning_ocr_translate_only(number: str, temperature: float, user_id: int = None, blur: str = "yes", target_language: str = "en", cfg_weight: float = 0.5, exaggeration: float = 0.5, cached_path: str | None = None) -> dict:
+def process_video_ning_ocr_translate_only(
+    number: str,
+    temperature: float,
+    user_id: int = None,
+    blur: str = "yes",
+    target_language: str = "en",
+    cfg_weight: float = 0.5,
+    exaggeration: float = 0.5,
+    cached_path: str | None = None,
+) -> dict:
     access_code = str(uuid.uuid4())[:8].upper()
     output_dir = os.path.join(VIDEO_DIR, f"{number}-{access_code}")
     os.makedirs(output_dir, exist_ok=True)

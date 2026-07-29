@@ -8,20 +8,21 @@ import time
 from datetime import timedelta
 from pathlib import Path
 
+import soundfile as sf
 import srt
 import torch
-import soundfile as sf
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "chatterbox-server"))
 
-from config import ASSETS_DIR as CFG_ASSETS_DIR, AUDIO_PROMPT_PATH as CFG_AUDIO_PROMPT_PATH
+from config import ASSETS_DIR as CFG_ASSETS_DIR
+from config import AUDIO_PROMPT_PATH as CFG_AUDIO_PROMPT_PATH
 from video_util import read_srt_text
 
 CHANGED_THRESHOLD = 0.05
 
 # Thermal protection — Renoir iGPU (gfx90c via ROCm) is prone to GPU hangs
 # under sustained load.  Pause between segments when the GPU gets too hot.
-GPU_TEMP_LIMIT = float(os.environ.get("GPU_TEMP_LIMIT", "80"))   # °C — pause if exceeded
+GPU_TEMP_LIMIT = float(os.environ.get("GPU_TEMP_LIMIT", "80"))  # °C — pause if exceeded
 GPU_COOLDOWN_TARGET = float(os.environ.get("GPU_COOLDOWN_TARGET", "60"))  # °C — resume when below
 GPU_POLL_SECS = float(os.environ.get("GPU_POLL_SECS", "10"))
 _STOP_REQUESTED = False
@@ -38,9 +39,9 @@ def _get_gpu_temp():
                     if name == "amdgpu":
                         raw = int((hw / "temp1_input").read_text().strip())
                         return raw / 1000.0
-                except Exception:
+                except (OSError, ValueError):
                     continue
-    except Exception:
+    except (OSError, FileNotFoundError):
         pass
     return None
 
@@ -48,8 +49,7 @@ def _get_gpu_temp():
 def _signal_handler(signum, frame):
     global _STOP_REQUESTED
     sig_name = signal.Signals(signum).name
-    print(f"\n\n  ⏸ {sig_name} received — will stop after current segment. Press again to force-quit.",
-          file=sys.stderr)
+    print(f"\n\n  ⏸ {sig_name} received — will stop after current segment. Press again to force-quit.", file=sys.stderr)
     if _STOP_REQUESTED:
         print(f"\n  Second {sig_name} — forcing exit.", file=sys.stderr)
         os._exit(1)
@@ -70,8 +70,7 @@ def _thermal_check():
             time.sleep(GPU_POLL_SECS)
             temp = _get_gpu_temp()
             if temp is not None:
-                print(f"\r  Cooling… GPU {temp:.0f}°C (target ≤{GPU_COOLDOWN_TARGET:.0f}°C)",
-                      end="", flush=True)
+                print(f"\r  Cooling… GPU {temp:.0f}°C (target ≤{GPU_COOLDOWN_TARGET:.0f}°C)", end="", flush=True)
         if temp is not None:
             print(f"\n  ✓ GPU cooled to {temp:.0f}°C — resuming")
     return not _STOP_REQUESTED
@@ -98,7 +97,7 @@ def _load_cache(output_dir):
     if not os.path.exists(path):
         return {}
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, KeyError):
         return {}
@@ -133,7 +132,7 @@ def _check_cache(cache, seg_idx, clean_content, output_dir):
         _set_cache(cache, seg_idx, clean_content, info.duration)
         _save_cache(output_dir, cache)
         return True, info.duration
-    except Exception:
+    except OSError:
         return False, 0.0
 
 
@@ -198,7 +197,7 @@ def _migrate_cache(cache, new_subs, output_dir):
 
     # Remove stale entries (remaining entries in old_map had no match)
     for entries in old_map.values():
-        for (old_idx, _) in entries:
+        for old_idx, _ in entries:
             old_key = str(old_idx)
             if old_key in cache:
                 stale_wav = _combined_seg_path(output_dir, old_idx)
@@ -242,7 +241,7 @@ def split_text(text, max_len=120):
 
         chunk = text[:max_len]
         last_boundary = -1
-        for sep in ('. ', '! ', '? ', '.\n', '!\n', '?\n', '.\r\n', '!\r\n', '?\r\n'):
+        for sep in (". ", "! ", "? ", ".\n", "!\n", "?\n", ".\r\n", "!\r\n", "?\r\n"):
             pos = chunk.rfind(sep)
             if pos > last_boundary:
                 last_boundary = pos + 1
@@ -251,7 +250,7 @@ def split_text(text, max_len=120):
             chunks.append(text[:last_boundary])
             text = text[last_boundary:].lstrip()
         else:
-            last_space = chunk.rfind(' ')
+            last_space = chunk.rfind(" ")
             if last_space > 0:
                 chunks.append(text[:last_space])
                 text = text[last_space:].lstrip()
@@ -312,7 +311,7 @@ def combine_audio_segments(segments_info, total_duration, sample_rate):
         end_sample = start_sample + wav_data.shape[1]
         if end_sample > combined.shape[1]:
             new_combined = torch.zeros(1, end_sample)
-            new_combined[:, :combined.shape[1]] = combined
+            new_combined[:, : combined.shape[1]] = combined
             combined = new_combined
         combined[:, start_sample:end_sample] = wav_data
     return combined
@@ -322,7 +321,16 @@ def save_audio(output_path, wav_tensor, sample_rate):
     sf.write(output_path, wav_tensor.squeeze(0).cpu().numpy(), sample_rate)
 
 
-def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_dir=CFG_ASSETS_DIR, target_language="en", cfg_weight=0.5, exaggeration=0.5):
+def process_with_direct(
+    srt_path,
+    audio_prompt,
+    temperature,
+    output_dir,
+    assets_dir=CFG_ASSETS_DIR,
+    target_language="en",
+    cfg_weight=0.5,
+    exaggeration=0.5,
+):
     subs = load_subs(srt_path)
     if not subs:
         print("No subtitles found in SRT file")
@@ -347,8 +355,11 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
 
     if uncached_count == 0:
         # ── Every segment is cached — skip GPU entirely ────
-        cached_wavs = [_combined_seg_path(output_dir, i) for i in range(len(subs))
-                       if os.path.exists(_combined_seg_path(output_dir, i))]
+        cached_wavs = [
+            _combined_seg_path(output_dir, i)
+            for i in range(len(subs))
+            if os.path.exists(_combined_seg_path(output_dir, i))
+        ]
         if not cached_wavs:
             print("No cached audio found")
             return
@@ -374,25 +385,32 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
             new_start = orig_start + accumulated_offset
 
             if abs(total_wav_duration - orig_duration) > CHANGED_THRESHOLD:
-                changed_segments.append({
-                    "segment": i,
-                    "time": orig_start,
-                    "orig_duration": orig_duration,
-                    "new_duration": total_wav_duration,
-                    "diff": total_wav_duration - orig_duration,
-                })
+                changed_segments.append(
+                    {
+                        "segment": i,
+                        "time": orig_start,
+                        "orig_duration": orig_duration,
+                        "new_duration": total_wav_duration,
+                        "diff": total_wav_duration - orig_duration,
+                    }
+                )
 
             adjusted_subs.append(
-                srt.Subtitle(index=i, start=timedelta(seconds=new_start),
-                             end=timedelta(seconds=new_start + total_wav_duration),
-                             content=sub.content)
+                srt.Subtitle(
+                    index=i,
+                    start=timedelta(seconds=new_start),
+                    end=timedelta(seconds=new_start + total_wav_duration),
+                    content=sub.content,
+                )
             )
 
-            segments_info.append({
-                "wav_path": seg_wav_path,
-                "wav_duration": total_wav_duration,
-                "new_start": new_start,
-            })
+            segments_info.append(
+                {
+                    "wav_path": seg_wav_path,
+                    "wav_duration": total_wav_duration,
+                    "new_start": new_start,
+                }
+            )
 
             if total_wav_duration > orig_duration:
                 accumulated_offset += total_wav_duration - orig_duration
@@ -404,8 +422,8 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
         return combined_tensor, adjusted_subs, changed_segments, sample_rate, total_duration
 
     # ── Some segments need generation — init GPU model ──────
-    from audio_utils import NingAudio
     import gpu_manage as _gm
+    from audio_utils import NingAudio
 
     audio = NingAudio(audio_prompt=audio_prompt)
     audio._ensure_model(target_language)
@@ -440,20 +458,24 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
             # Remove stale cache entry for empty segments
             cache.pop(str(i), None)
             adjusted_subs.append(
-                srt.Subtitle(index=i, start=timedelta(seconds=new_start),
-                             end=timedelta(seconds=new_start + orig_duration),
-                             content=sub.content)
+                srt.Subtitle(
+                    index=i,
+                    start=timedelta(seconds=new_start),
+                    end=timedelta(seconds=new_start + orig_duration),
+                    content=sub.content,
+                )
             )
-            segments_info.append({
-                "wav_path": seg_wav_path,
-                "wav_duration": orig_duration,
-                "new_start": new_start,
-            })
+            segments_info.append(
+                {
+                    "wav_path": seg_wav_path,
+                    "wav_duration": orig_duration,
+                    "new_start": new_start,
+                }
+            )
             continue
 
         # ── Check per-segment cache ──
-        cached, cached_duration = _check_cache(
-            cache, i, clean_content, output_dir)
+        cached, cached_duration = _check_cache(cache, i, clean_content, output_dir)
 
         if cached:
             print(f"  ↪ segment {i} cached (duration: {cached_duration:.2f}s), skipping generation")
@@ -463,7 +485,7 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
         else:
             # ── GPU thermal check before heavy work ──
             if not _thermal_check():
-                print(f"  → Stopped by signal")
+                print("  → Stopped by signal")
                 raise SystemExit(1)
 
             prompt = get_speaker_prompt(speaker, audio_prompt, assets_dir)
@@ -473,8 +495,14 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
             for chunk in chunks:
                 wav_path = os.path.join(output_dir, "tmp", f"segment_{seg_counter}.wav")
                 wav_data, wav_duration = audio.generate_audio(
-                    chunk, wav_path, sample_rate, temperature, prompt_file=prompt,
-                    target_language=target_language, cfg_weight=cfg_weight, exaggeration=exaggeration
+                    chunk,
+                    wav_path,
+                    sample_rate,
+                    temperature,
+                    prompt_file=prompt,
+                    target_language=target_language,
+                    cfg_weight=cfg_weight,
+                    exaggeration=exaggeration,
                 )
                 if wav_data.dim() == 1:
                     wav_data = wav_data.unsqueeze(0)
@@ -501,13 +529,15 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
         duration_diff = total_wav_duration - orig_duration
 
         if abs(duration_diff) > CHANGED_THRESHOLD:
-            changed_segments.append({
-                "segment": i,
-                "time": orig_start,
-                "orig_duration": orig_duration,
-                "new_duration": total_wav_duration,
-                "diff": duration_diff
-            })
+            changed_segments.append(
+                {
+                    "segment": i,
+                    "time": orig_start,
+                    "orig_duration": orig_duration,
+                    "new_duration": total_wav_duration,
+                    "diff": duration_diff,
+                }
+            )
 
         adjusted_subs.append(
             srt.Subtitle(
@@ -533,12 +563,14 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
     total_duration = original_total + accumulated_offset
 
     if original_total > 0 and total_duration / original_total > 3.0:
-        print(f"ERROR: Generated audio duration ({total_duration:.2f}s) is more than 3x the original SRT duration ({original_total:.2f}s). TTS model likely failed.")
-        raise RuntimeError(f"TTS duration inflation: {total_duration:.2f}s vs original {original_total:.2f}s (ratio: {total_duration/original_total:.1f}x)")
+        print(
+            f"ERROR: Generated audio duration ({total_duration:.2f}s) is more than 3x the original SRT duration ({original_total:.2f}s). TTS model likely failed."
+        )
+        raise RuntimeError(
+            f"TTS duration inflation: {total_duration:.2f}s vs original {original_total:.2f}s (ratio: {total_duration / original_total:.1f}x)"
+        )
 
-    combined_tensor = combine_audio_segments(
-        segments_info, total_duration, sample_rate
-    )
+    combined_tensor = combine_audio_segments(segments_info, total_duration, sample_rate)
 
     # Persist cache to disk so the next run can benefit from it
     _save_cache(output_dir, cache)
@@ -547,9 +579,7 @@ def process_with_direct(srt_path, audio_prompt, temperature, output_dir, assets_
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Generate audio from SRT segments and output adjusted SRT"
-    )
+    parser = argparse.ArgumentParser(description="Generate audio from SRT segments and output adjusted SRT")
     parser.add_argument("srt", help="Input SRT file")
     parser.add_argument(
         "--audio_prompt",
@@ -561,14 +591,12 @@ def main():
         default=CFG_ASSETS_DIR,
         help="Directory containing {speaker}_voice.wav files for speaker-specific prompts",
     )
-    parser.add_argument("--temperature", type=float, default=0.8,
-        help="Temperature for audio generation")
-    parser.add_argument("--target_language", type=str, default="en",
-        help="Target language code (e.g. en, zh, ja, etc.)")
-    parser.add_argument("--cfg_weight", type=float, default=0.5,
-        help="CFG weight for generation")
-    parser.add_argument("--exaggeration", type=float, default=0.5,
-        help="Exaggeration level for voice characteristics")
+    parser.add_argument("--temperature", type=float, default=0.8, help="Temperature for audio generation")
+    parser.add_argument(
+        "--target_language", type=str, default="en", help="Target language code (e.g. en, zh, ja, etc.)"
+    )
+    parser.add_argument("--cfg_weight", type=float, default=0.5, help="CFG weight for generation")
+    parser.add_argument("--exaggeration", type=float, default=0.5, help="Exaggeration level for voice characteristics")
     parser.add_argument("--output_dir", default="./output", help="Output directory")
     parser.add_argument("--output_srt", default="output_adjusted.srt")
     parser.add_argument("--output_wav", default="output.wav")
@@ -586,14 +614,26 @@ def main():
     # Show GPU thermal status
     gpu_temp = _get_gpu_temp()
     if gpu_temp is not None:
-        print(f"GPU temp:   {gpu_temp:.0f}°C (limit: {GPU_TEMP_LIMIT:.0f}°C, cooldown target: {GPU_COOLDOWN_TARGET:.0f}°C)")
-    print(f"Stop:       Ctrl+C once for graceful stop per segment, twice to force-quit")
-    print(f"Env:        GPU_TEMP_LIMIT={GPU_TEMP_LIMIT}  GPU_COOLDOWN_TARGET={GPU_COOLDOWN_TARGET}  GPU_POLL_SECS={GPU_POLL_SECS}")
+        print(
+            f"GPU temp:   {gpu_temp:.0f}°C (limit: {GPU_TEMP_LIMIT:.0f}°C, cooldown target: {GPU_COOLDOWN_TARGET:.0f}°C)"
+        )
+    print("Stop:       Ctrl+C once for graceful stop per segment, twice to force-quit")
+    print(
+        f"Env:        GPU_TEMP_LIMIT={GPU_TEMP_LIMIT}  GPU_COOLDOWN_TARGET={GPU_COOLDOWN_TARGET}  GPU_POLL_SECS={GPU_POLL_SECS}"
+    )
     print()
 
     print("Using direct NingAudio (in-process)")
-    result = process_with_direct(args.srt, args.audio_prompt, args.temperature, args.output_dir, args.assets_dir,
-                                 target_language=args.target_language, cfg_weight=args.cfg_weight, exaggeration=args.exaggeration)
+    result = process_with_direct(
+        args.srt,
+        args.audio_prompt,
+        args.temperature,
+        args.output_dir,
+        args.assets_dir,
+        target_language=args.target_language,
+        cfg_weight=args.cfg_weight,
+        exaggeration=args.exaggeration,
+    )
 
     if result is None:
         return
@@ -606,7 +646,7 @@ def main():
         # Write SRT manually to preserve empty-content entries
         # (srt.compose silently drops them)
         for i, sub in enumerate(adjusted_subs):
-            f.write(f"{i+1}\n")
+            f.write(f"{i + 1}\n")
             f.write(f"{srt.timedelta_to_srt_timestamp(sub.start)} --> {srt.timedelta_to_srt_timestamp(sub.end)}\n")
             f.write(sub.content + "\n\n")
 
@@ -618,7 +658,9 @@ def main():
     print(f"Combined WAV: {args.output_wav} (duration: {total_duration:.2f}s)")
     print(f"Changed segments: {[s['segment'] for s in changed_segments]}")
     for s in changed_segments:
-        print(f"  Segment {s['segment']} at {s['time']:.2f}s: {s['orig_duration']:.2f}s -> {s['new_duration']:.2f}s (diff: {s['diff']:+.2f}s)")
+        print(
+            f"  Segment {s['segment']} at {s['time']:.2f}s: {s['orig_duration']:.2f}s -> {s['new_duration']:.2f}s (diff: {s['diff']:+.2f}s)"
+        )
 
 
 if __name__ == "__main__":

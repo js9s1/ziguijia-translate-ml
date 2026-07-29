@@ -25,7 +25,13 @@ def _run_tts_job(job_data: dict):
     log_file = os.path.join(output_dir, "job.log")
     with open(log_file, "a") as lf:
         with redirect_stdout(lf):
-            wav_data = NingAudio().text_to_wave_with_silence(text, temperature=ap["temperature"], target_language=ap["target_language"], cfg_weight=ap["cfg_weight"], exaggeration=ap["exaggeration"])
+            wav_data = NingAudio().text_to_wave_with_silence(
+                text,
+                temperature=ap["temperature"],
+                target_language=ap["target_language"],
+                cfg_weight=ap["cfg_weight"],
+                exaggeration=ap["exaggeration"],
+            )
 
     output_path = os.path.join(output_dir, filename)
     with open(output_path, "wb") as f:
@@ -33,7 +39,15 @@ def _run_tts_job(job_data: dict):
     job_log(access_code, output_dir, f"Wrote {output_path}")
 
 
-def process_tts(text: str, filename: str, user_id: int = None, temperature: float = 0.8, target_language: str = "en", cfg_weight: float = 0.5, exaggeration: float = 0.5) -> dict:
+def process_tts(
+    text: str,
+    filename: str,
+    user_id: int = None,
+    temperature: float = 0.8,
+    target_language: str = "en",
+    cfg_weight: float = 0.5,
+    exaggeration: float = 0.5,
+) -> dict:
     access_code = str(uuid.uuid4())[:8].upper()
     output_dir = os.path.join(AUDIO_TRACKS_DIR, access_code)
     os.makedirs(output_dir, exist_ok=True)

@@ -50,16 +50,19 @@ def post_fork(server, worker):
     references leak from the parent process. Finally install
     structured JSON logging on gunicorn's existing handler."""
     from jobqueue import JobQueue
+
     JobQueue.clear()
     # Eagerly initialise the JobQueue so the worker thread starts processing
     # pending jobs immediately, without waiting for a web request.
     from jobqueue import get_job_queue
+
     get_job_queue()
 
     # Reset TTS model singletons — these hold module-level GPU handles
     # that point to the parent process and must not be reused post-fork.
     from audio_utils import NingAudio
     from gpu_manage import _clear_all_models
+
     NingAudio.clear()
     _clear_all_models()
 
@@ -76,9 +79,21 @@ def post_fork(server, worker):
         gunicorn_handler.addFilter(req_filter)
 
         # Add the same handler to application loggers so they write to the same file
-        for name in ("chatterbox_server", "auth", "jobqueue", "valkey_util",
-                     "audio_job", "tts_job", "video_ning_job", "video_custom_job",
-                     "video_ocr_job", "video_util", "pipeline", "db_schema", "log_utils"):
+        for name in (
+            "chatterbox_server",
+            "auth",
+            "jobqueue",
+            "valkey_util",
+            "audio_job",
+            "tts_job",
+            "video_ning_job",
+            "video_custom_job",
+            "video_ocr_job",
+            "video_util",
+            "pipeline",
+            "db_schema",
+            "log_utils",
+        ):
             app_logger = logging.getLogger(name)
             app_logger.handlers.clear()
             app_logger.addHandler(gunicorn_handler)
@@ -96,6 +111,7 @@ def worker_exit(server, worker):
     If the job doesn't finish, it's marked PENDING for automatic resume.
     """
     from jobqueue import get_job_queue
+
     try:
         jq = get_job_queue()
         jq.shutdown()

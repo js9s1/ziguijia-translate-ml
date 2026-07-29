@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 # ── Cache helpers ─────────────────────────────────────────
 
+
 def _build_cached_response(find_cached_func, number) -> dict | None:
     """Check for a cached video file and build a response dict."""
     cached = find_cached_func(number)
@@ -40,8 +41,11 @@ def _build_cached_response(find_cached_func, number) -> dict | None:
 
 
 def _video_process_with_cache(
-    number: str, find_cached_func, process_func,
-    blur: str, extra_process_kwargs: dict | None = None,
+    number: str,
+    find_cached_func,
+    process_func,
+    blur: str,
+    extra_process_kwargs: dict | None = None,
 ):
     """Handle the cached-video check → process flow."""
     cached_path = request.form.get("cached_path", "")
@@ -70,6 +74,7 @@ def _video_process_with_cache(
 
 # ── Ning video routes ─────────────────────────────────────
 
+
 @video_bp.route("/video/ning/process", methods=["POST"])
 @login_required
 def video_ning_process():
@@ -90,12 +95,19 @@ def video_ning_process():
         blur = request.form.get("blur", "yes")
 
         def _process(**kwargs):
-            return jsonify(process_video_ning(
-                number, srt_file, params["temperature"], session["user_id"], blur,
-                target_language=params["target_language"],
-                cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"],
-                **kwargs,
-            ))
+            return jsonify(
+                process_video_ning(
+                    number,
+                    srt_file,
+                    params["temperature"],
+                    session["user_id"],
+                    blur,
+                    target_language=params["target_language"],
+                    cfg_weight=params["cfg_weight"],
+                    exaggeration=params["exaggeration"],
+                    **kwargs,
+                )
+            )
 
         return _video_process_with_cache(number, find_cached, _process, blur)
     except Exception as e:
@@ -113,18 +125,25 @@ def video_ning_ocr_process():
 
         params = parse_job_params(request.form)
         mode = request.form.get("ocr_mode", "full")
-        process_video_ning_ocr = _lazy("video_ning_job",
-            "process_video_ning_ocr" if mode == "full" else "process_video_ning_ocr_translate_only")
+        process_video_ning_ocr = _lazy(
+            "video_ning_job", "process_video_ning_ocr" if mode == "full" else "process_video_ning_ocr_translate_only"
+        )
         find_cached = _lazy("video_ning_job", "_find_cached_video")
         blur = request.form.get("blur", "yes")
 
         def _process(**kwargs):
-            return jsonify(process_video_ning_ocr(
-                number, params["temperature"], session["user_id"], blur,
-                target_language=params["target_language"],
-                cfg_weight=params["cfg_weight"], exaggeration=params["exaggeration"],
-                **kwargs,
-            ))
+            return jsonify(
+                process_video_ning_ocr(
+                    number,
+                    params["temperature"],
+                    session["user_id"],
+                    blur,
+                    target_language=params["target_language"],
+                    cfg_weight=params["cfg_weight"],
+                    exaggeration=params["exaggeration"],
+                    **kwargs,
+                )
+            )
 
         return _video_process_with_cache(number, find_cached, _process, blur)
     except Exception as e:
@@ -133,6 +152,7 @@ def video_ning_ocr_process():
 
 
 # ── Custom video routes ───────────────────────────────────
+
 
 @video_bp.route("/video/custom/process", methods=["POST"])
 @login_required
@@ -150,9 +170,15 @@ def video_custom_process():
         params = parse_job_params(request.form)
 
         process_video_custom = _lazy("video_custom_job", "process_video_custom")
-        result = process_video_custom(video_file, srt_file, params["temperature"], session["user_id"],
-                                      target_language=params["target_language"], cfg_weight=params["cfg_weight"],
-                                      exaggeration=params["exaggeration"])
+        result = process_video_custom(
+            video_file,
+            srt_file,
+            params["temperature"],
+            session["user_id"],
+            target_language=params["target_language"],
+            cfg_weight=params["cfg_weight"],
+            exaggeration=params["exaggeration"],
+        )
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error processing custom video: {str(e)}", exc_info=True)
@@ -171,9 +197,14 @@ def video_custom_auto_process():
         params = parse_job_params(request.form)
 
         process_video_auto = _lazy("video_custom_job", "process_video_auto")
-        result = process_video_auto(video_file, params["temperature"], session["user_id"],
-                                    target_language=params["target_language"], cfg_weight=params["cfg_weight"],
-                                    exaggeration=params["exaggeration"])
+        result = process_video_auto(
+            video_file,
+            params["temperature"],
+            session["user_id"],
+            target_language=params["target_language"],
+            cfg_weight=params["cfg_weight"],
+            exaggeration=params["exaggeration"],
+        )
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error auto processing video: {str(e)}", exc_info=True)
@@ -181,6 +212,7 @@ def video_custom_auto_process():
 
 
 # ── OCR routes ────────────────────────────────────────────
+
 
 @video_bp.route("/video/ocr/process", methods=["POST"])
 @login_required
@@ -211,9 +243,14 @@ def video_custom_ocr_process():
         params = parse_job_params(request.form)
 
         process_video_ocr = _lazy("video_custom_job", "process_video_ocr")
-        result = process_video_ocr(video_file, params["temperature"], session["user_id"],
-                                   target_language=params["target_language"], cfg_weight=params["cfg_weight"],
-                                   exaggeration=params["exaggeration"])
+        result = process_video_ocr(
+            video_file,
+            params["temperature"],
+            session["user_id"],
+            target_language=params["target_language"],
+            cfg_weight=params["cfg_weight"],
+            exaggeration=params["exaggeration"],
+        )
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error OCR processing video: {str(e)}", exc_info=True)

@@ -13,10 +13,10 @@ Usage:
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
-import shutil
 
 import srt
 
@@ -34,8 +34,14 @@ def get_video_info(video_file):
         raise ValueError(f"Video file is empty (0 bytes): {video_file}")
     result = subprocess.run(
         [
-            "ffprobe", "-v", "quiet", "-print_format", "json",
-            "-show_format", "-show_streams", video_file,
+            "ffprobe",
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
+            "-show_format",
+            "-show_streams",
+            video_file,
         ],
         capture_output=True,
         text=True,
@@ -80,17 +86,19 @@ def calculate_segments(original_subs, adjusted_subs, changed_indices):
         else:
             stretch_factor = 1.0
 
-        segments.append({
-            "index": i,
-            "orig_start": orig.start.total_seconds(),
-            "orig_end": orig.end.total_seconds(),
-            "orig_duration": orig_duration,
-            "adj_start": adj.start.total_seconds(),
-            "adj_end": adj.end.total_seconds(),
-            "adj_duration": adj_duration,
-            "stretch_factor": stretch_factor,
-            "is_changed": i in changed_indices,
-        })
+        segments.append(
+            {
+                "index": i,
+                "orig_start": orig.start.total_seconds(),
+                "orig_end": orig.end.total_seconds(),
+                "orig_duration": orig_duration,
+                "adj_start": adj.start.total_seconds(),
+                "adj_end": adj.end.total_seconds(),
+                "adj_duration": adj_duration,
+                "stretch_factor": stretch_factor,
+                "is_changed": i in changed_indices,
+            }
+        )
 
     return segments
 
@@ -132,8 +140,7 @@ def process_video(video_file, segments, output_file):
                 seg = dict(seg)
                 seg["orig_end"] = video_duration
                 seg["orig_duration"] = seg["orig_end"] - seg["orig_start"]
-                seg["adj_end"] = max(seg["adj_start"],
-                    seg["adj_end"] - excess * seg.get("stretch_factor", 1.0))
+                seg["adj_end"] = max(seg["adj_start"], seg["adj_end"] - excess * seg.get("stretch_factor", 1.0))
                 seg["adj_duration"] = seg["adj_end"] - seg["adj_start"]
             valid_segments.append(seg)
 
@@ -144,86 +151,71 @@ def process_video(video_file, segments, output_file):
             first_orig_start = valid_segments[0]["orig_start"]
             if first_adj_start > 0 and first_orig_start > 0:
                 stretch = first_adj_start / first_orig_start
-                segment_data.append({
-                    "start": 0,
-                    "end": min(first_orig_start, video_duration),
-                    "stretch": stretch,
-                    "is_subtitle": False
-                })
+                segment_data.append(
+                    {"start": 0, "end": min(first_orig_start, video_duration), "stretch": stretch, "is_subtitle": False}
+                )
                 video_cumul += first_orig_start * stretch
 
         # ── Subtitle segments with inter-segment gaps ──────
         for i, seg in enumerate(valid_segments):
             orig_start = seg["orig_start"]
-            orig_end   = seg["orig_end"]
-            adj_start  = seg["adj_start"]
-            adj_end    = seg["adj_end"]
-            orig_dur   = seg["orig_duration"]
-            adj_dur    = seg["adj_duration"]
+            orig_end = seg["orig_end"]
+            adj_start = seg["adj_start"]
+            adj_end = seg["adj_end"]
+            orig_dur = seg["orig_duration"]
+            adj_dur = seg["adj_duration"]
 
             # Gap before this subtitle.
             if i > 0:
-                prev_orig_end  = valid_segments[i-1]["orig_end"]
+                prev_orig_end = valid_segments[i - 1]["orig_end"]
                 orig_gap = orig_start - prev_orig_end
                 needed_gap = adj_start - video_cumul
 
                 if orig_gap > 0.001:
                     gap_start = prev_orig_end
-                    gap_end   = min(orig_start, video_duration)
+                    gap_end = min(orig_start, video_duration)
                 elif needed_gap > 0.001:
                     gap_start = max(0, prev_orig_end - 0.04)
-                    gap_end   = min(prev_orig_end, video_duration)
-                    orig_gap  = gap_end - gap_start
+                    gap_end = min(prev_orig_end, video_duration)
+                    orig_gap = gap_end - gap_start
                 else:
                     orig_gap = 0.0  # skip this gap
 
                 if orig_gap > 0:
                     stretch = needed_gap / orig_gap
                     stretch = max(0.0, min(100.0, stretch))
-                    segment_data.append({
-                        "start": gap_start,
-                        "end": gap_end,
-                        "stretch": stretch,
-                        "is_subtitle": False
-                    })
+                    segment_data.append({"start": gap_start, "end": gap_end, "stretch": stretch, "is_subtitle": False})
                     video_cumul += orig_gap * stretch
 
             # Subtitle segment.
             stretch = adj_dur / orig_dur if orig_dur > 0 else 1.0
             stretch = max(1.0, min(10.0, stretch))
-            segment_data.append({
-                "start": orig_start,
-                "end": min(orig_end, video_duration),
-                "stretch": stretch,
-                "is_subtitle": True
-            })
+            segment_data.append(
+                {"start": orig_start, "end": min(orig_end, video_duration), "stretch": stretch, "is_subtitle": True}
+            )
             video_cumul += orig_dur * stretch
 
         # ── Trailing gap ───────────────────────────────────
         if valid_segments:
             last_orig_end = valid_segments[-1]["orig_end"]
             if last_orig_end < video_duration:
-                segment_data.append({
-                    "start": last_orig_end,
-                    "end": video_duration,
-                    "stretch": 1.0,
-                    "is_subtitle": False
-                })
+                segment_data.append(
+                    {"start": last_orig_end, "end": video_duration, "stretch": 1.0, "is_subtitle": False}
+                )
 
         # ── Validate total matches audio ────────────────────
-        total_duration = sum(
-            (s["end"] - s["start"]) * s["stretch"] for s in segment_data
-        )
+        total_duration = sum((s["end"] - s["start"]) * s["stretch"] for s in segment_data)
         if valid_segments:
             expected_end = valid_segments[-1]["adj_end"]
             drift = total_duration - expected_end
             if abs(drift) > 1.0:
-                print(f"Warning: predicted video length {total_duration:.2f}s "
-                      f"differs from adjusted audio end {expected_end:.2f}s "
-                      f"by {drift:+.2f}s")
+                print(
+                    f"Warning: predicted video length {total_duration:.2f}s "
+                    f"differs from adjusted audio end {expected_end:.2f}s "
+                    f"by {drift:+.2f}s"
+                )
             if abs(drift) <= 1.0 and abs(drift) > 0.01:
-                print(f"Timing check: video={total_duration:.2f}s  "
-                      f"audio-end={expected_end:.2f}s  drift={drift:+.3f}s")
+                print(f"Timing check: video={total_duration:.2f}s  audio-end={expected_end:.2f}s  drift={drift:+.3f}s")
 
         # ── Build filter-graph batches ──────────────────────
         # Instead of one ffmpeg process per segment (1215× VAAPI init),
@@ -236,14 +228,13 @@ def process_video(video_file, segments, output_file):
 
         batch_files = []
         for batch_idx in range(0, len(segment_data), MAX_BATCH_SEGMENTS):
-            batch = segment_data[batch_idx:batch_idx + MAX_BATCH_SEGMENTS]
+            batch = segment_data[batch_idx : batch_idx + MAX_BATCH_SEGMENTS]
             batch_out = os.path.join(temp_dir, f"batch_{batch_idx:04d}.mp4")
 
             # Build the command
             cmd = ["ffmpeg", "-y", "-hwaccel_output_format", "nv12"]
             for seg in batch:
-                cmd.extend(["-ss", str(seg["start"]), "-to", str(seg["end"]),
-                            "-i", video_file])
+                cmd.extend(["-ss", str(seg["start"]), "-to", str(seg["end"]), "-i", video_file])
             cmd.append("-vaapi_device")
             cmd.append(VAAPI_DEVICE)
 
@@ -254,34 +245,28 @@ def process_video(video_file, segments, output_file):
             for i, seg in enumerate(batch):
                 stretch = seg["stretch"]
                 if stretch != 1.0:
-                    filter_parts.append(
-                        f"[{i}:v]setpts={stretch}*PTS,setpts=PTS-STARTPTS[v{i}]")
+                    filter_parts.append(f"[{i}:v]setpts={stretch}*PTS,setpts=PTS-STARTPTS[v{i}]")
                 else:
-                    filter_parts.append(
-                        f"[{i}:v]setpts=PTS-STARTPTS[v{i}]")
+                    filter_parts.append(f"[{i}:v]setpts=PTS-STARTPTS[v{i}]")
             n = len(batch)
             concat_labels = "".join(f"[v{i}]" for i in range(n))
-            filter_parts.append(
-                f"{concat_labels}concat=n={n}:v=1:a=0[outv]")
+            filter_parts.append(f"{concat_labels}concat=n={n}:v=1:a=0[outv]")
             filter_parts.append("[outv]format=nv12,hwupload[hw]")
 
             cmd.extend(["-filter_complex", ";".join(filter_parts)])
-            cmd.extend(["-map", "[hw]", "-c:v", "h264_vaapi", "-qp", "23",
-                        batch_out])
+            cmd.extend(["-map", "[hw]", "-c:v", "h264_vaapi", "-qp", "23", batch_out])
 
             print(f"  Batch {batch_idx:04d}: {n} segments → single ffmpeg")
-            result = subprocess.run(cmd, check=False, capture_output=True, text=True,
-                                     timeout=3600)
+            result = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=3600)
             if result.returncode != 0:
-                print(f"FFmpeg batch error: {result.stderr[:50000]}",
-                      file=sys.stderr)
+                print(f"FFmpeg batch error: {result.stderr[:50000]}", file=sys.stderr)
                 result.check_returncode()
 
             # Validate
             probe = subprocess.run(
-                ["ffprobe", "-v", "quiet", "-print_format", "json",
-                 "-show_streams", "-select_streams", "v", batch_out],
-                capture_output=True, text=True,
+                ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", "-select_streams", "v", batch_out],
+                capture_output=True,
+                text=True,
             )
             probe_data = json.loads(probe.stdout) if probe.stdout.strip() else {"streams": []}
             if not probe_data.get("streams"):
@@ -306,7 +291,7 @@ def process_video(video_file, segments, output_file):
                 level += 1
                 next_batch = []
                 for bi in range(0, len(batch_list), MAX_BATCH_SEGMENTS):
-                    group = batch_list[bi:bi + MAX_BATCH_SEGMENTS]
+                    group = batch_list[bi : bi + MAX_BATCH_SEGMENTS]
                     if len(group) == 1:
                         next_batch.append(group[0])
                         continue
@@ -316,18 +301,23 @@ def process_video(video_file, segments, output_file):
                     if n > 1:
                         filter_str = f"{concat_inputs}concat=n={n}:v=1:a=0[outv];[outv]format=nv12,hwupload[hw]"
                     else:
-                        filter_str = f"[0:v]format=nv12,hwupload[hw]"
-                    cmd = ["ffmpeg", "-y",
-                           "-hwaccel_output_format", "nv12",
-                           "-vaapi_device", VAAPI_DEVICE]
+                        filter_str = "[0:v]format=nv12,hwupload[hw]"
+                    cmd = ["ffmpeg", "-y", "-hwaccel_output_format", "nv12", "-vaapi_device", VAAPI_DEVICE]
                     for sf in group:
                         cmd.extend(["-i", sf])
-                    cmd.extend([
-                        "-filter_complex", filter_str,
-                        "-map", "[hw]",
-                        "-c:v", "h264_vaapi", "-qp", "23",
-                        out_name,
-                    ])
+                    cmd.extend(
+                        [
+                            "-filter_complex",
+                            filter_str,
+                            "-map",
+                            "[hw]",
+                            "-c:v",
+                            "h264_vaapi",
+                            "-qp",
+                            "23",
+                            out_name,
+                        ]
+                    )
                     result = subprocess.run(cmd, check=False, capture_output=True, text=True)
                     if result.returncode != 0:
                         print(f"FFmpeg error (L{level} batch {bi}): {result.stderr[:50000]}", file=sys.stderr)
@@ -344,9 +334,7 @@ def process_video(video_file, segments, output_file):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Modify video track to match adjusted audio timing"
-    )
+    parser = argparse.ArgumentParser(description="Modify video track to match adjusted audio timing")
     parser.add_argument(
         "video_file",
         help="Input video file (decompressed mp4)",
@@ -364,7 +352,8 @@ def main():
         help="JSON file listing changed segment indices",
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         default=None,
         help="Output video file (default: input_video_modified.mp4)",
     )
@@ -424,7 +413,7 @@ def main():
         print("The original and adjusted SRT files must have the same number of segments.")
         sys.exit(1)
 
-    with open(args.changed_json, "r") as f:
+    with open(args.changed_json) as f:
         changed_data = json.load(f)
         if isinstance(changed_data, list) and len(changed_data) > 0:
             if isinstance(changed_data[0], dict):
@@ -441,9 +430,15 @@ def main():
         first_start = original_subs[0].start.total_seconds()
         video_dur = get_video_info(args.video_file)["duration"]
         if first_start > video_dur:
-            print(f"Error: SRT timestamps are outside the video duration.", file=sys.stderr)
-            print(f"       First SRT segment starts at {first_start:.1f}s but the video is only {video_dur:.1f}s long.", file=sys.stderr)
-            print(f"       The SRT appears to be for a longer original video — please upload an SRT that matches this clip.", file=sys.stderr)
+            print("Error: SRT timestamps are outside the video duration.", file=sys.stderr)
+            print(
+                f"       First SRT segment starts at {first_start:.1f}s but the video is only {video_dur:.1f}s long.",
+                file=sys.stderr,
+            )
+            print(
+                "       The SRT appears to be for a longer original video — please upload an SRT that matches this clip.",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
     # Get video info
@@ -459,10 +454,12 @@ def main():
     print("\nChanged segments:")
     for seg in segments:
         if seg["is_changed"]:
-            print(f"  Segment {seg['index']}: "
-                  f"orig_dur={seg['orig_duration']:.3f}s, "
-                  f"adj_dur={seg['adj_duration']:.3f}s, "
-                  f"stretch={seg['stretch_factor']:.3f}x")
+            print(
+                f"  Segment {seg['index']}: "
+                f"orig_dur={seg['orig_duration']:.3f}s, "
+                f"adj_dur={seg['adj_duration']:.3f}s, "
+                f"stretch={seg['stretch_factor']:.3f}x"
+            )
 
     # Process video
     process_video(args.video_file, segments, output_file)
@@ -478,14 +475,27 @@ def main():
     if abs(actual_dur - expected_end) > 0.1:
         ratio = expected_end / actual_dur
         print(f"Correcting video duration: {actual_dur:.2f}s → {expected_end:.2f}s (ratio {ratio:.4f})")
-        subprocess.run([
-            "ffmpeg", "-y", "-v", "quiet",
-            "-i", output_file,
-            "-filter:v", f"setpts={ratio}*PTS",
-            "-c:v", "libx264", "-crf", "23", "-preset", "fast",
-            "-an",
-            corrected,
-        ], check=True)
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-v",
+                "quiet",
+                "-i",
+                output_file,
+                "-filter:v",
+                f"setpts={ratio}*PTS",
+                "-c:v",
+                "libx264",
+                "-crf",
+                "23",
+                "-preset",
+                "fast",
+                "-an",
+                corrected,
+            ],
+            check=True,
+        )
         output_file = corrected
     else:
         print(f"Video timing accurate ({actual_dur:.2f}s vs expected {expected_end:.2f}s)")
@@ -502,7 +512,7 @@ def main():
     try:
         audio_info = get_video_info(audio_wav)
         audio_duration = audio_info["duration"]
-    except Exception:
+    except (subprocess.SubprocessError, ValueError, KeyError, OSError):
         audio_duration = None
 
     try:
@@ -513,37 +523,69 @@ def main():
             # is in the graph.  Run the blur pass entirely on CPU
             # then encode with software x265 — simpler and reliable.
             blur_cmd = [
-                "ffmpeg", "-y",
-                "-hwaccel", "none",
-                "-i", output_file,
-                "-i", audio_wav,
-                "-vf", "format=yuv420p,delogo=x=100:y=600:w=1060:h=80:show=0",
-                "-c:v", "libx264", "-crf", "23", "-preset", "fast",
-                "-c:a", "aac", "-b:a", "192k",
+                "ffmpeg",
+                "-y",
+                "-hwaccel",
+                "none",
+                "-i",
+                output_file,
+                "-i",
+                audio_wav,
+                "-vf",
+                "format=yuv420p,delogo=x=100:y=600:w=1060:h=80:show=0",
+                "-c:v",
+                "libx264",
+                "-crf",
+                "23",
+                "-preset",
+                "fast",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
                 temp_output,
             ]
             subprocess.run(blur_cmd, check=True)
         else:
             mux_cmd = [
-                "ffmpeg", "-y",
-                "-i", output_file,
-                "-i", audio_wav,
-                "-c:v", "copy",
-                "-c:a", "aac", "-b:a", "192k",
-                "-map", "0:v", "-map", "1:a",
+                "ffmpeg",
+                "-y",
+                "-i",
+                output_file,
+                "-i",
+                audio_wav,
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                "-map",
+                "0:v",
+                "-map",
+                "1:a",
                 temp_output,
             ]
             subprocess.run(mux_cmd, check=True)
 
-        subprocess.run([
-            "ffmpeg", "-y",
-            "-i", temp_output,
-            "-i", args.adjusted_srt,
-            "-c", "copy",
-            "-c:s", "mov_text",
-            "-metadata:s:s:0", "language=eng",
-            final_output
-        ], check=True)
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                temp_output,
+                "-i",
+                args.adjusted_srt,
+                "-c",
+                "copy",
+                "-c:s",
+                "mov_text",
+                "-metadata:s:s:0",
+                "language=eng",
+                final_output,
+            ],
+            check=True,
+        )
     finally:
         if os.path.exists(temp_output):
             os.remove(temp_output)
