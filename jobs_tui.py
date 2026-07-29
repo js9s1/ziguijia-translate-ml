@@ -126,6 +126,10 @@ class Job:
     status: str
     user_id: int | None
     status_changed_at: str | None = None
+    completed_at: str | None = None
+    failed_at: str | None = None
+    cancelled_at: str | None = None
+    deleted_at: str | None = None
     target_language: str | None = None
     username: str = ""
     temperature: float | None = None
@@ -355,6 +359,7 @@ def load_jobs(
     total = conn.execute(count_sql, params).fetchone()[0]
     data_sql = (
         "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at, "
+        "completed_at, failed_at, cancelled_at, deleted_at, "
         "temperature, cfg_weight, exaggeration, start_trim, end_trim, text, target_language "
         f"FROM jobs {where_clause} {order_clause} LIMIT ? OFFSET ?"
     )
@@ -371,6 +376,7 @@ def get_job(code: str) -> Job | None:
     conn = get_conn()
     r = conn.execute(
         "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at, "
+        "completed_at, failed_at, cancelled_at, deleted_at, "
         "temperature, cfg_weight, exaggeration, start_trim, end_trim, text, target_language "
         "FROM jobs WHERE access_code = ?",
         (code.upper(),),
@@ -834,11 +840,24 @@ def render_detail(job: Job, mode: str) -> Panel:
             f"类型: {job.display_type}",
             f"状态: {job.status_label}",
             f"创建时间: {job.created_at or 'N/A'}",
-            f"状态变更: {job.status_changed_at or 'N/A'}",
+        ]
+        # ── Status-aware terminal time ────────────────────
+        if job.status == "completed" and job.completed_at:
+            lines.append(f"完成时间: {job.completed_at}")
+        elif job.status == "failed" and job.failed_at:
+            lines.append(f"失败时间: {job.failed_at}")
+        elif job.status == "cancelled" and job.cancelled_at:
+            lines.append(f"取消时间: {job.cancelled_at}")
+        elif job.status == "deleted" and job.deleted_at:
+            lines.append(f"删除时间: {job.deleted_at}")
+        elif job.status_changed_at:
+            lines.append(f"状态变更: {job.status_changed_at}")
+
+        lines.extend([
             f"输出目录: {job.output_dir or 'N/A'}",
             f"SRT路径: {job.srt_path or 'N/A'}",
             f"用户: {job.username or 'N/A'}",
-        ]
+        ])
         if job.status in ("processing", "pending"):
             elapsed = _elapsed_since(job.status_changed_at)
             if elapsed:
