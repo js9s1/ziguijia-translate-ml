@@ -60,6 +60,8 @@ _ORPHAN_CACHE_TTL = 5
 
 # ── Data types ────────────────────────────────────────
 
+from job_types import _JOB_TYPE_LABELS as _TYPE_MAP
+
 _NING_VIDEO_TYPES = {
     "_run_video_job",
     "_run_video_ning_ocr_job",
@@ -67,20 +69,6 @@ _NING_VIDEO_TYPES = {
     "_run_video_ning_auto_job",
 }
 
-_TYPE_MAP = {
-    "_run_gen_audio": "音频生成",
-    "_run_video_job": "宁视频翻译",
-    "_run_video_custom_job": "自定义视频",
-    "_run_tts_job": "语音合成",
-    "_run_video_auto_job": "自动翻译视频",
-    "_run_audio_segmentation_job": "音频分段合成",
-    "_run_video_ocr_job": "OCR翻译视频",
-    "_run_video_ocr_translate_only_job": "OCR仅翻译视频（自定义）",
-    "_run_video_ning_ocr_job": "宁视频OCR翻译",
-    "_run_video_ning_ocr_translate_only_job": "宁视频OCR仅翻译",
-    "_run_video_ning_auto_job": "宁视频语音识别翻译",
-    "_run_ocr_only_job": "视频OCR提取字幕",
-}
 
 _STATUS_STYLE_MAP = {
     "pending": "yellow",
