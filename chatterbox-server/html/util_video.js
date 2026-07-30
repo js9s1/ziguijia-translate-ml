@@ -46,6 +46,12 @@ function _toggleOcrOnlyRadio(mode) {
     row.classList.toggle('hidden', mode !== 'ocr-translate-only');
 }
 
+function _toggleAudioParams(mode) {
+    var el = document.getElementById('floatSliders');
+    if (!el) return;
+    el.classList.toggle('hidden', mode === 'ocr-translate-only');
+}
+
 function getOcrOnlyValue() {
     var el = document.querySelector('input[name="ocr_only"]:checked');
     return el ? el.value : 'yes';
@@ -69,10 +75,12 @@ function initVideoForm(config) {
     document.getElementById('mode').addEventListener('change', function() {
         _toggleSrtSection(this.value);
         _toggleOcrOnlyRadio(this.value);
+        _toggleAudioParams(this.value);
     });
 
     _toggleSrtSection(document.getElementById('mode').value);
     _toggleOcrOnlyRadio(document.getElementById('mode').value);
+    _toggleAudioParams(document.getElementById('mode').value);
 
     initFloatSliders('floatSliders', '音频模型参数');
     initLanguageSelect('langSelectContainer');
