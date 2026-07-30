@@ -137,9 +137,17 @@
             var btnRow = document.createElement('div');
             btnRow.style.cssText = 'display:flex;gap:12px;justify-content:flex-end;';
 
+            var cachedMode = document.getElementById('mode').value;
+
             function doResubmit(extraParams) {
                 var fd = new FormData(document.getElementById('videoForm'));
                 for (var k in extraParams) { fd.set(k, extraParams[k]); }
+                if (cachedMode === 'ocr' || cachedMode === 'ocr-translate-only') {
+                    fd.set('ocr_mode', cachedMode === 'ocr-translate-only' ? 'translate-only' : 'full');
+                }
+                if (cachedMode === 'ocr-translate-only') {
+                    fd.set('ocr_only', getOcrOnlyValue());
+                }
                 overlay.classList.add('active');
                 fetch(_submitUrl, { method: 'POST', body: fd })
                 .then(function(r) { return r.json(); })
