@@ -801,7 +801,7 @@ def run_ocr_translate_step(
     outro_marker: str = "",
 ) -> str:
     """Run OCR → translate on a video, return path to translated SRT."""
-    translated_srt = run_translate_ckpt(
+    return run_translate_ckpt(
         run_ocr_ckpt(video_path, output_dir, access_code, ckpt, proc_log),
         output_dir,
         access_code,
@@ -812,9 +812,6 @@ def run_ocr_translate_step(
         intro_marker=intro_marker,
         outro_marker=outro_marker,
     )
-    if os.path.exists(translated_srt):
-        shutil.copy2(translated_srt, os.path.join(output_dir, "output_adjusted.srt"))
-    return translated_srt
 
 
 def run_ocr_only_step(
