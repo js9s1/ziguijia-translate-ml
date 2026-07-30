@@ -93,9 +93,7 @@
         try {
             var resp = await fetch('/srt-zh+en.json.gz');
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
-            var stream = resp.body.pipeThrough(new DecompressionStream('gzip'));
-            var text = await new Response(stream).text();
-            DATA = JSON.parse(text);
+            DATA = await resp.json();
             filtered = DATA;
         } catch(e) {
             document.getElementById('srtGrid').innerHTML = '<p style="color:#f66;text-align:center;padding:40px;">加载数据失败: ' + e + '</p>';
