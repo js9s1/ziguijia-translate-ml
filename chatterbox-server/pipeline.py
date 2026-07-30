@@ -825,11 +825,7 @@ def run_ocr_only_step(
     proc_log,
 ) -> str:
     """Run OCR only — no translation, no audio, no video."""
-    ocr_srt = run_ocr_ckpt(video_path, output_dir, access_code, ckpt, proc_log)
-    dst = os.path.join(output_dir, "output_adjusted.srt")
-    if os.path.exists(ocr_srt) and ocr_srt != dst:
-        shutil.copy2(ocr_srt, dst)
-    return ocr_srt
+    return run_ocr_ckpt(video_path, output_dir, access_code, ckpt, proc_log)
 
 
 def run_ocr_full_pipeline(
