@@ -48,12 +48,12 @@
                 <input type="file" id="srt_file" name="srt_file" accept=".srt" required>
             </div>
 
-            <div class="form-row">
-                <label for="blur">模糊处理</label>
-                <select id="blur" name="blur">
-                    <option value="yes">是</option>
-                    <option value="no">否</option>
-                </select>
+            <div class="form-row" id="blurRow">
+                <label>模糊处理</label>
+                <div style="display:flex;gap:8px;align-items:center;padding-top:4px;">
+                    <span><input type="radio" name="blur" value="yes" checked> 是</span>
+                    <span><input type="radio" name="blur" value="no"> 否</span>
+                </div>
             </div>
 
             <div id="floatSliders"></div>
