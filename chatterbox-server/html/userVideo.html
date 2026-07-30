@@ -33,6 +33,14 @@
                 <select id="mode" name="mode"></select>
             </div>
 
+            <div class="form-row hidden" id="ocrOnlyRow">
+                <label>仅OCR提取字幕（不翻译）</label>
+                <div style="display:flex;gap:8px;align-items:center;padding-top:4px;">
+                    <span><input type="radio" name="ocr_only" value="yes" checked> 是</span>
+                    <span><input type="radio" name="ocr_only" value="no"> 否</span>
+                </div>
+            </div>
+
             <div class="form-row">
                 <label for="video_file">上传视频文件</label>
                 <input type="file" id="video_file" name="video_file" accept="video/*" required>
@@ -41,14 +49,6 @@
             <div class="form-row" id="srtSection">
                 <label for="srt_file">上传SRT字幕文件</label>
                 <input type="file" id="srt_file" name="srt_file" accept=".srt">
-            </div>
-
-            <div class="form-row hidden" id="ocrOnlyRow">
-                <label>仅OCR提取字幕（不翻译）</label>
-                <div style="display:flex;gap:8px;align-items:center;padding-top:4px;">
-                    <span><input type="radio" name="ocr_only" value="yes" checked> 是</span>
-                    <span><input type="radio" name="ocr_only" value="no"> 否</span>
-                </div>
             </div>
 
             <div id="floatSliders"></div>

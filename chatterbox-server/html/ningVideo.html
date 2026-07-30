@@ -35,17 +35,22 @@
                 <select id="mode" name="mode"></select>
             </div>
 
-            <div class="form-row" id="srtSection">
-                <label for="srt_file">上传SRT字幕文件</label>
-                <input type="file" id="srt_file" name="srt_file" accept=".srt" required>
-            </div>
-
             <div class="form-row hidden" id="ocrOnlyRow">
                 <label>仅OCR提取字幕（不翻译）</label>
                 <div style="display:flex;gap:8px;align-items:center;padding-top:4px;">
                     <span><input type="radio" name="ocr_only" value="yes" checked> 是</span>
                     <span><input type="radio" name="ocr_only" value="no"> 否</span>
                 </div>
+            </div>
+
+            <div class="form-row">
+                <label for="number">视频号</label>
+                <input type="text" id="number" name="number" required placeholder="输入视频号">
+            </div>
+
+            <div class="form-row" id="srtSection">
+                <label for="srt_file">上传SRT字幕文件</label>
+                <input type="file" id="srt_file" name="srt_file" accept=".srt" required>
             </div>
 
             <div class="form-row">
