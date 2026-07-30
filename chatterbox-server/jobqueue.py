@@ -196,8 +196,8 @@ class JobQueue:
         now = _now_str()
         conn.execute(
             """
-            INSERT OR REPLACE INTO jobs (access_code, srt_path, output_dir, temperature, status, error, run_func_name, video_number, video_file, user_id, text, blur, target_language, cfg_weight, exaggeration, start_trim, end_trim, cached_path, filename, checkpoint, created_at, status_changed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO jobs (access_code, srt_path, output_dir, temperature, status, error, run_func_name, video_number, video_file, user_id, text, blur, target_language, cfg_weight, exaggeration, start_trim, end_trim, cached_path, filename, ocr_only, checkpoint, created_at, status_changed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
             (
                 access_code,
@@ -219,6 +219,7 @@ class JobQueue:
                 job_data.get("end_trim"),
                 job_data.get("cached_path"),
                 job_data.get("filename"),
+                job_data.get("ocr_only"),
                 prev_ckpt,
                 now,
                 now,

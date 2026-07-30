@@ -116,6 +116,7 @@ def _migrate_jobs_table(conn: sqlite3.Connection):
     add_column_if_missing(conn, "jobs", "end_trim", "REAL DEFAULT NULL")
     add_column_if_missing(conn, "jobs", "cached_path", "TEXT")
     add_column_if_missing(conn, "jobs", "filename", "TEXT")
+    add_column_if_missing(conn, "jobs", "ocr_only", "TEXT")
 
 
 # ── users table (used by auth.UserManager) ──────────────────────
@@ -166,6 +167,7 @@ JOB_COLUMNS = [
     "end_trim",
     "cached_path",
     "filename",
+    "ocr_only",
 ]
 
 
