@@ -30,11 +30,7 @@
 
             <div class="form-row">
                 <label for="mode">翻译模式</label>
-                <select id="mode" name="mode">
-                    <option value="srt">上传SRT字幕</option>
-                    <option value="auto">语音识别翻译（Whisper + HY-MT）</option>
-                    <option value="ocr">OCR识别翻译（RapidVideOCR + HY-MT）</option>
-                </select>
+                <select id="mode" name="mode"></select>
             </div>
 
             <div class="form-row">
@@ -47,6 +43,14 @@
                 <input type="file" id="srt_file" name="srt_file" accept=".srt">
             </div>
 
+            <div class="form-row hidden" id="ocrOnlyRow">
+                <label>仅OCR提取字幕（不翻译）</label>
+                <div style="display:flex;gap:8px;align-items:center;padding-top:4px;">
+                    <span><input type="radio" name="ocr_only" value="yes" checked> 是</span>
+                    <span><input type="radio" name="ocr_only" value="no"> 否</span>
+                </div>
+            </div>
+
             <div id="floatSliders"></div>
 
             <button type="submit">开始处理！</button>
@@ -54,47 +58,32 @@
         <div id="resultSection"></div>
     </div>
     <script src="/utils.js"></script>
+    <script src="/util_video.js"></script>
     <script>
-        document.getElementById('mode').addEventListener('change', function() {
-            var srtSection = document.getElementById('srtSection');
-            if (this.value === 'auto' || this.value === 'ocr') {
-                srtSection.classList.add('hidden');
-                document.getElementById('srt_file').removeAttribute('required');
-            } else {
-                srtSection.classList.remove('hidden');
-                document.getElementById('srt_file').setAttribute('required', '');
+        initVideoForm({
+            pageType: 'custom',
+            onSubmit: function(e) {
+                e.preventDefault();
+                var formData = collectCommonVideoFields();
+                formData.append('video_file', document.getElementById('video_file').files[0]);
+
+                var mode = document.getElementById('mode').value;
+                var url;
+                if (mode === 'srt') {
+                    formData.append('srt_file', document.getElementById('srt_file').files[0]);
+                    url = '/video/custom/process';
+                } else if (mode === 'auto') {
+                    url = '/video/custom/auto-process';
+                } else {
+                    formData.append('ocr_mode', mode === 'ocr-translate-only' ? 'translate-only' : 'full');
+                    if (mode === 'ocr-translate-only') {
+                        formData.append('ocr_only', getOcrOnlyValue());
+                    }
+                    url = '/video/custom/ocr-process';
+                }
+
+                submitJob(url, formData, 'checkProgressLink', '/video/custom');
             }
-        });
-
-        initFloatSliders('floatSliders');
-        initLanguageSelect('langSelectContainer');
-        initResultSection('resultSection', 'checkProgressLink');
-
-        document.getElementById('videoForm').addEventListener('submit', function(e) {
-            e.preventDefault();
-            var formData = new FormData();
-            formData.append('video_file', document.getElementById('video_file').files[0]);
-            formData.append('mode', document.getElementById('mode').value);
-            formData.append('temperature', document.getElementById('temperature').value);
-            formData.append('target_language', document.getElementById('target_language').value);
-            formData.append('cfg_weight', document.getElementById('cfg_weight').value);
-            formData.append('exaggeration', document.getElementById('exaggeration').value);
-
-            if (document.getElementById('mode').value === 'srt') {
-                formData.append('srt_file', document.getElementById('srt_file').files[0]);
-            }
-
-            var mode = document.getElementById('mode').value;
-            var url;
-            if (mode === 'auto') {
-                url = '/video/custom/auto-process';
-            } else if (mode === 'ocr') {
-                url = '/video/custom/ocr-process';
-            } else {
-                url = '/video/custom/process';
-            }
-
-            submitJob(url, formData, 'checkProgressLink', '/video/custom');
         });
     </script>
     <script src="/auth.js"></script>

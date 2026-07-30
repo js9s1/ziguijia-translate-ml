@@ -784,3 +784,104 @@ def adjust_original_audio(
 
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ── Shared OCR pipeline helpers ─────────────────────────
+
+
+def run_ocr_translate_step(
+    video_path: str,
+    output_dir: str,
+    access_code: str,
+    ckpt,
+    proc_log,
+    log_file: str,
+    target_language: str,
+    intro_marker: str = "",
+    outro_marker: str = "",
+) -> str:
+    """Run OCR → translate on a video, return path to translated SRT."""
+    translated_srt = run_translate_ckpt(
+        run_ocr_ckpt(video_path, output_dir, access_code, ckpt, proc_log),
+        output_dir,
+        access_code,
+        ckpt,
+        proc_log,
+        log_file,
+        target_language,
+        intro_marker=intro_marker,
+        outro_marker=outro_marker,
+    )
+    if os.path.exists(translated_srt):
+        shutil.copy2(translated_srt, os.path.join(output_dir, "output_adjusted.srt"))
+    return translated_srt
+
+
+def run_ocr_only_step(
+    video_path: str,
+    output_dir: str,
+    access_code: str,
+    ckpt,
+    proc_log,
+) -> str:
+    """Run OCR only — no translation, no audio, no video."""
+    ocr_srt = run_ocr_ckpt(video_path, output_dir, access_code, ckpt, proc_log)
+    dst = os.path.join(output_dir, "output_adjusted.srt")
+    if os.path.exists(ocr_srt) and ocr_srt != dst:
+        shutil.copy2(ocr_srt, dst)
+    return ocr_srt
+
+
+def run_ocr_full_pipeline(
+    video_path: str,
+    output_dir: str,
+    access_code: str,
+    ap: dict,
+    ckpt,
+    proc_log,
+    log_file: str,
+    intro_marker: str = "",
+    outro_marker: str = "",
+    audio_subdir: str = "audio",
+    blur: bool = False,
+    validate_label: str = "",
+) -> None:
+    """Run OCR → translate → audio → video pipeline."""
+    translated_srt = run_ocr_translate_step(
+        video_path, output_dir, access_code, ckpt, proc_log, log_file,
+        ap["target_language"], intro_marker=intro_marker, outro_marker=outro_marker,
+    )
+    audio_out = run_audio_ckpt(
+        translated_srt,
+        output_dir,
+        ap["temperature"],
+        access_code,
+        target_language=ap["target_language"],
+        cfg_weight=ap["cfg_weight"],
+        exaggeration=ap["exaggeration"],
+        ckpt=ckpt,
+        audio_subdir=audio_subdir,
+    )
+    run_video_ckpt(
+        video_path,
+        translated_srt,
+        audio_out,
+        output_dir,
+        access_code,
+        ckpt=ckpt,
+        output_filename="output_modified.mp4",
+        blur=blur,
+    )
+    _adjust_original_audio_nonfatal(video_path, translated_srt, audio_out, output_dir, access_code)
+
+    if validate_label:
+        validate_files(
+            [
+                audio_out["output_srt_path"],
+                audio_out["output_wav_path"],
+                os.path.join(output_dir, "output_modified.mp4"),
+            ],
+            label=validate_label,
+        )
+
+    job_log(access_code, output_dir, "Done!")

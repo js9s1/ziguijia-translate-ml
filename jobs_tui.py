@@ -64,6 +64,7 @@ _NING_VIDEO_TYPES = {
     "_run_video_job",
     "_run_video_ning_ocr_job",
     "_run_video_ning_ocr_translate_only_job",
+    "_run_video_ning_auto_job",
 }
 
 _TYPE_MAP = {
@@ -74,8 +75,10 @@ _TYPE_MAP = {
     "_run_video_auto_job": "自动翻译视频",
     "_run_audio_segmentation_job": "音频分段合成",
     "_run_video_ocr_job": "OCR翻译视频",
+    "_run_video_ocr_translate_only_job": "OCR仅翻译视频（自定义）",
     "_run_video_ning_ocr_job": "宁视频OCR翻译",
     "_run_video_ning_ocr_translate_only_job": "宁视频OCR仅翻译",
+    "_run_video_ning_auto_job": "宁视频语音识别翻译",
     "_run_ocr_only_job": "视频OCR提取字幕",
 }
 

@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>翻译官方宁视频</title>
     <link rel="stylesheet" href="/ning.css">
-
 </head>
 <body>
     <div class="loading-overlay" id="loadingOverlay">
@@ -33,11 +32,7 @@
 
             <div class="form-row">
                 <label for="mode">翻译模式</label>
-                <select id="mode" name="mode">
-                    <option value="srt">上传SRT字幕</option>
-                    <option value="ocr">OCR识别翻译（RapidVideOCR + HY-MT）</option>
-                    <option value="ocr-translate-only">OCR识别并生成翻译字幕（不生成音频/视频）</option>
-                </select>
+                <select id="mode" name="mode"></select>
             </div>
 
             <div class="form-row" id="srtSection">
@@ -45,6 +40,13 @@
                 <input type="file" id="srt_file" name="srt_file" accept=".srt" required>
             </div>
 
+            <div class="form-row hidden" id="ocrOnlyRow">
+                <label>仅OCR提取字幕（不翻译）</label>
+                <div style="display:flex;gap:8px;align-items:center;padding-top:4px;">
+                    <span><input type="radio" name="ocr_only" value="yes" checked> 是</span>
+                    <span><input type="radio" name="ocr_only" value="no"> 否</span>
+                </div>
+            </div>
 
             <div class="form-row">
                 <label for="blur">模糊处理</label>
@@ -60,30 +62,63 @@
         <div id="resultSection"></div>
     </div>
     <script src="/utils.js"></script>
+    <script src="/util_video.js"></script>
     <script>
-        document.getElementById('mode').addEventListener('change', function() {
-            var srtSection = document.getElementById('srtSection');
-            if (this.value === 'ocr') {
-                srtSection.classList.add('hidden');
-                document.getElementById('srt_file').removeAttribute('required');
-            } else if (this.value === 'ocr-translate-only') {
-                srtSection.classList.add('hidden');
-                document.getElementById('srt_file').removeAttribute('required');
-            } else {
-                srtSection.classList.remove('hidden');
-                document.getElementById('srt_file').setAttribute('required', '');
+        var _submitUrl = '';
+
+        initVideoForm({
+            pageType: 'ning',
+            onSubmit: function(e) {
+                e.preventDefault();
+                var oldDialog = document.getElementById('cachedDialog');
+                if (oldDialog) document.body.removeChild(oldDialog);
+
+                var overlay = document.getElementById('loadingOverlay');
+                overlay.classList.add('active');
+                var formData = collectCommonVideoFields();
+                formData.append('number', document.getElementById('number').value);
+                formData.append('blur', document.getElementById('blur').value);
+
+                var mode = document.getElementById('mode').value;
+                if (mode === 'srt') {
+                    formData.append('srt_file', document.getElementById('srt_file').files[0]);
+                    _submitUrl = '/video/ning/process';
+                } else if (mode === 'auto') {
+                    _submitUrl = '/video/ning/auto-process';
+                } else {
+                    formData.append('ocr_mode', mode === 'ocr-translate-only' ? 'translate-only' : 'full');
+                    if (mode === 'ocr-translate-only') {
+                        formData.append('ocr_only', getOcrOnlyValue());
+                    }
+                    _submitUrl = '/video/ning/ocr-process';
+                }
+
+                fetch(_submitUrl, { method: 'POST', body: formData })
+                .then(function(response) {
+                    if (response.status === 401) {
+                        overlay.classList.remove('active');
+                        alert('请先登录');
+                        window.location.href = '/auth/login?next=' + encodeURIComponent('/video/ning');
+                        return;
+                    }
+                    return response.json();
+                })
+                .then(function(data) {
+                    if (!data) return;
+                    overlay.classList.remove('active');
+                    if (data.error) { alert('错误: ' + data.error); return; }
+                    if (data.cached_found) {
+                        showCachedPrompt(data);
+                        return;
+                    }
+                    showResult(data.access_code, '/result?code=' + data.access_code, 'checkProgressLink');
+                })
+                .catch(function(err) { overlay.classList.remove('active'); alert('错误: ' + err.message); });
             }
         });
 
-        initFloatSliders('floatSliders');
-        initLanguageSelect('langSelectContainer');
-        initResultSection('resultSection', 'checkProgressLink');
-
-         var _cachedMode = null;
-
-         function showCachedPrompt(data) {
+        function showCachedPrompt(data) {
             var overlay = document.getElementById('loadingOverlay');
-            _cachedMode = document.getElementById('mode').value;
             var dialog = document.createElement('div');
             dialog.id = 'cachedDialog';
             dialog.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:2000;display:flex;align-items:center;justify-content:center;';
@@ -100,10 +135,8 @@
             function doResubmit(extraParams) {
                 var fd = new FormData(document.getElementById('videoForm'));
                 for (var k in extraParams) { fd.set(k, extraParams[k]); }
-                var url = (_cachedMode === 'srt') ? '/video/ning/process' : '/video/ning/ocr-process';
-                if (_cachedMode === 'ocr') { fd.set('ocr_mode', 'full'); }
-                else if (_cachedMode === 'ocr-translate-only') { fd.set('ocr_mode', 'translate-only'); }
-                fetch(url, { method: 'POST', body: fd })
+                overlay.classList.add('active');
+                fetch(_submitUrl, { method: 'POST', body: fd })
                 .then(function(r) { return r.json(); })
                 .then(function(d) {
                     overlay.classList.remove('active');
@@ -118,7 +151,6 @@
             btnDownload.style.cssText = 'padding:10px 20px;border:none;border-radius:6px;cursor:pointer;font-size:0.95em;background:#555;color:#e0e0e0;';
             btnDownload.onclick = function() {
                 document.body.removeChild(dialog);
-                overlay.classList.add('active');
                 doResubmit({ 'no_cache_check': 'true' });
             };
 
@@ -127,7 +159,6 @@
             btnUse.style.cssText = 'padding:10px 20px;border:none;border-radius:6px;cursor:pointer;font-size:0.95em;background:#e2b714;color:#1e1e1e;font-weight:bold;';
             btnUse.onclick = function() {
                 document.body.removeChild(dialog);
-                overlay.classList.add('active');
                 doResubmit({ 'cached_path': data.paths[0] });
             };
 
@@ -138,61 +169,6 @@
             dialog.appendChild(box);
             document.body.appendChild(dialog);
         }
-
-        document.getElementById('videoForm').addEventListener('submit', function(e) {
-            e.preventDefault();
-            // Remove any lingering cached dialog
-            var oldDialog = document.getElementById('cachedDialog');
-            if (oldDialog) document.body.removeChild(oldDialog);
-
-            const overlay = document.getElementById('loadingOverlay');
-            overlay.classList.add('active');
-            const formData = new FormData();
-            formData.append('number', document.getElementById('number').value);
-            formData.append('temperature', document.getElementById('temperature').value);
-            formData.append('blur', document.getElementById('blur').value);
-            formData.append('target_language', document.getElementById('target_language').value);
-            formData.append('cfg_weight', document.getElementById('cfg_weight').value);
-            formData.append('exaggeration', document.getElementById('exaggeration').value);
-
-            var mode = document.getElementById('mode').value;
-            var url;
-            if (mode === 'ocr') {
-                formData.append('ocr_mode', 'full');
-                url = '/video/ning/ocr-process';
-            } else if (mode === 'ocr-translate-only') {
-                formData.append('ocr_mode', 'translate-only');
-                url = '/video/ning/ocr-process';
-            } else {
-                formData.append('srt_file', document.getElementById('srt_file').files[0]);
-                url = '/video/ning/process';
-            }
-
-            fetch(url, { method: 'POST', body: formData })
-            .then(function(response) {
-                if (response.status === 401) {
-                    overlay.classList.remove('active');
-                    alert('请先登录');
-                    window.location.href = '/auth/login?next=' + encodeURIComponent('/video/ning');
-                    return;
-                }
-                return response.json();
-            })
-            .then(function(data) {
-                if (!data) return;
-                overlay.classList.remove('active');
-                if (data.error) { alert('错误: ' + data.error); return; }
-
-                // Check if we found a cached video — prompt user
-                if (data.cached_found) {
-                    showCachedPrompt(data);
-                    return;
-                }
-
-                showResult(data.access_code, '/result?code=' + data.access_code, 'checkProgressLink');
-            })
-            .catch(function(err) { overlay.classList.remove('active'); alert('错误: ' + err.message); });
-        });
     </script>
     <script src="/auth.js"></script>
 </body>

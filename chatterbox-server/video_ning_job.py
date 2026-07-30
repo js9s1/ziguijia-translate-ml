@@ -12,9 +12,13 @@ from pipeline import (
     _adjust_original_audio_nonfatal,
     run_audio_ckpt,
     run_download_ckpt,
-    run_ocr_ckpt,
+    run_extract_audio_ckpt,
+    run_ocr_full_pipeline,
+    run_ocr_only_step,
+    run_ocr_translate_step,
     run_translate_ckpt,
     run_video_ckpt,
+    run_whisper_ckpt,
     validate_files,
 )
 from video_util import CheckpointHelper, open_proc_log
@@ -147,49 +151,12 @@ def _run_video_ning_ocr_job(job_data: dict):
         ckpt = CheckpointHelper(access_code, output_dir, valid_steps)
 
         video_path = run_download_ckpt(video_number, output_dir, access_code, ckpt, proc_log, job_data)
-        translated_srt = run_translate_ckpt(
-            run_ocr_ckpt(video_path, output_dir, access_code, ckpt, proc_log),
-            output_dir,
-            access_code,
-            ckpt,
-            proc_log,
-            log_file,
-            ap["target_language"],
-            intro_marker=MARKER_INTRO,
-            outro_marker=MARKER_OUTRO,
+        run_ocr_full_pipeline(
+            video_path, output_dir, access_code, ap, ckpt, proc_log, log_file,
+            intro_marker=MARKER_INTRO, outro_marker=MARKER_OUTRO,
+            audio_subdir="audio", blur=(blur == "yes"),
+            validate_label="宁视频OCR翻译",
         )
-        audio_out = run_audio_ckpt(
-            translated_srt,
-            output_dir,
-            ap["temperature"],
-            access_code,
-            target_language=ap["target_language"],
-            cfg_weight=ap["cfg_weight"],
-            exaggeration=ap["exaggeration"],
-            ckpt=ckpt,
-            audio_subdir="audio",
-        )
-        run_video_ckpt(
-            video_path,
-            translated_srt,
-            audio_out,
-            output_dir,
-            access_code,
-            ckpt=ckpt,
-            output_filename="output_modified.mp4",
-            blur=(blur == "yes"),
-        )
-        _adjust_original_audio_nonfatal(video_path, translated_srt, audio_out, output_dir, access_code)
-
-    validate_files(
-        [
-            audio_out["output_srt_path"],
-            audio_out["output_wav_path"],
-            os.path.join(output_dir, "output_modified.mp4"),
-        ],
-        label="宁视频OCR翻译",
-    )
-    job_log(access_code, output_dir, "Done!")
 
 
 def process_video_ning_ocr(
@@ -233,7 +200,7 @@ def process_video_ning_ocr(
 
 
 def _run_video_ning_ocr_translate_only_job(job_data: dict):
-    """Download, run OCR on full video, translate with marker trimming — stop after translate."""
+    """Download, optionally run OCR only or OCR → translate, stop before audio/video."""
     video_number = job_data["video_number"]
     access_code = job_data["access_code"]
     output_dir = job_data["output_dir"]
@@ -247,24 +214,93 @@ def _run_video_ning_ocr_translate_only_job(job_data: dict):
         ckpt = CheckpointHelper(access_code, output_dir, valid_steps)
 
         video_path = run_download_ckpt(video_number, output_dir, access_code, ckpt, proc_log, job_data)
-        translated_srt = run_translate_ckpt(
-            run_ocr_ckpt(video_path, output_dir, access_code, ckpt, proc_log),
-            output_dir,
-            access_code,
-            ckpt,
-            proc_log,
-            log_file,
-            target_language,
-            intro_marker=MARKER_INTRO,
-            outro_marker=MARKER_OUTRO,
-        )
-        if os.path.exists(translated_srt):
-            shutil.copy2(translated_srt, os.path.join(output_dir, "output_adjusted.srt"))
-
-    job_log(access_code, output_dir, "Done! OCR → translation complete (audio/video skipped)")
+        if job_data.get("ocr_only") == "yes":
+            run_ocr_only_step(video_path, output_dir, access_code, ckpt, proc_log)
+            job_log(access_code, output_dir, "Done! OCR complete (translation/audio/video skipped)")
+        else:
+            run_ocr_translate_step(
+                video_path, output_dir, access_code, ckpt, proc_log, log_file,
+                target_language,
+                intro_marker=MARKER_INTRO, outro_marker=MARKER_OUTRO,
+            )
+            job_log(access_code, output_dir, "Done! OCR → translation complete (audio/video skipped)")
 
 
 def process_video_ning_ocr_translate_only(
+    number: str,
+    temperature: float,
+    user_id: int = None,
+    blur: str = "yes",
+    target_language: str = "en",
+    cfg_weight: float = 0.5,
+    exaggeration: float = 0.5,
+    cached_path: str | None = None,
+    ocr_only: str = "yes",
+) -> dict:
+    access_code = str(uuid.uuid4())[:8].upper()
+    output_dir = os.path.join(VIDEO_DIR, f"{number}-{access_code}")
+    os.makedirs(output_dir, exist_ok=True)
+
+    job_data = {
+        "video_number": number,
+        "output_dir": output_dir,
+        "access_code": access_code,
+        "temperature": temperature,
+        "target_language": target_language,
+        "cfg_weight": cfg_weight,
+        "exaggeration": exaggeration,
+        "ocr_only": ocr_only,
+    }
+    if cached_path:
+        job_data["cached_path"] = cached_path
+
+    job_access_code = get_job_queue().add_job(job_data, _run_video_ning_ocr_translate_only_job, user_id)
+    return {"access_code": job_access_code, "message": "OCR translate-only job queued"}
+
+
+def _run_video_ning_auto_job(job_data: dict):
+    """Download → extract audio → Whisper → translate → audio → video."""
+    video_number = job_data["video_number"]
+    access_code = job_data["access_code"]
+    output_dir = job_data["output_dir"]
+    ap = get_audio_params(job_data)
+    blur = job_data.get("blur", "yes")
+
+    os.makedirs(output_dir, exist_ok=True)
+    log_file = os.path.join(output_dir, "job.log")
+
+    with open_proc_log(log_file) as (proc_log, _):
+        valid_steps = ["download", "extract_audio", "whisper", "translate", "audio", "video"]
+        ckpt = CheckpointHelper(access_code, output_dir, valid_steps)
+
+        video_path = run_download_ckpt(video_number, output_dir, access_code, ckpt, proc_log, job_data)
+        audio_path = run_extract_audio_ckpt(video_path, output_dir, access_code, ckpt, proc_log)
+        translated_srt = run_translate_ckpt(
+            run_whisper_ckpt(audio_path, output_dir, access_code, ckpt, proc_log),
+            output_dir, access_code, ckpt, proc_log, log_file,
+            ap["target_language"],
+            intro_marker=MARKER_INTRO, outro_marker=MARKER_OUTRO,
+        )
+        audio_out = run_audio_ckpt(
+            translated_srt, output_dir, ap["temperature"], access_code,
+            target_language=ap["target_language"],
+            cfg_weight=ap["cfg_weight"], exaggeration=ap["exaggeration"],
+            ckpt=ckpt, audio_subdir="audio",
+        )
+        run_video_ckpt(
+            video_path, translated_srt, audio_out, output_dir, access_code,
+            ckpt=ckpt, output_filename="output_modified.mp4", blur=(blur == "yes"),
+        )
+        _adjust_original_audio_nonfatal(video_path, translated_srt, audio_out, output_dir, access_code)
+
+    validate_files(
+        [audio_out["output_srt_path"], audio_out["output_wav_path"], os.path.join(output_dir, "output_modified.mp4")],
+        label="宁视频语音识别翻译",
+    )
+    job_log(access_code, output_dir, "Done!")
+
+
+def process_video_ning_auto(
     number: str,
     temperature: float,
     user_id: int = None,
@@ -283,6 +319,7 @@ def process_video_ning_ocr_translate_only(
         "output_dir": output_dir,
         "access_code": access_code,
         "temperature": temperature,
+        "blur": blur,
         "target_language": target_language,
         "cfg_weight": cfg_weight,
         "exaggeration": exaggeration,
@@ -290,5 +327,5 @@ def process_video_ning_ocr_translate_only(
     if cached_path:
         job_data["cached_path"] = cached_path
 
-    job_access_code = get_job_queue().add_job(job_data, _run_video_ning_ocr_translate_only_job, user_id)
-    return {"access_code": job_access_code, "message": "OCR translate-only job queued"}
+    job_access_code = get_job_queue().add_job(job_data, _run_video_ning_auto_job, user_id)
+    return {"access_code": job_access_code, "message": "Auto translation job queued"}

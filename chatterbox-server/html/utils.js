@@ -123,10 +123,21 @@ var _floatSlidersConfig = [
     { id: 'exaggeration',  label: '口音夸张度',  min: 0,   max: 1.0, step: 0.01, val: 0.5 },
 ];
 
-function initFloatSliders(containerId) {
+function initFloatSliders(containerId, label) {
     var container = document.getElementById(containerId);
     if (!container) return;
     container.innerHTML = '';
+    var wrapper = container;
+    if (label) {
+        var fieldset = document.createElement('fieldset');
+        fieldset.style.cssText = 'border:1px solid var(--color-border,#555);border-radius:8px;padding:12px 16px 4px 16px;margin:0;width:100%;box-sizing:border-box;';
+        var legend = document.createElement('legend');
+        legend.style.cssText = 'color:var(--color-text-medium,#aaa);font-weight:bold;font-size:0.9em;padding:0 6px;';
+        legend.textContent = label;
+        fieldset.appendChild(legend);
+        container.appendChild(fieldset);
+        wrapper = fieldset;
+    }
     _floatSlidersConfig.forEach(function(cfg) {
         var row = document.createElement('div');
         row.className = 'form-row';
@@ -135,7 +146,7 @@ function initFloatSliders(containerId) {
             '<input type="number" class="float-input" id="' + cfg.id + '" name="' + cfg.id + '" ' +
             'min="' + cfg.min + '" max="' + cfg.max + '" step="' + cfg.step + '" value="' + cfg.val + '">' +
             '<span class="slider-hint">(' + cfg.min + ' – ' + cfg.max + ')</span>';
-        container.appendChild(row);
+        wrapper.appendChild(row);
         var input = row.querySelector('input');
         input.addEventListener('blur', function() {
             validateFloatInput(this, cfg.min, cfg.max);
@@ -370,3 +381,5 @@ function submitJob(url, bodyOrFormData, resultLinkId, redirectPath) {
             if (err.message !== 'auth') alert('错误: ' + err.message);
         });
 }
+
+
