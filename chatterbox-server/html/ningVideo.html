@@ -77,7 +77,8 @@
                 overlay.classList.add('active');
                 var formData = collectCommonVideoFields();
                 formData.append('number', document.getElementById('number').value);
-                formData.append('blur', document.getElementById('blur').value);
+                var blurEl = document.querySelector('input[name="blur"]:checked');
+                formData.append('blur', blurEl ? blurEl.value : 'yes');
 
                 var mode = document.getElementById('mode').value;
                 if (mode === 'srt') {

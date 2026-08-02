@@ -167,9 +167,23 @@ function initFloatSliders(containerId, label) {
 function downloadFile(url, filename, fetchOptions) {
     fetchOptions = fetchOptions || {};
     var isGet = !fetchOptions.method || fetchOptions.method === 'GET';
+    var isIos = /iPhone|iPad|iPod/.test(navigator.userAgent);
 
-    // Strategy 1: direct <a> tag (GET) or form POST (POST) — works everywhere
-    if (isGet) {
+    if (isGet && isIos) {
+        _checkFileSize(url, function(contentLength) {
+            if (contentLength && contentLength > 1048576) {
+                window.location.href = url;
+            } else {
+                _tryDirectLink(url, filename, function(succeeded) {
+                    if (succeeded) return;
+                    _tryFetchDownload(url, filename, fetchOptions, function(succeeded2) {
+                        if (succeeded2) return;
+                        window.location.href = url;
+                    });
+                });
+            }
+        });
+    } else if (isGet) {
         _tryDirectLink(url, filename, function(succeeded) {
             if (succeeded) return;
             // Strategy 2: fetch + blob + createObjectURL
@@ -315,6 +329,19 @@ function _tryFormPost(url, filename, fetchOptions, callback) {
         console.warn('Strategy 1 (form POST) failed: ' + e.message);
         callback(false);
     }
+}
+
+function _checkFileSize(url, callback) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('HEAD', url, true);
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState === 4) {
+            var len = parseInt(xhr.getResponseHeader('Content-Length'), 10);
+            callback(len || 0);
+        }
+    };
+    xhr.onerror = function() { callback(0); };
+    xhr.send();
 }
 
 /* ── Result section (shared) ──────────────────────────── */
