@@ -7,7 +7,7 @@ import uuid
 import torch
 import torchaudio as ta
 from audio_utils import NingAudio
-from config import AUDIO_TRACKS_DIR
+from config import AUDIO_TRACKS_DIR, validate_upload_filename
 from jobqueue import get_job_queue
 from log_utils import job_log
 from middleware import get_audio_params
@@ -40,6 +40,7 @@ def process_srt_file(
     os.makedirs(output_dir, exist_ok=True)
 
     srt_path = os.path.join(output_dir, srt_file.filename)
+    validate_upload_filename(srt_file.filename)
     srt_file.save(srt_path)
 
     job_data = {
@@ -90,7 +91,7 @@ def _split_text(text, max_len=500):
 
 
 def _run_audio_segmentation_job(job_data: dict):
-    content = job_data["content"]
+    content = job_data["text"]
     output_dir = job_data["output_dir"]
     filename = job_data.get("filename", "output.wav")
     ap = get_audio_params(job_data)
@@ -175,7 +176,7 @@ def process_audio_file(
 
     job_data = {
         "access_code": access_code,
-        "content": content,
+        "text": content,
         "output_dir": output_dir,
         "filename": filename,
         "temperature": temperature,

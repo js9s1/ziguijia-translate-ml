@@ -150,3 +150,16 @@ CHECKPOINT_ORDER = [
 
 MARKER_INTRO = "杨宁随缘开示"
 MARKER_OUTRO = "子归家全体编制人员"
+
+
+def validate_upload_filename(filename: str) -> None:
+    """Raise ValueError if the filename is disallowed.
+
+    - filenames starting with ``output`` (case‑insensitive) are reserved
+      for pipeline‑generated files and must not be uploaded by users.
+    """
+    if not filename:
+        raise ValueError("文件名为空")
+    basename = os.path.basename(filename)
+    if basename.lower().startswith("output"):
+        raise ValueError(f"文件名不能以 'output' 开头，'{basename}' 是系统保留前缀")

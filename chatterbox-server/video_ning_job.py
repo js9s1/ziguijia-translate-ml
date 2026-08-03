@@ -4,7 +4,7 @@ import os
 import shutil
 import uuid
 
-from config import MARKER_INTRO, MARKER_OUTRO, VIDEO_DIR
+from config import MARKER_INTRO, MARKER_OUTRO, VIDEO_DIR, validate_upload_filename
 from jobqueue import get_job_queue
 from log_utils import job_log, job_log_lines
 from middleware import get_audio_params
@@ -116,6 +116,7 @@ def process_video_ning(
         os.makedirs(output_dir, exist_ok=True)
 
     srt_path = os.path.join(output_dir, srt_file.filename)
+    validate_upload_filename(srt_file.filename)
     srt_file.save(srt_path)
 
     job_data = {
