@@ -7,12 +7,10 @@ import re
 from config import FILENAME_TO_CHECKPOINT_STEP
 from flask import Blueprint, jsonify, request, send_file
 from jobqueue import get_job_queue
-from middleware import csrf_required, login_required, safe_file_path
+from middleware import csrf_required, login_required, safe_file_path, validate_srt_content
 
 files_bp = Blueprint("files", __name__)
 logger = logging.getLogger(__name__)
-
-_SRT_TIMING_RE = re.compile(r"\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,.]\d{3}")
 
 
 def _allowed_dirs():
@@ -143,13 +141,10 @@ def files_save_srt():
         if not safe.lower().endswith(".srt"):
             return jsonify({"success": False, "error": "Only .srt files can be saved via this endpoint"}), 400
 
-        if not _SRT_TIMING_RE.search(content):
-            return jsonify(
-                {
-                    "success": False,
-                    "error": "Saved content does not appear to be valid SRT. Expected timing lines like '00:00:01,000 --> 00:00:03,000'.",
-                }
-            ), 400
+        try:
+            validate_srt_content(content, "SRT")
+        except ValueError as e:
+            return jsonify({"success": False, "error": str(e)}), 400
 
         with open(safe, "w", encoding="utf-8") as f:
             f.write(content)

@@ -4,7 +4,7 @@ import os
 import subprocess
 import uuid
 
-from config import RAPID_VIDEOCR_PIPELINE_SCRIPT, VIDEO_DIR, validate_upload_filename
+from config import RAPID_VIDEOCR_PIPELINE_SCRIPT, VIDEO_DIR
 from jobqueue import get_job_queue
 from log_utils import job_log
 from video_util import open_proc_log, read_srt_text
@@ -88,7 +88,6 @@ def process_ocr_only(video_file, user_id: int = None) -> dict:
     orig_name = video_file.filename or "video.mp4"
     video_ext = os.path.splitext(orig_name)[1] or ".mp4"
     safe_name = orig_name  # keep original name
-    validate_upload_filename(safe_name)
     video_path = os.path.join(output_dir, safe_name)
     video_file.save(video_path)
 

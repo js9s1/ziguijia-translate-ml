@@ -136,6 +136,8 @@ def audio_process():
                 exaggeration=params["exaggeration"],
             )
             return jsonify(result)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Audio process error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500

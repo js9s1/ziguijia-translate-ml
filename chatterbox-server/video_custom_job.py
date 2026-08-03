@@ -7,7 +7,6 @@ from config import (
     MARKER_INTRO,
     MARKER_OUTRO,
     VIDEO_DIR,
-    validate_upload_filename,
 )
 from jobqueue import get_job_queue
 from log_utils import job_log
@@ -67,11 +66,9 @@ def process_video_custom(
     os.makedirs(output_dir, exist_ok=True)
 
     video_path = os.path.join(output_dir, video_file.filename)
-    validate_upload_filename(video_file.filename)
     video_file.save(video_path)
 
     srt_path = os.path.join(output_dir, srt_file.filename)
-    validate_upload_filename(srt_file.filename)
     srt_file.save(srt_path)
 
     job_data = {
@@ -199,7 +196,6 @@ def process_video_ocr(
     os.makedirs(output_dir, exist_ok=True)
 
     video_path = os.path.join(output_dir, video_file.filename)
-    validate_upload_filename(video_file.filename)
     video_file.save(video_path)
 
     job_data = {
@@ -256,7 +252,6 @@ def process_video_ocr_translate_only(
     os.makedirs(output_dir, exist_ok=True)
 
     video_path = os.path.join(output_dir, video_file.filename)
-    validate_upload_filename(video_file.filename)
     video_file.save(video_path)
 
     job_data = {

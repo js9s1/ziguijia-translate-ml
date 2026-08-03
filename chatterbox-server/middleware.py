@@ -12,7 +12,7 @@ import tempfile
 from functools import wraps
 
 import valkey
-from config import AUDIO_TRACKS_DIR, VIDEO_DIR
+from config import AUDIO_TRACKS_DIR, VIDEO_DIR, validate_upload_filename
 from flask import abort, jsonify, request, session
 from valkey_util import (
     InMemoryRateLimiter,
@@ -225,7 +225,20 @@ _SRT_TIMING_RE = re.compile(r"\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{
 
 
 def validate_file_upload(uploaded_file, label: str = "file"):
-    """Check that an uploaded file is not empty, and SRT files are valid."""
+    """Validate an uploaded file in one place.
+
+    Performs, in order:
+      1. filename validation (empty, reserved ``output*`` prefix, path traversal)
+      2. non-empty content check
+      3. kind-specific checks (video codec, SRT timing/language/format)
+
+    Raises ValueError with a user-facing message on any failure.
+    """
+    filename = uploaded_file.filename or ""
+    validate_upload_filename(filename)
+    if os.path.basename(filename) != filename:
+        raise ValueError(f"Uploaded {label} filename contains path components: '{filename}'")
+
     content = uploaded_file.read()
     uploaded_file.seek(0)
     if not content:
@@ -235,16 +248,27 @@ def validate_file_upload(uploaded_file, label: str = "file"):
         _validate_video_codec(content)
 
     if "srt" in label.lower():
-        try:
-            text = content.decode("utf-8", errors="replace")
-        except UnicodeDecodeError:
-            text = ""
-        if not _SRT_TIMING_RE.search(text):
-            raise ValueError(
-                f"Uploaded {label} file does not appear to be a valid SRT file. "
-                f"Expected timing lines like '00:00:01,000 --> 00:00:03,000'."
-            )
-        _validate_srt_language(text)
+        text = content.decode("utf-8", errors="replace")
+        validate_srt_content(text, label)
+
+
+def validate_srt_content(text: str, label: str = "SRT"):
+    """Validate SRT text: timing lines, single language, and full parse for
+    formatting errors (code fences, malformed indexes, bad timestamps)."""
+    text = text.lstrip("\ufeff")
+    if not _SRT_TIMING_RE.search(text):
+        raise ValueError(
+            f"Uploaded {label} file does not appear to be a valid SRT file. "
+            f"Expected timing lines like '00:00:01,000 --> 00:00:03,000'."
+        )
+    _validate_srt_language(text)
+
+    import srt
+
+    try:
+        list(srt.parse(text))
+    except Exception as e:
+        raise ValueError(f"Uploaded {label} file has formatting errors: {e}") from e
 
 
 def _validate_video_codec(content: bytes):

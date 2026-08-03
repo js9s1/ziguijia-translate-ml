@@ -7,7 +7,7 @@ import uuid
 import torch
 import torchaudio as ta
 from audio_utils import NingAudio
-from config import AUDIO_TRACKS_DIR, validate_upload_filename
+from config import AUDIO_TRACKS_DIR
 from jobqueue import get_job_queue
 from log_utils import job_log
 from middleware import get_audio_params
@@ -40,7 +40,6 @@ def process_srt_file(
     os.makedirs(output_dir, exist_ok=True)
 
     srt_path = os.path.join(output_dir, srt_file.filename)
-    validate_upload_filename(srt_file.filename)
     srt_file.save(srt_path)
 
     job_data = {

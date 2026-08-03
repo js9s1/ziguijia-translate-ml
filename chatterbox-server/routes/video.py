@@ -110,6 +110,8 @@ def video_ning_process():
             )
 
         return _video_process_with_cache(number, find_cached, _process, blur)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Error processing video: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -219,6 +221,8 @@ def video_custom_process():
             exaggeration=params["exaggeration"],
         )
         return jsonify(result)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Error processing custom video: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -245,6 +249,8 @@ def video_custom_auto_process():
             exaggeration=params["exaggeration"],
         )
         return jsonify(result)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Error auto processing video: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -265,6 +271,8 @@ def video_ocr_process():
         process_ocr_only = _lazy("video_ocr_job", "process_ocr_only")
         result = process_ocr_only(video_file, session["user_id"])
         return jsonify(result)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Error processing OCR-only job: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
@@ -303,6 +311,8 @@ def video_custom_ocr_process():
             **kwargs,
         )
         return jsonify(result)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Error OCR processing video: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
