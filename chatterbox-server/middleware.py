@@ -12,7 +12,7 @@ import tempfile
 from functools import wraps
 
 import valkey
-from config import AUDIO_TRACKS_DIR, VIDEO_DIR, validate_upload_filename
+from config import AUDIO_TRACKS_DIR, VIDEO_DIR, is_screen_recording_filename, validate_upload_filename
 from flask import abort, jsonify, request, session
 from valkey_util import (
     InMemoryRateLimiter,
@@ -245,6 +245,11 @@ def validate_file_upload(uploaded_file, label: str = "file"):
         raise ValueError(f"Uploaded {label} file is empty (0 bytes). Please check the file and try again.")
 
     if "video" in label.lower():
+        if is_screen_recording_filename(filename):
+            raise ValueError(
+                f"检测到录屏文件 '{filename}'。请勿上传录屏视频：录屏视频处理会消耗大量资源，"
+                f"请上传原始视频文件。"
+            )
         _validate_video_codec(content)
 
     if "srt" in label.lower():

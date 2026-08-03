@@ -1,6 +1,7 @@
 """Centralized configuration for paths and environment variables."""
 
 import os
+import re
 
 from dotenv import load_dotenv
 
@@ -163,3 +164,15 @@ def validate_upload_filename(filename: str) -> None:
     basename = os.path.basename(filename)
     if basename.lower().startswith("output"):
         raise ValueError(f"文件名不能以 'output' 开头，'{basename}' 是系统保留前缀")
+
+
+_SCREEN_RECORD_RE = re.compile(
+    r"(screen[\s\-_]*record|screencast|screenrec|screen[\s\-_]*(capture|shot)|RPReplay|录屏|屏幕录制)",
+    re.IGNORECASE,
+)
+
+
+def is_screen_recording_filename(filename: str) -> bool:
+    """Return True if the filename looks like a screen recording
+    (iOS 'Screen Recording ...', Android 'Screencast ...', 录屏/屏幕录制, etc.)."""
+    return bool(_SCREEN_RECORD_RE.search(os.path.basename(filename)))
