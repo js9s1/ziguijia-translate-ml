@@ -16,6 +16,7 @@ dist/
 *.egg-info/
 
 # ── Output directories ─────────────────────────────────────
+frames/
 chatterbox-server/html/views/
 chatterbox-server/html/srt-zh.html
 chatterbox-server/html/srt-en.html
