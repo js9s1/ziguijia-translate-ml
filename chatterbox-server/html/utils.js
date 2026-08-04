@@ -162,6 +162,11 @@ function initFloatSliders(containerId, label) {
     });
 }
 
+/* ── Auto-init audio params on all pages with #floatSliders ── */
+if (document.getElementById('floatSliders')) {
+    initFloatSliders('floatSliders', '音频模型参数');
+}
+
 /* ── Download file (shared) ────────────────────────────── */
 
 function downloadFile(url, filename, fetchOptions) {

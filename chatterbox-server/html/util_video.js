@@ -90,7 +90,6 @@ function initVideoForm(config) {
     _toggleAudioParams(document.getElementById('mode').value);
     _toggleBlurRow(document.getElementById('mode').value);
 
-    initFloatSliders('floatSliders', '音频模型参数');
     initLanguageSelect('langSelectContainer');
     initResultSection('resultSection', 'checkProgressLink');
 
