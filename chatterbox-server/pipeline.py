@@ -176,7 +176,7 @@ def run_gen_video_step(
                 if elapsed > timeout:
                     process.kill()
                     process.wait()
-                    raise RuntimeError(f"gen_video timed out after {elapsed // 3600}h")
+                    raise RuntimeError(f"gen_video timed out after {elapsed // 3600}h") from None
                 get_job_queue().update_job_progress(access_code, f"正在合成视频... ({elapsed // 60}分{elapsed % 60}秒)")
 
     # Read back only the output written by this subprocess invocation

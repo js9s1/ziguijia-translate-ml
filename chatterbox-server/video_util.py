@@ -58,11 +58,8 @@ def open_proc_log(log_path: str):
     The handle is guaranteed to close on exit, even if the body raises.
     Use with ``subprocess.Popen(..., stdout=handle, stderr=handle)``.
     """
-    fh = open(log_path, "a")
-    try:
+    with open(log_path, "a") as fh:
         yield fh, log_path
-    finally:
-        fh.close()
 
 
 def looks_untranslated(text: str, source_has_cjk: bool = True) -> bool:

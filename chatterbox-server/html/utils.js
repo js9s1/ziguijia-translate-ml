@@ -118,9 +118,9 @@ function validateFloatInput(input, min, max) {
 }
 
 var _floatSlidersConfig = [
-    { id: 'temperature',   label: '温度',       min: 0.5, max: 1.5, step: 0.01, val: 0.6 },
-    { id: 'cfg_weight',    label: 'CFG 权重',    min: 0,   max: 1.5, step: 0.01, val: 0.25 },
-    { id: 'exaggeration',  label: '口音夸张度',  min: 0,   max: 1.0, step: 0.01, val: 0.5 },
+    { id: 'temperature',   label: '温度',       min: 0.5, max: 1.5, step: 0.01, val: 0.6,  desc: '越高输出越随机，越低越稳定' },
+    { id: 'cfg_weight',    label: 'CFG 权重',    min: 0,   max: 1.5, step: 0.01, val: 0.25, desc: '控制生成音频与提示的契合度' },
+    { id: 'exaggeration',  label: '口音夸张度',  min: 0,   max: 1.0, step: 0.01, val: 0.5,  desc: '口音/语气的夸张程度' },
 ];
 
 function initFloatSliders(containerId, label) {
@@ -145,7 +145,7 @@ function initFloatSliders(containerId, label) {
             '<label for="' + cfg.id + '">' + cfg.label + '</label>' +
             '<input type="number" class="float-input" id="' + cfg.id + '" name="' + cfg.id + '" ' +
             'min="' + cfg.min + '" max="' + cfg.max + '" step="' + cfg.step + '" value="' + cfg.val + '">' +
-            '<span class="slider-hint">(' + cfg.min + ' – ' + cfg.max + ')</span>';
+            '<span class="slider-hint">(' + cfg.min + ' – ' + cfg.max + ') ' + (cfg.desc || '') + '</span>';
         wrapper.appendChild(row);
         var input = row.querySelector('input');
         input.addEventListener('blur', function() {

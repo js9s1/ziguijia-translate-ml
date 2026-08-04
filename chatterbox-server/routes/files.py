@@ -2,7 +2,6 @@
 
 import logging
 import os
-import re
 
 from config import FILENAME_TO_CHECKPOINT_STEP
 from flask import Blueprint, jsonify, request, send_file

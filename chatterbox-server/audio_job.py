@@ -95,6 +95,7 @@ def _run_audio_segmentation_job(job_data: dict):
     filename = job_data.get("filename", "output.wav")
     ap = get_audio_params(job_data)
     os.makedirs(output_dir, exist_ok=True)
+    job_log(job_data["access_code"], output_dir, f"Starting audio segmentation: {len(content)} chars, language={ap['target_language']}")
 
     ning = NingAudio()
     ning._ensure_model(ap["target_language"])
@@ -166,10 +167,8 @@ def process_audio_file(
     # Use user-supplied filename, falling back to a unique name derived from the
     # original filename so concurrent submissions don't overwrite each other.
     if original_filename:
-        base, ext = os.path.splitext(original_filename)
-        if not ext:
-            ext = ".wav"
-        filename = f"{base}{ext}"
+        base, _ext = os.path.splitext(original_filename)
+        filename = f"{base}.wav"
     else:
         filename = f"output_{access_code}.wav"
 

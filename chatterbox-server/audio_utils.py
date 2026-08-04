@@ -21,17 +21,6 @@ class NingAudio:
         self.model = None
         self.sample_rate = None
 
-    def get_model(self, device: str = "cuda") -> ChatterboxMultilingualTTS:
-        """Return the multilingual model, loading on demand via GPU swap.
-
-        The model is loaded only when needed; the other model is fully
-        unloaded first so only one model occupies VRAM at any time.
-        """
-        _gm._acquire_gpu_for("other")  # "other" = not "id" → multilingual
-        self.model = _gm._model
-        self.sample_rate = self.model.sr
-        return self.model
-
     def _ensure_model(self, target_language: str = "en") -> None:
         """Lazy GPU swap: only reloads if *target_language* differs from
         what is currently on GPU.  No-op if the correct model is already

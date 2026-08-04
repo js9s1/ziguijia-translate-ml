@@ -136,7 +136,7 @@ def parse_float_param(source: dict, key: str, default: float) -> float:
     try:
         return float(raw)
     except (ValueError, TypeError):
-        raise ValueError(f"Invalid {key}: {raw!r}")
+        raise ValueError(f"Invalid {key}: {raw!r}") from None
 
 
 def parse_job_params(source: dict) -> dict:
@@ -279,27 +279,25 @@ def validate_srt_content(text: str, label: str = "SRT"):
 def _validate_video_codec(content: bytes):
     import json
 
-    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-    try:
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
         tmp.write(content)
-        tmp.close()
+        tmp.flush()
         result = subprocess.run(
             ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", "-select_streams", "v:0", tmp.name],
             capture_output=True,
             text=True,
             timeout=30,
         )
-        if result.returncode != 0:
-            raise ValueError("Cannot probe video codec — file may be corrupt.")
-        info = json.loads(result.stdout)
-        streams = info.get("streams", [])
-        if not streams:
-            raise ValueError("No video stream found in uploaded file.")
-    finally:
-        try:
-            os.unlink(tmp.name)
-        except OSError:
-            pass
+    if result.returncode != 0:
+        raise ValueError("Cannot probe video codec — file may be corrupt.")
+    info = json.loads(result.stdout)
+    streams = info.get("streams", [])
+    if not streams:
+        raise ValueError("No video stream found in uploaded file.")
+    try:
+        os.unlink(tmp.name)
+    except OSError:
+        pass
 
 
 def _validate_srt_language(text: str):
