@@ -45,7 +45,6 @@ def run_gen_audio_step(
     output_srt: str = "output_adjusted.srt",
     output_wav: str = "output.wav",
     changed_json: str = "changed_segments.json",
-    timeout: float = 86400,
 ) -> dict[str, str]:
     """Generate audio from SRT (in-process, shares the singleton TTS model).
 
@@ -82,8 +81,9 @@ def run_gen_audio_step(
             )
         except SystemExit:
             raise
-        except BaseException:
+        except Exception:
             import traceback
+
             traceback.print_exc()
             raise
 
@@ -105,8 +105,6 @@ def run_gen_audio_step(
     import torchaudio as ta
 
     ta.save(wav_path_out, combined_tensor, sample_rate)
-
-    import json
 
     with open(changed_json_out, "w") as f:
         json.dump(changed_segments, f)
@@ -175,7 +173,10 @@ def run_gen_video_step(
                 elapsed = int(time.monotonic() - start)
                 if elapsed > timeout:
                     process.kill()
-                    process.wait()
+                    try:
+                        process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
                     raise RuntimeError(f"gen_video timed out after {elapsed // 3600}h") from None
                 get_job_queue().update_job_progress(access_code, f"正在合成视频... ({elapsed // 60}分{elapsed % 60}秒)")
 
@@ -369,6 +370,7 @@ def run_ocr_ckpt(
         stderr=proc_log,
         timeout=14400,
         env={**os.environ, "RAPID_VIDEOCR_BIN": RAPID_VIDEOCR_BIN},
+        check=True,
     )
     if not os.path.exists(ocr_srt):
         raise RuntimeError("RapidVideOCR pipeline failed to generate SRT")
@@ -529,6 +531,7 @@ def _get_video_duration(video_path: str) -> float:
         ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", video_path],
         capture_output=True,
         text=True,
+        check=True,
     )
     info = json.loads(result.stdout)
     return float(info["format"]["duration"])
@@ -559,6 +562,88 @@ def _build_atempo_filter(stretch: float) -> str:
             remaining /= 0.5
     parts.append(f"atempo={remaining:.6f}")
     return ",".join(parts)
+
+
+# Small overlap used when bridging non-existent gaps between subtitles
+# to give ffmpeg a non-zero timespan to work with (40 ms).
+_FFMPEG_SEGMENT_SLOP = 0.04
+
+
+def _build_audio_segment_defs(
+    orig_subs: list,
+    adj_subs: list,
+    video_duration: float,
+    audio_offset: float = 0.0,
+) -> list[dict]:
+    """Build a list of {start, end, stretch} segment definitions for audio stretching.
+
+    Mirrors the same segment-stretch logic that ``gen_video.py process_video``
+    applies to the video track (leading gap, subtitle segments, inter-subtitle
+    gaps, trailing gap).
+    """
+    seg_defs = []
+    video_cumul = 0.0
+
+    # Leading gap: video start → first subtitle
+    first_adj_start = adj_subs[0].start.total_seconds()
+    first_orig_start = orig_subs[0].start.total_seconds() - audio_offset
+    if first_adj_start > 0 and first_orig_start > 0:
+        stretch = first_adj_start / first_orig_start
+        seg_defs.append(
+            {"start": 0, "end": min(first_orig_start, video_duration), "stretch": stretch}
+        )
+        video_cumul += first_orig_start * stretch
+
+    for i in range(len(orig_subs)):
+        orig_start = orig_subs[i].start.total_seconds() - audio_offset
+        orig_end = orig_subs[i].end.total_seconds() - audio_offset
+        adj_start = adj_subs[i].start.total_seconds()
+        adj_end = adj_subs[i].end.total_seconds()
+        orig_dur = orig_end - orig_start
+        adj_dur = adj_end - adj_start
+
+        if orig_start >= video_duration:
+            break
+        if orig_end > video_duration:
+            orig_end = video_duration
+            orig_dur = orig_end - orig_start
+
+        # Gap before this subtitle (stretch to fill adjusted timing gap)
+        if i > 0:
+            prev_orig_end = orig_subs[i - 1].end.total_seconds() - audio_offset
+            orig_gap = orig_start - prev_orig_end
+            needed_gap = adj_start - video_cumul
+            if orig_gap > 0.001:
+                gap_start, gap_end = prev_orig_end, min(orig_start, video_duration)
+            elif needed_gap > 0.001:
+                gap_start = max(0, prev_orig_end - _FFMPEG_SEGMENT_SLOP)
+                gap_end = min(prev_orig_end, video_duration)
+                orig_gap = gap_end - gap_start
+            else:
+                orig_gap = 0.0
+            if orig_gap > 0:
+                stretch = max(0.0, min(100.0, needed_gap / orig_gap))
+                seg_defs.append(
+                    {"start": gap_start, "end": gap_end, "stretch": stretch}
+                )
+                video_cumul += orig_gap * stretch
+
+        # Subtitle segment (never squeeze, only stretch)
+        stretch = adj_dur / orig_dur if orig_dur > 0 else 1.0
+        stretch = max(1.0, min(10.0, stretch))
+        seg_defs.append(
+            {"start": orig_start, "end": orig_end, "stretch": stretch}
+        )
+        video_cumul += orig_dur * stretch
+
+    # Trailing gap
+    last_orig_end = orig_subs[-1].end.total_seconds() - audio_offset
+    if last_orig_end < video_duration:
+        seg_defs.append(
+            {"start": last_orig_end, "end": video_duration, "stretch": 1.0}
+        )
+
+    return seg_defs
 
 
 def adjust_original_audio(
@@ -640,83 +725,7 @@ def adjust_original_audio(
 
     # ── Build segment list (mirrors gen_video.py process_video) ──
     video_duration = _get_video_duration(video_path) - audio_offset
-
-    seg_defs = []
-    video_cumul = 0.0
-
-    # Leading gap: video start → first subtitle
-    first_adj_start = adj_subs[0].start.total_seconds()
-    first_orig_start = orig_subs[0].start.total_seconds() - audio_offset
-    if first_adj_start > 0 and first_orig_start > 0:
-        stretch = first_adj_start / first_orig_start
-        seg_defs.append(
-            {
-                "start": 0,
-                "end": min(first_orig_start, video_duration),
-                "stretch": stretch,
-            }
-        )
-        video_cumul += first_orig_start * stretch
-
-    for i in range(len(orig_subs)):
-        orig_start = orig_subs[i].start.total_seconds() - audio_offset
-        orig_end = orig_subs[i].end.total_seconds() - audio_offset
-        adj_start = adj_subs[i].start.total_seconds()
-        adj_end = adj_subs[i].end.total_seconds()
-        orig_dur = orig_end - orig_start
-        adj_dur = adj_end - adj_start
-
-        if orig_start >= video_duration:
-            break
-        if orig_end > video_duration:
-            orig_end = video_duration
-            orig_dur = orig_end - orig_start
-
-        # Gap before this subtitle (stretch to fill adjusted timing gap)
-        if i > 0:
-            prev_orig_end = orig_subs[i - 1].end.total_seconds() - audio_offset
-            orig_gap = orig_start - prev_orig_end
-            needed_gap = adj_start - video_cumul
-            if orig_gap > 0.001:
-                gap_start, gap_end = prev_orig_end, min(orig_start, video_duration)
-            elif needed_gap > 0.001:
-                gap_start, gap_end = max(0, prev_orig_end - 0.04), min(prev_orig_end, video_duration)
-                orig_gap = gap_end - gap_start
-            else:
-                orig_gap = 0.0
-            if orig_gap > 0:
-                stretch = max(0.0, min(100.0, needed_gap / orig_gap))
-                seg_defs.append(
-                    {
-                        "start": gap_start,
-                        "end": gap_end,
-                        "stretch": stretch,
-                    }
-                )
-                video_cumul += orig_gap * stretch
-
-        # Subtitle segment (never squeeze, only stretch)
-        stretch = adj_dur / orig_dur if orig_dur > 0 else 1.0
-        stretch = max(1.0, min(10.0, stretch))
-        seg_defs.append(
-            {
-                "start": orig_start,
-                "end": orig_end,
-                "stretch": stretch,
-            }
-        )
-        video_cumul += orig_dur * stretch
-
-    # Trailing gap
-    last_orig_end = orig_subs[-1].end.total_seconds() - audio_offset
-    if last_orig_end < video_duration:
-        seg_defs.append(
-            {
-                "start": last_orig_end,
-                "end": video_duration,
-                "stretch": 1.0,
-            }
-        )
+    seg_defs = _build_audio_segment_defs(orig_subs, adj_subs, video_duration, audio_offset)
 
     # ── Process audio segments ───────────────────────────────
     tmp_dir = tempfile.mkdtemp(prefix="adj_zh_audio_")
