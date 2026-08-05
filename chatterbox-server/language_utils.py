@@ -8,7 +8,8 @@ import re
 
 # Language code → full name mapping (single source of truth for the backend).
 # Frontend fetches this via /api/languages.
-LANG_NAME_MAP: dict[str, str] = {
+# Also imported by config.py so there is one canonical definition.
+LANG_MAP: dict[str, str] = {
     "ar": "Arabic",
     "da": "Danish",
     "de": "German",

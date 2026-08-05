@@ -75,35 +75,9 @@ RAPID_VIDEOCR_BIN = os.environ.get(
 # ── Default ports ──────────────────────────────────────────
 PORT = 18789
 
-# ── Language code → full name mapping for translation ─────
-LANG_MAP = {
-    "ar": "Arabic",
-    "da": "Danish",
-    "de": "German",
-    "el": "Greek",
-    "en": "English",
-    "es": "Spanish",
-    "fi": "Finnish",
-    "fr": "French",
-    "he": "Hebrew",
-    "hi": "Hindi",
-    "it": "Italian",
-    "ja": "Japanese",
-    "ko": "Korean",
-    "ms": "Malay",
-    "nl": "Dutch",
-    "no": "Norwegian",
-    "pl": "Polish",
-    "pt": "Portuguese",
-    "ru": "Russian",
-    "sv": "Swedish",
-    "sw": "Swahili",
-    "tr": "Turkish",
-    "zh": "Chinese",
-    "vi": "Vietnamese",
-    "th": "Thai",
-    "id": "Indonesian",
-}
+from language_utils import LANG_MAP
+
+# Backward-compatible re-export (canonical definition lives in language_utils.py)
 
 # ── SMTP / Email ─────────────────────────────────────────────
 SMTP_HOST = os.environ.get("SMTP_HOST", "")

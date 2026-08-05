@@ -453,6 +453,7 @@ def run_extract_audio_ckpt(
         stdout=proc_log,
         stderr=proc_log,
         timeout=3600,
+        check=True,
     )
     if ckpt:
         ckpt.mark("extract_audio")
@@ -498,6 +499,7 @@ def run_whisper_ckpt(
         stdout=proc_log,
         stderr=proc_log,
         timeout=7200,
+        check=True,
     )
     if not os.path.exists(whisper_srt):
         raise RuntimeError("Whisper failed to generate SRT")
@@ -541,6 +543,8 @@ def _build_atempo_filter(stretch: float) -> str:
     - If *stretch* > 2.0: chain ``atempo=2.0`` filters then the remainder.
     - If *stretch* < 0.5: chain ``atempo=0.5`` filters then the remainder.
     """
+    if stretch <= 0:
+        return "atempo=0.5"
     if 0.5 <= stretch <= 2.0:
         return f"atempo={stretch:.6f}"
     parts = []

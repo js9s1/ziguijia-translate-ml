@@ -461,10 +461,7 @@ class JobQueue:
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     pass
             if killed_pids:
-                _, alive = psutil.wait_procs(
-                    [p for p in psutil.process_iter(["pid"]) if p.info["pid"] in killed_pids],
-                    timeout=3,
-                )
+                _, alive = psutil.wait_procs(killed_procs, timeout=3)
                 for p in alive:
                     try:
                         pgid = os.getpgid(p.pid)

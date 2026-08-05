@@ -6,12 +6,12 @@ from pydantic import BaseModel, Field
 
 
 class RegisterRequest(BaseModel):
-    email: str = Field(..., min_length=1)
-    password: str = Field(..., min_length=1)
+    email: str = Field(..., min_length=1, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    password: str = Field(..., min_length=6)
 
 
 class LoginRequest(BaseModel):
-    email: str = Field(..., min_length=1)
+    email: str = Field(..., min_length=1, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     password: str = Field(..., min_length=1)
 
 

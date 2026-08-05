@@ -282,22 +282,27 @@ def _validate_video_codec(content: bytes):
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
         tmp.write(content)
         tmp.flush()
-        result = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", "-select_streams", "v:0", tmp.name],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
+        try:
+            result = None
+            result = subprocess.run(
+                ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", "-select_streams", "v:0", tmp.name],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+    if result is None:
+        raise ValueError("Cannot probe video codec — ffprobe timed out or failed.")
     if result.returncode != 0:
         raise ValueError("Cannot probe video codec — file may be corrupt.")
     info = json.loads(result.stdout)
     streams = info.get("streams", [])
     if not streams:
         raise ValueError("No video stream found in uploaded file.")
-    try:
-        os.unlink(tmp.name)
-    except OSError:
-        pass
 
 
 def _validate_srt_language(text: str):
