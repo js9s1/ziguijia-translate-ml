@@ -53,9 +53,20 @@ sys.path.insert(0, str(HERE / "chatterbox-server"))
 from config import CHECKPOINT_ORDER as _CKPT_ORDER
 
 VALID_CHECKPOINT_STEPS = set(_CKPT_ORDER)
-_CHECKPOINT_ORDER = list(_CKPT_ORDER)
+_CHECKPOINT_ORDER = list(_CKPT_ORDER)  # cheap copy so mutations don't leak
 _ORPHAN_CACHE: tuple[float, list[dict]] = (0.0, [])
 _ORPHAN_CACHE_TTL = 5
+
+RESUBMIT_PORT = int(os.environ.get("CHATTERBOX_PORT", "5600"))
+
+# Audio-step output files shared with job_checkpoint._STEP_ARTIFACTS
+_AUDIO_OUTPUT_FILES = [
+    "output.wav",
+    "output_adjusted.srt",
+    "output-final-modified.srt",
+    "changed_segments.json",
+    "job.log",
+]
 
 
 # ── Data types ────────────────────────────────────────
@@ -90,19 +101,13 @@ _STS_LABEL_MAP = {
 
 _MENU_KEY_MAP: dict[str, str] = {
     "d": "detail",
-    "D": "detail",
     "o": "open_dir",
-    "O": "open_dir",
     "k": "cancel",
-    "K": "cancel",
     "s": "resubmit",
     "u": "user_jobs",
-    "U": "user_jobs",
     "r": "delete",
     "c": "close",
-    "C": "close",
     "b": "output",
-    "B": "output",
 }
 
 
@@ -263,18 +268,16 @@ def _yes_no_confirm(console: Console, message: str, border_style: str = "red") -
 
 def _format_duration(seconds: float) -> str:
     """Format a duration in seconds to a human-readable string."""
-    if seconds < 60:
-        return f"{seconds:.0f}秒"
-    elif seconds < 3600:
-        return f"{seconds // 60:.0f}分{seconds % 60:.0f}秒"
-    elif seconds < 86400:
-        h = seconds // 3600
-        m = (seconds % 3600) // 60
-        return f"{h:.0f}小时{m:.0f}分"
-    else:
-        d = seconds // 86400
-        h = (seconds % 86400) // 3600
-        return f"{d:.0f}天{h:.0f}小时"
+    m, s = divmod(int(seconds), 60)
+    if m < 1:
+        return f"{s}秒"
+    h, m = divmod(m, 60)
+    if h < 1:
+        return f"{m}分{s}秒"
+    d, h = divmod(h, 24)
+    if d < 1:
+        return f"{h}小时{m}分"
+    return f"{d}天{h}小时"
 
 
 def _elapsed_since(dt_str: str | None) -> str | None:
@@ -458,13 +461,6 @@ def _purge_step_output(output_dir: str, video_number: str, step: str):
     elif step == "translate":
         paths.append(os.path.join(output_dir, "translated.srt"))
     elif step == "audio":
-        _AUDIO_OUTPUT_FILES = [
-            "output.wav",
-            "output_adjusted.srt",
-            "output-final-modified.srt",
-            "changed_segments.json",
-            "job.log",
-        ]
         for subdir in ("audio", "audio_tracks"):
             ad = os.path.join(output_dir, subdir)
             if os.path.isdir(ad):
@@ -551,7 +547,7 @@ def resubmit_job(code: str, keep_steps: list[str] | None = None) -> str:
         import urllib.request
 
         req = urllib.request.Request(
-            f"http://localhost:5600/srt/resubmit/{code}",
+            f"http://localhost:{RESUBMIT_PORT}/srt/resubmit/{code}",
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -833,14 +829,15 @@ def render_detail(job: Job, mode: str) -> Panel:
             f"创建时间: {job.created_at or 'N/A'}",
         ]
         # ── Status-aware terminal time ────────────────────
-        if job.status == "completed" and job.completed_at:
-            lines.append(f"完成时间: {job.completed_at}")
-        elif job.status == "failed" and job.failed_at:
-            lines.append(f"失败时间: {job.failed_at}")
-        elif job.status == "cancelled" and job.cancelled_at:
-            lines.append(f"取消时间: {job.cancelled_at}")
-        elif job.status == "deleted" and job.deleted_at:
-            lines.append(f"删除时间: {job.deleted_at}")
+        status_time_fields = {
+            "completed": job.completed_at,
+            "failed": job.failed_at,
+            "cancelled": job.cancelled_at,
+            "deleted": job.deleted_at,
+        }
+        time_label = status_time_fields.get(job.status)
+        if time_label:
+            lines.append(f"{_STS_LABEL_MAP.get(job.status, job.status)}时间: {time_label}")
         elif job.status_changed_at:
             lines.append(f"状态变更: {job.status_changed_at}")
 
@@ -1435,8 +1432,8 @@ def run_menu_screen(s: State, console: Console):
             s.menu_open = False
             return
 
-        if key in _MENU_KEY_MAP:
-            action = _MENU_KEY_MAP[key]
+        if key.lower() in _MENU_KEY_MAP:
+            action = _MENU_KEY_MAP[key.lower()]
             if not _dispatch_menu_action(action, s, console, job):
                 return
             continue
@@ -1594,20 +1591,8 @@ def interactive(console: Console, user_id: int | None = None, display_label: str
                     s.focus = "table"
                 continue
 
-            if key == "UP":
-                if s.cursor > 0:
-                    s.cursor -= 1
-                elif s.page < s.pages - 1:
-                    s.page += 1
-                    s.cursor = len(s.visible) - 1
-
-            elif key == "DOWN":
-                max_cursor = len(s.visible) - 1
-                if s.cursor < max_cursor:
-                    s.cursor += 1
-                elif s.page > 0:
-                    s.page -= 1
-                    s.cursor = 0
+            if key == "UP" or key == "DOWN":
+                _navigate_cursor(s, key)
 
             elif key in ("\r", "\n", "RIGHT"):
                 if s.selected_job:
