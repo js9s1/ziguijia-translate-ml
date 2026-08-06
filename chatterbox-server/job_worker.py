@@ -21,6 +21,11 @@ logger = logging.getLogger(__name__)
 _WORKER_HEARTBEAT_STALE = 30
 """Seconds after which a worker thread is considered dead."""
 
+_MAX_CRASH_RETRIES = 3
+"""Max times a job whose child was killed by a signal (native crash, e.g.
+SIGSEGV/SIGABRT from ROCm/GPU instability) is automatically retried. Retries
+are cheap because the checkpoint system resumes at the failed step."""
+
 
 # ── Helpers ──────────────────────────────────────────────────
 
@@ -255,54 +260,79 @@ def _run_job(jq, access_code: str, job_process_wrapper_fn):
     # worker recycle on SIGHUP).  The child creates its own process group
     # in _job_process_wrapper so it is immune to parent signal propagation.
     # Cancellation still works via _kill_process_group (os.killpg).
-    proc = multiprocessing.Process(
-        target=job_process_wrapper_fn,
-        args=(job, run_func_name),
-        daemon=False,
-    )
-    proc.start()
+    max_attempts = _MAX_CRASH_RETRIES
+    attempt = 0
+    while True:
+        attempt += 1
+        proc = multiprocessing.Process(
+            target=job_process_wrapper_fn,
+            args=(job, run_func_name),
+            daemon=False,
+        )
+        proc.start()
 
-    cancelled = False
-    shutdown_deadline = None
-    try:
-        while proc.is_alive():
-            proc.join(timeout=5)
-            jq._heartbeat_ts = time.monotonic()
+        cancelled = False
+        shutdown_deadline = None
+        exitcode = None
+        try:
+            while proc.is_alive():
+                proc.join(timeout=5)
+                jq._heartbeat_ts = time.monotonic()
 
-            # Check for graceful shutdown — set a deadline for the child
-            if jq._graceful_shutdown and shutdown_deadline is None:
-                shutdown_deadline = time.monotonic() + jq._shutdown_timeout
-                logger.info(
-                    "Job %s: graceful shutdown in progress — child has %ds to finish",
-                    access_code,
-                    jq._shutdown_timeout,
-                )
+                # Check for graceful shutdown — set a deadline for the child
+                if jq._graceful_shutdown and shutdown_deadline is None:
+                    shutdown_deadline = time.monotonic() + jq._shutdown_timeout
+                    logger.info(
+                        "Job %s: graceful shutdown in progress — child has %ds to finish",
+                        access_code,
+                        jq._shutdown_timeout,
+                    )
 
-            if shutdown_deadline is not None and time.monotonic() >= shutdown_deadline:
-                logger.warning(
-                    "Job %s: shutdown deadline exceeded — terminating child",
-                    access_code,
-                )
-                cancelled = True
+                if shutdown_deadline is not None and time.monotonic() >= shutdown_deadline:
+                    logger.warning(
+                        "Job %s: shutdown deadline exceeded — terminating child",
+                        access_code,
+                    )
+                    cancelled = True
 
-            if jq._cancel_event.is_set():
-                cancelled = True
-            else:
-                # Poll the DB — the job may have been cancelled externally
-                # (e.g. via TUI or another server instance).
-                try:
-                    row = conn.execute("SELECT status FROM jobs WHERE access_code = ?", (access_code,)).fetchone()
-                    if row is None or row["status"] != JobStatus.PROCESSING.value:
-                        cancelled = True
-                except sqlite3.Error:
-                    pass
+                if jq._cancel_event.is_set():
+                    cancelled = True
+                else:
+                    # Poll the DB — the job may have been cancelled externally
+                    # (e.g. via TUI or another server instance).
+                    try:
+                        row = conn.execute("SELECT status FROM jobs WHERE access_code = ?", (access_code,)).fetchone()
+                        if row is None or row["status"] != JobStatus.PROCESSING.value:
+                            cancelled = True
+                    except sqlite3.Error:
+                        pass
 
-            if cancelled:
-                # Kill the entire process group so subprocesses
-                # (ffmpeg, rapid_videocr, whisper-cli, etc.) don't linger.
+                if cancelled:
+                    # Kill the entire process group so subprocesses
+                    # (ffmpeg, rapid_videocr, whisper-cli, etc.) don't linger.
+                    output_dir = job.get("output_dir")
+                    jq._kill_process_group(proc, output_dir)
+                    break
+
+            # Save exitcode immediately — multiprocessing.Process auto-closes
+            # after child exit, making later .exitcode / .is_alive() calls fail.
+            exitcode = proc.exitcode
+            # Clean up any lingering grandchildren (success, failure, or crash)
+            # now that the child exited, while the proc handle is still valid.
+            if exitcode is not None and exitcode != 0:
+                jq._kill_process_group(proc, job.get("output_dir"))
+        except Exception as e:
+            # Ensure the child process is cleaned up on unexpected errors
+            if proc.is_alive():
                 output_dir = job.get("output_dir")
                 jq._kill_process_group(proc, output_dir)
-                break
+            _try_mark_failed(jq, access_code, str(e)[:500])
+            logger.error(f"Job {access_code} handler error: {e}")
+            break
+        finally:
+            # Release OS resources — without this the child process remains
+            # as a zombie on POSIX, leaking a pipe fd and a process-table entry.
+            _safe_close_proc(proc)
 
         if cancelled:
             if shutdown_deadline is not None:
@@ -327,43 +357,41 @@ def _run_job(jq, access_code: str, job_process_wrapper_fn):
                 conn.commit()
                 publish_job_status(access_code, JobStatus.CANCELLED.value)
                 logger.info(f"Job {access_code} was cancelled")
-        else:
-            # Save exitcode immediately — multiprocessing.Process auto-closes
-            # after child exit, making later .exitcode / .is_alive() calls fail.
-            exitcode = proc.exitcode
-            if exitcode == 0:
-                now = _now_str()
-                conn.execute(
-                    "UPDATE jobs SET status = ?, status_changed_at = ?, completed_at = ? WHERE access_code = ?",
-                    (JobStatus.COMPLETED.value, now, now, access_code),
-                )
-                conn.commit()
-                publish_job_status(access_code, JobStatus.COMPLETED.value)
-                logger.info(f"Job {access_code} completed successfully")
-            else:
-                # Kill the process group — grandchild subprocesses may linger
-                output_dir = job.get("output_dir")
-                jq._kill_process_group(proc, output_dir)
+            break
 
-                sig = f" (exit {exitcode})" if exitcode is not None else ""
-                reason = _extract_failure_reason(output_dir)
-                if reason:
-                    error_msg = f"{reason}{sig}"
-                else:
-                    error_msg = f"Job process failed{sig}"
-                _try_mark_failed(jq, access_code, error_msg)
-                logger.warning(f"Job {access_code} failed with exit code {exitcode}")
-    except Exception as e:
-        # Ensure the child process is cleaned up on unexpected errors
-        if proc.is_alive():
-            output_dir = job.get("output_dir")
-            jq._kill_process_group(proc, output_dir)
-        _try_mark_failed(jq, access_code, str(e)[:500])
-        logger.error(f"Job {access_code} handler error: {e}")
-    finally:
-        # Release OS resources — without this the child process remains
-        # as a zombie on POSIX, leaking a pipe fd and a process-table entry.
-        _safe_close_proc(proc)
+        if exitcode == 0:
+            now = _now_str()
+            conn.execute(
+                "UPDATE jobs SET status = ?, status_changed_at = ?, completed_at = ? WHERE access_code = ?",
+                (JobStatus.COMPLETED.value, now, now, access_code),
+            )
+            conn.commit()
+            publish_job_status(access_code, JobStatus.COMPLETED.value)
+            logger.info(f"Job {access_code} completed successfully")
+            break
+
+        # A negative exit code means the child was killed by a signal — a
+        # native crash (e.g. SIGSEGV/SIGABRT from ROCm/GPU instability).
+        # Retry these transiently: the checkpoint system resumes at the failed
+        # step, so a retry is cheap and won't redo completed work.
+        if exitcode is not None and exitcode < 0 and attempt < max_attempts:
+            logger.warning(
+                "Job %s crashed with signal %d on attempt %d/%d — resetting GPU and retrying",
+                access_code, -exitcode, attempt, max_attempts,
+            )
+            _reset_gpu_state()
+            time.sleep(2)
+            continue
+
+        sig = f" (exit {exitcode})" if exitcode is not None else ""
+        reason = _extract_failure_reason(job.get("output_dir"))
+        if reason:
+            error_msg = f"{reason}{sig}"
+        else:
+            error_msg = f"Job process failed{sig}"
+        _try_mark_failed(jq, access_code, error_msg)
+        logger.warning(f"Job {access_code} failed with exit code {exitcode}")
+        break
 
     # ── GPU state reset between jobs ─────────────────────────
     # After any job finishes (success, failure, or cancellation),
