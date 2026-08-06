@@ -432,6 +432,21 @@ def process_with_direct(
     else:
         sample_rate = audio.sample_rate
 
+    # ── Per-segment GPU/CPU fallback via tombstone files ──
+    # Tombstones survive GPU crashes (SIGSEGV / exit -11).
+    # On next startup, segments with tombstones → CPU; others → try GPU.
+    _gpu_tmp = os.path.join(output_dir, "tmp")
+    _gpu_failed: set[int] = set()
+    if os.path.isdir(_gpu_tmp):
+        for _tf in os.listdir(_gpu_tmp):
+            if _tf.startswith(".gpu_seg_"):
+                try:
+                    _gpu_failed.add(int(_tf.rsplit("_", 1)[-1]))
+                except ValueError:
+                    pass
+    if _gpu_failed:
+        print(f"GPU-failed segments from prior run(s): {sorted(_gpu_failed)}")
+
     adjusted_subs = []
     segments_info = []
     changed_segments = []
@@ -483,6 +498,14 @@ def process_with_direct(
             # Advance seg_counter past chunk slots this segment would use
             seg_counter += len(chunks)
         else:
+            # ── Decide GPU vs CPU for this segment ──
+            _use_cpu = i in _gpu_failed
+            if _use_cpu:
+                print(f"  ⚠ segment {i}: GPU crashed on prior attempt — using CPU")
+                _gm._switch_to_cpu()
+                audio.model = _gm._model
+                audio.sample_rate = _gm._model.sr
+
             # ── GPU thermal check before heavy work ──
             if not _thermal_check():
                 print("  → Stopped by signal")
@@ -490,25 +513,50 @@ def process_with_direct(
 
             prompt = get_speaker_prompt(speaker, audio_prompt, assets_dir)
 
-            chunk_wavs = []
-            total_wav_duration = 0.0
-            for chunk in chunks:
-                wav_path = os.path.join(output_dir, "tmp", f"segment_{seg_counter}.wav")
-                wav_data, wav_duration = audio.generate_audio(
-                    chunk,
-                    wav_path,
-                    sample_rate,
-                    temperature,
-                    prompt_file=prompt,
-                    target_language=target_language,
-                    cfg_weight=cfg_weight,
-                    exaggeration=exaggeration,
-                )
-                if wav_data.dim() == 1:
-                    wav_data = wav_data.unsqueeze(0)
-                chunk_wavs.append(wav_data)
-                total_wav_duration += wav_duration
-                seg_counter += 1
+            # ── GPU tombstone (survives SIGSEGV for detection on next run) ──
+            _tombstone = None
+            if not _use_cpu:
+                os.makedirs(_gpu_tmp, exist_ok=True)
+                _tombstone = os.path.join(_gpu_tmp, f".gpu_seg_{i}")
+                with open(_tombstone, "w") as _tf:
+                    _tf.write(str(i))
+
+            try:
+                chunk_wavs = []
+                total_wav_duration = 0.0
+                for chunk in chunks:
+                    wav_path = os.path.join(output_dir, "tmp", f"segment_{seg_counter}.wav")
+                    wav_data, wav_duration = audio.generate_audio(
+                        chunk,
+                        wav_path,
+                        sample_rate,
+                        temperature,
+                        prompt_file=prompt,
+                        target_language=target_language,
+                        cfg_weight=cfg_weight,
+                        exaggeration=exaggeration,
+                    )
+                    if wav_data.dim() == 1:
+                        wav_data = wav_data.unsqueeze(0)
+                    chunk_wavs.append(wav_data)
+                    total_wav_duration += wav_duration
+                    seg_counter += 1
+            finally:
+                # ── Switch back to GPU after CPU segment ──
+                if _use_cpu:
+                    if _gm._reload_gpu():
+                        audio.model = _gm._model
+                        audio.sample_rate = _gm._model.sr
+                    else:
+                        # GPU reload failed — all remaining segments use CPU
+                        _gpu_failed.update(range(i + 1, len(subs)))
+                else:
+                    # GPU generation succeeded — remove tombstone
+                    if _tombstone is not None:
+                        try:
+                            os.remove(_tombstone)
+                        except OSError:
+                            pass
 
             combined_wav = torch.cat(chunk_wavs, dim=1) if len(chunk_wavs) > 1 else chunk_wavs[0]
 

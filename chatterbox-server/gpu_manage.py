@@ -147,6 +147,77 @@ def _generate_indonesian(text: str, prompt_file: str | None = None, temperature:
     return wav
 
 
+def _switch_to_cpu() -> None:
+    """Switch the multilingual model from GPU to CPU.
+
+    No-op if model is already on CPU or not loaded.  Call this before a
+    segment that needs CPU, then call :func:`_reload_gpu` to switch back.
+    """
+    global _model
+    if _model is None:
+        _load_multilingual_model()  # load straight to CPU — _choose_device will fall back
+        return
+    if _get_device(_model) != "cuda":
+        return  # already on CPU
+    print("Switching multilingual TTS model from GPU to CPU...")
+    import warnings
+
+    del _model
+    _model = None
+    gc.collect()
+    torch.cuda.empty_cache()
+    torch.cuda.synchronize()
+
+    warnings.filterwarnings("ignore")
+    from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+
+    _model = ChatterboxMultilingualTTS.from_pretrained(device="cpu")
+    _model.prepare_conditionals(AUDIO_PROMPT_PATH)
+    print("Multilingual TTS model now on CPU.")
+
+
+def _reload_gpu() -> bool:
+    """Switch the multilingual model from CPU back to GPU.
+
+    Returns True on success, False if GPU is not available / unhealthy.
+    Call after a temporary CPU fallback for a single segment.
+    """
+    global _model
+    import warnings
+
+    if not torch.cuda.is_available():
+        print("CUDA not available — cannot reload on GPU")
+        return False
+    device_choice = _choose_device("cuda")
+    if device_choice != "cuda":
+        print(f"GPU not healthy — keeping model on CPU (device check returned {device_choice})")
+        return False
+
+    # Unload current (CPU) model
+    if _model is not None:
+        del _model
+        _model = None
+    gc.collect()
+    torch.cuda.empty_cache()
+    torch.cuda.synchronize()
+
+    warnings.filterwarnings("ignore")
+    from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+
+    try:
+        print("Reloading multilingual TTS model on GPU...")
+        _model = ChatterboxMultilingualTTS.from_pretrained(device="cuda")
+        _model.prepare_conditionals(AUDIO_PROMPT_PATH)
+        print("Multilingual TTS model reloaded on GPU.")
+        return True
+    except (torch.cuda.OutOfMemoryError, RuntimeError, torch.cuda.CudaError) as e:
+        print(f"GPU reload failed ({e}), keeping CPU model")
+        # Reload on CPU instead
+        _model = ChatterboxMultilingualTTS.from_pretrained(device="cpu")
+        _model.prepare_conditionals(AUDIO_PROMPT_PATH)
+        return False
+
+
 # ── Fork safety ─────────────────────────────────────────────
 
 
