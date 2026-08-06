@@ -54,6 +54,22 @@ def _safe_close_psutil_procs(procs):
             pass
 
 
+def check_job_valid(jq, access_code: str):
+    """Raise RuntimeError if *access_code* is no longer PENDING or PROCESSING.
+
+    Call this from within long-running job handlers (e.g. CPU-fallback
+    TTS generation) so that a job marked FAILED or CANCELLED in the DB
+    (by a watchdog restart duplicate, or by a user cancel) is aborted
+    instead of continuing to burn CPU indefinitely.
+    """
+    conn = jq._get_conn()
+    row = conn.execute("SELECT status FROM jobs WHERE access_code = ?", (access_code,)).fetchone()
+    if not row:
+        raise RuntimeError(f"Job {access_code} no longer exists in database")
+    if row[0] not in (JobStatus.PENDING.value, JobStatus.PROCESSING.value):
+        raise RuntimeError(f"Job {access_code} is {row[0]}, aborting")
+
+
 def _extract_failure_reason(output_dir: str | None) -> str | None:
     """Read ``job.log`` from *output_dir* and extract a human-readable failure reason.
 

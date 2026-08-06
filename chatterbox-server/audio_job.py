@@ -9,6 +9,7 @@ import torchaudio as ta
 from audio_utils import NingAudio
 from config import AUDIO_TRACKS_DIR
 from jobqueue import get_job_queue
+from job_worker import check_job_valid
 from log_utils import job_log
 from middleware import get_audio_params
 from pipeline import run_gen_audio_step
@@ -97,6 +98,10 @@ def _run_audio_segmentation_job(job_data: dict):
     os.makedirs(output_dir, exist_ok=True)
     job_log(job_data["access_code"], output_dir, f"Starting audio segmentation: {len(content)} chars, language={ap['target_language']}")
 
+    access_code = job_data["access_code"]
+    jq = get_job_queue()
+    check_job_valid(jq, access_code)
+
     ning = NingAudio()
     ning._ensure_model(ap["target_language"])
     if ap["target_language"] == "id":
@@ -129,6 +134,7 @@ def _run_audio_segmentation_job(job_data: dict):
     for silence_sec, text in segments:
         chunks = _split_text(text, 500)
         for chunk in chunks:
+            check_job_valid(jq, access_code)
             wav_bytes = ning.text_to_wave(
                 chunk,
                 temperature=ap["temperature"],

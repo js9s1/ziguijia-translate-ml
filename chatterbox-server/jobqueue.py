@@ -87,6 +87,7 @@ class JobQueue:
         self._shutdown_timeout = 60  # seconds to wait for current job
         self._shutdown_done = threading.Event()  # set when worker finishes
         self._last_gpu_reset_ts = 0.0  # cooldown for _reset_gpu_state
+        self._worker_generation = 0  # bumped on restart — old threads detect mismatch
         # access codes currently sitting in the in-memory queue (for dedup)
         self._enqueued: set[str] = set()
         self._last_progress_ts = 0.0  # last time the worker actually consumed an item
@@ -100,6 +101,10 @@ class JobQueue:
                 target=self._watchdog_loop, daemon=True, name="jobqueue-watchdog"
             )
             self._watchdog_thread.start()
+            self._heartbeat_thread = threading.Thread(
+                target=self._heartbeat_loop, daemon=True, name="jobqueue-heartbeat"
+            )
+            self._heartbeat_thread.start()
 
     def _get_conn(self) -> sqlite3.Connection:
         return self._conn.get()
@@ -125,12 +130,23 @@ class JobQueue:
             self._kill_processes_by_output_dir(row["output_dir"])
 
         # Now find any jobs that were still PROCESSING when the server died —
-        # reset them to PENDING so they can be retried.
+        # reset them to PENDING so they can be retried.  Skip the job that
+        # the *current* worker thread is executing (if any), otherwise
+        # the watchdog-created replacement worker may re-dequeue it while
+        # the old thread is still running, producing 2 workers on 1 job.
         now = _now_str()
-        conn.execute(
-            "UPDATE jobs SET status = ?, status_changed_at = ? WHERE status = ?",
-            (JobStatus.PENDING.value, now, JobStatus.PROCESSING.value),
-        )
+        with self._cancel_lock:
+            current = self._current_access_code
+        if current:
+            conn.execute(
+                "UPDATE jobs SET status = ?, status_changed_at = ? WHERE status = ? AND access_code != ?",
+                (JobStatus.PENDING.value, now, JobStatus.PROCESSING.value, current),
+            )
+        else:
+            conn.execute(
+                "UPDATE jobs SET status = ?, status_changed_at = ? WHERE status = ?",
+                (JobStatus.PENDING.value, now, JobStatus.PROCESSING.value),
+            )
         conn.commit()
 
         rows = conn.execute("SELECT access_code FROM jobs WHERE status = ?", (JobStatus.PENDING.value,)).fetchall()
@@ -270,7 +286,7 @@ class JobQueue:
     def _ensure_worker(self):
         if self._worker_thread is not None and not self._is_worker_healthy():
             logger.warning("Worker thread dead or stale — restarting")
-            self._running = False
+            self._worker_generation += 1  # old thread detects mismatch → exits
             old_thread = self._worker_thread
             self._worker_thread = None
             # Let the old thread exit cleanly (daemon thread won't block
@@ -359,12 +375,31 @@ class JobQueue:
     def _try_mark_failed(self, access_code, error_msg):
         return _try_mark_failed(self, access_code, error_msg)
 
+    def _heartbeat_loop(self):
+        """Keep `_heartbeat_ts` fresh while a job is executing.
+
+        _process_queue only bumps the heartbeat at its loop top (between
+        job executions).  A long-running job would look dead to the
+        watchdog after 30 s, triggering unnecessary restarts and the
+        attendant duplicate-processing race.  This daemon pulse thread
+        bumps the heartbeat every 5 s whenever a job is in flight.
+        """
+        while True:
+            try:
+                with self._cancel_lock:
+                    if self._current_access_code is not None:
+                        self._heartbeat_ts = time.monotonic()
+            except Exception:
+                pass
+            time.sleep(5)
+
     def _process_queue(self):
         import queue as std_queue
 
+        gen = self._worker_generation  # snapshot — old thread exits on mismatch
         _last_orphan_check = time.monotonic()
         _ORPHAN_CHECK_INTERVAL = 120  # every 2 minutes
-        while self._running:
+        while self._running and self._worker_generation == gen:
             self._heartbeat_ts = time.monotonic()
 
             # Periodic orphan reaper — cleans up subprocesses that
