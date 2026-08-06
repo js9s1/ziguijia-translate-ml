@@ -85,33 +85,35 @@ def _get_device(m) -> str:
 
 
 def _load_multilingual_model():
-    """Load ChatterboxMultilingualTTS to GPU."""
+    """Load ChatterboxMultilingualTTS, choosing device via health/memory check.
+
+    Calls ``_choose_device`` to decide whether GPU or CPU is safe.  This
+    prevents native ROCm crashes (SIGSEGV) on unstable iGPUs like Renoir
+    gfx90c by falling back to CPU when the GPU is degraded or low on memory.
+    """
     global _model
     import warnings
 
     warnings.filterwarnings("ignore")
     from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 
-    print("Loading multilingual TTS model to GPU...")
-    _model = ChatterboxMultilingualTTS.from_pretrained(device="cuda")
+    device = _choose_device("cuda")
+    print(f"Loading multilingual TTS model to {device}...")
+    _model = ChatterboxMultilingualTTS.from_pretrained(device=device)
     _model.prepare_conditionals(AUDIO_PROMPT_PATH)
-    print("Multilingual TTS model ready (GPU).")
+    print(f"Multilingual TTS model ready ({device}).")
 
 
 def _load_indonesian_model():
-    """Load Indonesian fine-tuned ChatterboxTTS, GPU first, CPU fallback."""
+    """Load Indonesian fine-tuned ChatterboxTTS via device health/memory check."""
     global _indonesian_model
     from chatterbox.tts import ChatterboxTTS
     from huggingface_hub import hf_hub_download
     from safetensors.torch import load_file
 
-    try:
-        print("Loading Indonesian TTS model to GPU...")
-        _indonesian_model = ChatterboxTTS.from_pretrained(device="cuda")
-    except (torch.cuda.OutOfMemoryError, RuntimeError):
-        print("GPU OOM, falling back to CPU for Indonesian model")
-        torch.cuda.empty_cache()
-        _indonesian_model = ChatterboxTTS.from_pretrained(device="cpu")
+    device = _choose_device("cuda")
+    print(f"Loading Indonesian TTS model to {device}...")
+    _indonesian_model = ChatterboxTTS.from_pretrained(device=device)
 
     checkpoint_path = hf_hub_download(
         repo_id="grandhigh/Chatterbox-TTS-Indonesian",

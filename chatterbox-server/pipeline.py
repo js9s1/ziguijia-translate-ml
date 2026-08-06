@@ -239,6 +239,20 @@ def run_audio_ckpt(
         return _audio_fallback_paths(audio_dir)
 
     job_log(access_code, output_dir, "Generating audio from translated SRT...")
+
+    # ── GPU state cleanup before audio ──────────────────────────
+    # OCR and translation steps may have left the GPU in a degraded
+    # state (fragmented allocator, stale HIP contexts).  Empty the
+    # PyTorch caching allocator and synchronise so gen_audio starts
+    # with a clean GPU.
+    try:
+        import torch
+
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+    except Exception:
+        pass
+
     audio_out = run_gen_audio_step(
         translated_srt,
         audio_dir,
