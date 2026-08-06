@@ -6,7 +6,7 @@ first parameter (``jq``) and access its attributes directly.
 """
 
 import logging
-import multiprocessing
+import multiprocessing  # used by _safe_close_proc type annotation
 import os
 import sqlite3
 import time
@@ -187,18 +187,16 @@ def _try_mark_failed(jq, access_code, error_msg):
                 )
 
 
-def _run_job(jq, access_code: str, job_process_wrapper_fn):
-    """Execute a single job in a child process (was ``JobQueue._process_job``).
+def _run_job(jq, access_code: str):
+    """Execute a single job directly in the worker thread.
 
-    Parameters
-    ----------
-    jq : JobQueue
-        The owning queue instance — all state access goes through this.
-    access_code : str
-        The job's unique identifier.
-    job_process_wrapper_fn : callable
-        The ``_job_process_wrapper`` function (passed explicitly to avoid
-        circular imports between ``jobqueue`` and ``job_worker``).
+    Runs the job handler in-process — no multiprocessing child.  This
+    avoids the unreliable HIP context re-initialisation that causes
+    SIGSEGV on AMD Renoir iGPUs (gfx90c via ROCm) when a fresh spawn
+    child loads the Chatterbox TTS model to GPU.
+
+    If a genuine crash takes down this process, gunicorn restarts the
+    worker, and checkpointed jobs resume on next startup.
     """
     conn = jq._get_conn()
 
@@ -255,137 +253,33 @@ def _run_job(jq, access_code: str, job_process_wrapper_fn):
     # worker recycle on SIGHUP).  The child creates its own process group
     # in _job_process_wrapper so it is immune to parent signal propagation.
     # Cancellation still works via _kill_process_group (os.killpg).
-    # ── Release GPU before spawning child ───────────────────────
-    # The gunicorn worker may hold the Chatterbox TTS model (loaded by a
-    # previous job's gen_audio step).  That model occupies 2-3 GB of GPU
-    # VRAM.  When the child process loads its own copy, the combined
-    # pressure can trigger silent MIOpen OOM that appears as a SIGSEGV
-    # on AMD Renoir iGPUs (gfx90c via ROCm).  Freeing the parent's model
-    # gives the child all the GPU memory it needs.
+    # Execute the job handler directly in this thread.  No more
+    # multiprocessing child — the spawn boundary causes unreliable
+    # HIP context re-initialisation on AMD Renoir iGPUs (gfx90c via
+    # ROCm), leading to silent SIGSEGV during GPU model loads.  Running
+    # in-process keeps the existing (working) HIP context.
+    #
+    # If this process crashes (e.g. genuine GPU bug), gunicorn
+    # restarts the worker, and checkpointed jobs resume at the failed
+    # step on the next startup without redoing completed work.
     try:
-        import gpu_manage as _gm
-
-        if _gm._model is not None or _gm._indonesian_model is not None:
-            logger.info("Job %s: releasing parent GPU model before spawning child", access_code)
-            _gm._release_gpu()
-    except Exception:
-        pass
-
-    proc = multiprocessing.Process(
-        target=job_process_wrapper_fn,
-        args=(job, run_func_name),
-        daemon=False,
-    )
-    proc.start()
-
-    cancelled = False
-    shutdown_deadline = None
-    try:
-        while proc.is_alive():
-            proc.join(timeout=5)
-            jq._heartbeat_ts = time.monotonic()
-
-            # Check for graceful shutdown — set a deadline for the child
-            if jq._graceful_shutdown and shutdown_deadline is None:
-                shutdown_deadline = time.monotonic() + jq._shutdown_timeout
-                logger.info(
-                    "Job %s: graceful shutdown in progress — child has %ds to finish",
-                    access_code,
-                    jq._shutdown_timeout,
-                )
-
-            if shutdown_deadline is not None and time.monotonic() >= shutdown_deadline:
-                logger.warning(
-                    "Job %s: shutdown deadline exceeded — terminating child",
-                    access_code,
-                )
-                cancelled = True
-
-            if jq._cancel_event.is_set():
-                cancelled = True
-            else:
-                # Poll the DB — the job may have been cancelled externally
-                # (e.g. via TUI or another server instance).
-                try:
-                    row = conn.execute("SELECT status FROM jobs WHERE access_code = ?", (access_code,)).fetchone()
-                    if row is None or row["status"] != JobStatus.PROCESSING.value:
-                        cancelled = True
-                except sqlite3.Error:
-                    pass
-
-            if cancelled:
-                # Kill the entire process group so subprocesses
-                # (ffmpeg, rapid_videocr, whisper-cli, etc.) don't linger.
-                output_dir = job.get("output_dir")
-                jq._kill_process_group(proc, output_dir)
-                break
-
-        if cancelled:
-            if shutdown_deadline is not None:
-                # Graceful shutdown timeout — mark as PENDING so it resumes on restart
-                now = _now_str()
-                conn.execute(
-                    "UPDATE jobs SET status = ?, error = NULL, status_changed_at = ? WHERE access_code = ?",
-                    (JobStatus.PENDING.value, now, access_code),
-                )
-                conn.commit()
-                # Re-queue so it's picked up on next startup
-                jq._queue.put(access_code)
-                publish_job_status(access_code, JobStatus.PENDING.value)
-                logger.info(f"Job {access_code} interrupted by shutdown — marked PENDING for resume")
-            else:
-                # User cancellation
-                now = _now_str()
-                conn.execute(
-                    "UPDATE jobs SET status = ?, error = ?, cancelled_at = ?, status_changed_at = ? WHERE access_code = ?",
-                    (JobStatus.CANCELLED.value, "Cancelled by user", now, now, access_code),
-                )
-                conn.commit()
-                publish_job_status(access_code, JobStatus.CANCELLED.value)
-                logger.info(f"Job {access_code} was cancelled")
-        else:
-            # Save exitcode immediately — multiprocessing.Process auto-closes
-            # after child exit, making later .exitcode / .is_alive() calls fail.
-            exitcode = proc.exitcode
-            if exitcode == 0:
-                now = _now_str()
-                conn.execute(
-                    "UPDATE jobs SET status = ?, status_changed_at = ?, completed_at = ? WHERE access_code = ?",
-                    (JobStatus.COMPLETED.value, now, now, access_code),
-                )
-                conn.commit()
-                publish_job_status(access_code, JobStatus.COMPLETED.value)
-                logger.info(f"Job {access_code} completed successfully")
-            else:
-                # Kill the process group — grandchild subprocesses may linger
-                output_dir = job.get("output_dir")
-                jq._kill_process_group(proc, output_dir)
-
-                sig = f" (exit {exitcode})" if exitcode is not None else ""
-                reason = _extract_failure_reason(output_dir)
-                if reason:
-                    error_msg = f"{reason}{sig}"
-                else:
-                    error_msg = f"Job process failed{sig}"
-                _try_mark_failed(jq, access_code, error_msg)
-                logger.warning(f"Job {access_code} failed with exit code {exitcode}")
+        run_func(job)
+    except SystemExit:
+        raise
     except Exception as e:
-        # Ensure the child process is cleaned up on unexpected errors
-        if proc.is_alive():
-            output_dir = job.get("output_dir")
-            jq._kill_process_group(proc, output_dir)
-        _try_mark_failed(jq, access_code, str(e)[:500])
-        logger.error(f"Job {access_code} handler error: {e}")
-    finally:
-        # Release OS resources — without this the child process remains
-        # as a zombie on POSIX, leaking a pipe fd and a process-table entry.
-        _safe_close_proc(proc)
+        logger.error(f"Job {access_code} handler '{run_func_name}' raised {type(e).__name__}: {e}")
+        raise
+
+    now = _now_str()
+    conn.execute(
+        "UPDATE jobs SET status = ?, status_changed_at = ?, completed_at = ? WHERE access_code = ?",
+        (JobStatus.COMPLETED.value, now, now, access_code),
+    )
+    conn.commit()
+    publish_job_status(access_code, JobStatus.COMPLETED.value)
+    logger.info(f"Job {access_code} completed successfully")
 
     # ── GPU state reset between jobs ─────────────────────────
-    # After any job finishes (success, failure, or cancellation),
-    # reset the ROCm/HIP GPU driver state so the next job doesn't
-    # inherit a degraded GPU from a long-running predecessor.
-    # Cooldown prevents repeatedly probing a hung GPU.
     _reset_gpu_state_cooldown(jq)
 
     conn.commit()

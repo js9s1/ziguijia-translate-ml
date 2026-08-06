@@ -4,7 +4,6 @@ import os
 import shutil
 import signal
 import sqlite3
-import sys as _sys
 import threading
 import time
 import uuid
@@ -62,7 +61,7 @@ from job_orphan import (
     kill_process_group,
     kill_processes_by_output_dir,
 )
-from job_types import _JOB_TYPE_LABELS, _SKIP_QUEUE_INIT, JobStatus, _get_job_type_label, _get_run_func
+from job_types import _JOB_TYPE_LABELS, _SKIP_QUEUE_INIT, JobStatus, _get_job_type_label
 from job_worker import (
     _WORKER_HEARTBEAT_STALE,
     _now_str,
@@ -71,32 +70,6 @@ from job_worker import (
     _safe_close_psutil_procs,
     _try_mark_failed,
 )
-
-
-def _job_process_wrapper(job_data: dict, run_func_name: str):
-    """Entry point for a child process executing a single job.
-
-    Creates its own process group so that all subprocesses spawned by the
-    job handler can be killed as a group on cancellation.
-
-    Exits with 0 on success, non-zero on failure.
-
-    With ``spawn`` start method the child is a fresh Python interpreter
-    — no forked CUDA state, no inherited DB connection.  We set
-    ``_SKIP_QUEUE_INIT`` so that when the handler later calls
-    ``get_job_queue()`` the singleton skips the harmful startup
-    bookkeeping (orphan cleanup, status resets).
-    """
-    global _SKIP_QUEUE_INIT
-    _SKIP_QUEUE_INIT = True
-
-    os.setpgid(os.getpid(), os.getpid())
-
-    run_func = _get_run_func(run_func_name)
-    if run_func is None:
-        _sys.exit(1)
-    run_func(job_data)
-
 
 
 @singleton
@@ -440,7 +413,7 @@ class JobQueue:
         self._shutdown_done.set()
 
     def _process_job(self, access_code: str):
-        return _run_job(self, access_code, _job_process_wrapper)
+        return _run_job(self, access_code)
 
     def set_checkpoint(self, access_code: str, checkpoint: str):
         return set_checkpoint(self, access_code, checkpoint)
