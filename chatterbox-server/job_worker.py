@@ -281,20 +281,6 @@ def _run_job(jq, access_code: str):
     except Exception as e:
         logger.error(f"Job {access_code} handler '{run_func_name}' raised {type(e).__name__}: {e}")
         raise
-    finally:
-        # ── Release GPU after every job ────────────────────────
-        # The TTS model (ChatterboxMultilingualTTS, ~3 GB) is loaded
-        # in-process into the worker's GPU VRAM via gpu_manage.
-        # Without explicit release it persists between jobs, starving
-        # subsequent jobs of GPU memory and causing miopenInternalError
-        # / OOM crashes.
-        try:
-            import gpu_manage as _gm
-
-            _gm._release_gpu()
-            logger.info("Job %s: GPU model released", access_code)
-        except Exception:
-            pass
 
     if success:
         now = _now_str()
