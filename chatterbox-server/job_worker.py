@@ -263,12 +263,6 @@ def _run_job(jq, access_code: str):
     job.pop("run_func_name", None)
     job.pop("created_at", None)
 
-    # Run the job in a child process so we can detect cancellation
-    # and abort without blocking the queue worker.
-    # Non-daemon so the child survives parent process exit (e.g. gunicorn
-    # worker recycle on SIGHUP).  The child creates its own process group
-    # in _job_process_wrapper so it is immune to parent signal propagation.
-    # Cancellation still works via _kill_process_group (os.killpg).
     # Execute the job handler directly in this thread.  No more
     # multiprocessing child — the spawn boundary causes unreliable
     # HIP context re-initialisation on AMD Renoir iGPUs (gfx90c via
@@ -278,22 +272,39 @@ def _run_job(jq, access_code: str):
     # If this process crashes (e.g. genuine GPU bug), gunicorn
     # restarts the worker, and checkpointed jobs resume at the failed
     # step on the next startup without redoing completed work.
+    success = False
     try:
         run_func(job)
+        success = True
     except SystemExit:
         raise
     except Exception as e:
         logger.error(f"Job {access_code} handler '{run_func_name}' raised {type(e).__name__}: {e}")
         raise
+    finally:
+        # ── Release GPU after every job ────────────────────────
+        # The TTS model (ChatterboxMultilingualTTS, ~3 GB) is loaded
+        # in-process into the worker's GPU VRAM via gpu_manage.
+        # Without explicit release it persists between jobs, starving
+        # subsequent jobs of GPU memory and causing miopenInternalError
+        # / OOM crashes.
+        try:
+            import gpu_manage as _gm
 
-    now = _now_str()
-    conn.execute(
-        "UPDATE jobs SET status = ?, status_changed_at = ?, completed_at = ? WHERE access_code = ?",
-        (JobStatus.COMPLETED.value, now, now, access_code),
-    )
-    conn.commit()
-    publish_job_status(access_code, JobStatus.COMPLETED.value)
-    logger.info(f"Job {access_code} completed successfully")
+            _gm._release_gpu()
+            logger.info("Job %s: GPU model released", access_code)
+        except Exception:
+            pass
+
+    if success:
+        now = _now_str()
+        conn.execute(
+            "UPDATE jobs SET status = ?, status_changed_at = ?, completed_at = ? WHERE access_code = ?",
+            (JobStatus.COMPLETED.value, now, now, access_code),
+        )
+        conn.commit()
+        publish_job_status(access_code, JobStatus.COMPLETED.value)
+        logger.info(f"Job {access_code} completed successfully")
 
     # ── GPU state reset between jobs ─────────────────────────
     _reset_gpu_state_cooldown(jq)
