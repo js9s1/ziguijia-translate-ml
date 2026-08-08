@@ -48,6 +48,56 @@ def is_available() -> bool:
     return _available
 
 
+# ── Shared job queue (multi-worker dispatch) ──────────────────
+
+JOB_QUEUE_KEY = "jobqueue:pending"
+"""Redis list key for the shared pending-job queue.  ``RPUSH`` on
+enqueue, ``BLPOP`` on dequeue — exactly one worker claims each item,
+replacing the old per-worker ``queue.Queue`` + reconciliation dance."""
+
+
+def queue_push(access_code: str) -> None:
+    """Push a job code onto the shared pending queue.  No-op if Valkey is down."""
+    r = get_valkey()
+    if r is None:
+        return
+    try:
+        r.rpush(JOB_QUEUE_KEY, access_code)
+    except valkey.ValkeyError as e:
+        logger.warning("Valkey queue_push error: %s", e)
+
+
+def queue_pop(timeout: int = 1) -> str | None:
+    """Atomically pop a job code from the shared pending queue.
+
+    Uses ``BLPOP`` — blocks up to *timeout* seconds, then returns
+    ``None`` if no item was available.  Returns the access code string
+    on success, ``None`` on timeout or Valkey failure.
+    """
+    r = get_valkey()
+    if r is None:
+        return None
+    try:
+        result = r.blpop(JOB_QUEUE_KEY, timeout=timeout)
+        if result:
+            return result[1]  # (key, value) tuple
+        return None
+    except valkey.ValkeyError as e:
+        logger.warning("Valkey queue_pop error: %s", e)
+        return None
+
+
+def queue_length() -> int:
+    """Return the number of pending jobs in the shared queue.  0 if Valkey is down."""
+    r = get_valkey()
+    if r is None:
+        return 0
+    try:
+        return r.llen(JOB_QUEUE_KEY)
+    except valkey.ValkeyError:
+        return 0
+
+
 # ── Rate limiting ───────────────────────────────────────────────
 
 

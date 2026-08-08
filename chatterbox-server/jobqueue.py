@@ -29,20 +29,12 @@ except RuntimeError:
 from db_schema import ConnectionManager, init_jobs_schema
 from middleware import _DEFAULT_PARAMS
 from singleton import singleton
-from valkey_util import publish_job_status
+from valkey_util import publish_job_status, queue_push, queue_pop, JOB_QUEUE_KEY
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(BASE_DIR, "jobs.db")
 
 logger = logging.getLogger(__name__)
-
-# How long (seconds) an alive-but-idle worker may go without consuming a queued
-# item before it is considered wedged and restarted by the watchdog.
-_WORKER_PROGRESS_STALE = 60
-# How often to reconcile the in-memory queue against the persistent DB.
-_RECONCILE_INTERVAL = 30
-# How often the watchdog checks worker health / heals orphaned pending jobs.
-_WATCHDOG_INTERVAL = 15
 
 from job_checkpoint import (
     _purge_step_artifacts,
@@ -84,27 +76,13 @@ class JobQueue:
         self._running = False
         self._heartbeat_ts = 0.0
         self._graceful_shutdown = False
-        self._shutdown_timeout = 60  # seconds to wait for current job
-        self._shutdown_done = threading.Event()  # set when worker finishes
-        self._last_gpu_reset_ts = 0.0  # cooldown for _reset_gpu_state
-        self._worker_generation = 0  # bumped on restart — old threads detect mismatch
-        # access codes currently sitting in the in-memory queue (for dedup)
-        self._enqueued: set[str] = set()
-        self._last_progress_ts = 0.0  # last time the worker actually consumed an item
-        self._last_reconcile_ts = 0.0
-        self._watchdog_thread: threading.Thread | None = None
+        self._shutdown_timeout = 60
+        self._shutdown_done = threading.Event()
+        self._last_gpu_reset_ts = 0.0
         self._init_db()
         self._load_pending_jobs()
         if not _SKIP_QUEUE_INIT:
             self._ensure_worker()
-            self._watchdog_thread = threading.Thread(
-                target=self._watchdog_loop, daemon=True, name="jobqueue-watchdog"
-            )
-            self._watchdog_thread.start()
-            self._heartbeat_thread = threading.Thread(
-                target=self._heartbeat_loop, daemon=True, name="jobqueue-heartbeat"
-            )
-            self._heartbeat_thread.start()
 
     def _get_conn(self) -> sqlite3.Connection:
         return self._conn.get()
@@ -150,15 +128,10 @@ class JobQueue:
         conn.commit()
 
         rows = conn.execute("SELECT access_code FROM jobs WHERE status = ?", (JobStatus.PENDING.value,)).fetchall()
-        loaded = 0
         for row in rows:
-            code = row[0]
-            if code in self._enqueued:
-                continue
-            self._queue.put(code)
-            self._enqueued.add(code)
-            loaded += 1
-        logger.info(f"Loaded {loaded} pending jobs from database")
+            self._queue.put(row[0])
+            queue_push(row[0])
+        logger.info(f"Loaded {len(rows)} pending jobs from database")
 
     def _cleanup_orphan_processes(self):
         return cleanup_orphan_processes(self)
@@ -240,8 +213,7 @@ class JobQueue:
         conn.commit()
 
         self._queue.put(access_code)
-        self._enqueued.add(access_code)
-        # Ensure the worker thread is alive (it may have died silently)
+        queue_push(access_code)
         self._ensure_worker()
 
         return access_code
@@ -261,172 +233,64 @@ class JobQueue:
         self._conn.close()
 
     def _is_worker_healthy(self) -> bool:
-        """Return True if the worker thread is alive and actually making progress."""
+        """Return True if the worker thread is alive and has checked in recently."""
         if self._worker_thread is None or not self._worker_thread.is_alive():
             return False
         elapsed = time.monotonic() - self._heartbeat_ts
         if elapsed > _WORKER_HEARTBEAT_STALE:
             logger.warning("Worker thread heartbeat stale (%.1fs since last pulse)", elapsed)
             return False
-        # A thread that is alive and heartbeating but not consuming work is
-        # wedged (e.g. stuck on a lock). Treat it as unhealthy so the watchdog
-        # restarts it instead of leaving pending jobs stuck forever.
-        if (
-            self._current_access_code is None
-            and time.monotonic() - self._last_progress_ts > _WORKER_PROGRESS_STALE
-            and self._has_work()
-        ):
-            logger.warning(
-                "Worker thread alive but stalled (%.0fs without progress) while work is pending — treating as unhealthy",
-                time.monotonic() - self._last_progress_ts,
-            )
-            return False
         return True
 
     def _ensure_worker(self):
         if self._worker_thread is not None and not self._is_worker_healthy():
             logger.warning("Worker thread dead or stale — restarting")
-            self._worker_generation += 1  # old thread detects mismatch → exits
+            self._running = False
             old_thread = self._worker_thread
             self._worker_thread = None
-            # Let the old thread exit cleanly (daemon thread won't block
-            # process shutdown, but joining prevents reference leaks)
             try:
                 old_thread.join(timeout=5)
             except RuntimeError:
-                pass  # thread not started or already joined
+                pass
         if not self._running:
             self._running = True
             self._heartbeat_ts = time.monotonic()
-            self._last_progress_ts = time.monotonic()
             self._worker_thread = threading.Thread(
-                target=self._worker_main,
+                target=self._process_queue,
                 daemon=True,
                 name="jobqueue-worker",
             )
             self._worker_thread.start()
 
-    def _worker_main(self):
-        """Worker thread entry point.
-
-        Reloads pending jobs from the DB on every (re)start so a freshly spawned
-        worker picks up anything enqueued in a previous lifetime (fixes orphaned
-        'pending' jobs when a worker is wedged and restarted).
-        """
-        self._load_pending_jobs()
-        self._process_queue()
-
-    def _has_work(self) -> bool:
-        """True if there is queued or DB-pending work to consume."""
-        if not self._queue.empty():
-            return True
-        try:
-            conn = self._get_conn()
-            row = conn.execute(
-                "SELECT 1 FROM jobs WHERE status = ? LIMIT 1", (JobStatus.PENDING.value,)
-            ).fetchone()
-            return row is not None
-        except sqlite3.Error:
-            return True  # conservative — don't declare healthy if we can't check
-
-    def _reconcile_pending_jobs(self):
-        """Re-enqueue DB-pending jobs that aren't already queued or running.
-
-        The persistent DB is the source of truth for what still needs to run;
-        the in-memory queue is only populated at startup and on add/resubmit.
-        If those diverge (e.g. a resubmit raced a wedged worker), a job can sit
-        'pending' forever. This sweep heals that by re-queueing anything missing.
-        """
-        try:
-            conn = self._get_conn()
-            rows = conn.execute(
-                "SELECT access_code FROM jobs WHERE status = ?", (JobStatus.PENDING.value,)
-            ).fetchall()
-        except sqlite3.Error:
-            logger.warning("Reconcile: cannot read pending jobs from DB", exc_info=True)
-            return
-        with self._cancel_lock:
-            current = self._current_access_code
-        added = 0
-        for row in rows:
-            code = row[0]
-            if code in self._enqueued or code == current:
-                continue
-            self._queue.put(code)
-            self._enqueued.add(code)
-            added += 1
-        if added:
-            logger.info("Reconcile: re-enqueued %d orphaned pending job(s)", added)
-
-    def _watchdog_loop(self):
-        """Background thread that restarts a wedged worker and heals orphans.
-
-        Runs outside the worker thread so it can detect (and restart) a worker
-        that is alive but no longer consuming work.
-        """
-        while True:
-            time.sleep(_WATCHDOG_INTERVAL)
-            try:
-                self._ensure_worker()
-                self._reconcile_pending_jobs()
-            except Exception:
-                logger.exception("Job queue watchdog iteration failed")
-
     def _try_mark_failed(self, access_code, error_msg):
         return _try_mark_failed(self, access_code, error_msg)
-
-    def _heartbeat_loop(self):
-        """Keep `_heartbeat_ts` fresh while a job is executing.
-
-        _process_queue only bumps the heartbeat at its loop top (between
-        job executions).  A long-running job would look dead to the
-        watchdog after 30 s, triggering unnecessary restarts and the
-        attendant duplicate-processing race.  This daemon pulse thread
-        bumps the heartbeat every 5 s whenever a job is in flight.
-        """
-        while True:
-            try:
-                with self._cancel_lock:
-                    if self._current_access_code is not None:
-                        self._heartbeat_ts = time.monotonic()
-            except Exception:
-                pass
-            time.sleep(5)
 
     def _process_queue(self):
         import queue as std_queue
 
-        gen = self._worker_generation  # snapshot — old thread exits on mismatch
         _last_orphan_check = time.monotonic()
-        _ORPHAN_CHECK_INTERVAL = 120  # every 2 minutes
-        while self._running and self._worker_generation == gen:
+        _ORPHAN_CHECK_INTERVAL = 120
+        while self._running:
             self._heartbeat_ts = time.monotonic()
 
-            # Periodic orphan reaper — cleans up subprocesses that
-            # outlived their job (GPU hang, kill -9 on parent, etc.)
             if time.monotonic() - _last_orphan_check > _ORPHAN_CHECK_INTERVAL:
                 _last_orphan_check = time.monotonic()
                 self._cleanup_orphan_processes()
 
-            # Periodic DB→queue reconciliation — prevents a job being left
-            # 'pending' forever if the in-memory queue diverged from the DB.
-            if time.monotonic() - self._last_reconcile_ts > _RECONCILE_INTERVAL:
-                self._last_reconcile_ts = time.monotonic()
-                self._reconcile_pending_jobs()
-
             if self._graceful_shutdown:
-                # Don't dequeue new jobs — let the current one finish, then exit
                 with self._cancel_lock:
                     if self._current_access_code is not None:
                         time.sleep(1)
                         continue
                 break
-            try:
-                access_code = self._queue.get(timeout=1)
-            except std_queue.Empty:
-                continue  # timeout, just re-check self._running
-            self._last_progress_ts = time.monotonic()
-            self._enqueued.discard(access_code)
+            # Prefer Redis atomic BLPOP (works across workers).
+            # Fall back to in-memory queue when Valkey is down.
+            access_code = queue_pop(timeout=1)
+            if access_code is None:
+                try:
+                    access_code = self._queue.get(timeout=1)
+                except std_queue.Empty:
+                    continue
             with self._cancel_lock:
                 self._current_access_code = access_code
                 self._cancel_event.clear()
@@ -438,8 +302,7 @@ class JobQueue:
             finally:
                 with self._cancel_lock:
                     self._current_access_code = None
-        # Drain the queue on exit so any remaining items don't block
-        # the queue's internal Condition and leak a thread reference.
+        # Drain the in-memory queue on exit so any items don't block.
         while True:
             try:
                 self._queue.get_nowait()
@@ -651,8 +514,7 @@ class JobQueue:
         conn.commit()
 
         self._queue.put(access_code)
-        self._enqueued.add(access_code)
-        # Ensure the worker thread is alive (it may have died silently)
+        queue_push(access_code)
         self._ensure_worker()
 
         return {"success": True, "message": "Job resubmitted"}
