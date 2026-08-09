@@ -2,7 +2,7 @@
 name = "chatterbox-server"
 version = "0.1.0"
 description = "AI-driven video translation and voice cloning tool"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 
 [project.optional-dependencies]
 dev = [
@@ -16,7 +16,7 @@ dev = [
 ]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py313"
 line-length = 120
 
 [tool.ruff.lint]

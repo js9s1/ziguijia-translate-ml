@@ -51,7 +51,7 @@ GEN_VIDEO_ORIG_SCRIPT = os.environ.get(
 # ── External tools ───────────────────────────────────────────
 PYTHON_BIN = os.environ.get(
     "PYTHON_BIN",
-    "__PYTHON_BIN__",
+    "/home/js9s/.pyenv/versions/3.13.15/bin/python3.13",
 )
 WHISPER_MODEL = os.environ.get(
     "WHISPER_MODEL",
@@ -69,7 +69,7 @@ RAPID_VIDEOCR_PIPELINE_SCRIPT = os.environ.get(
 )
 RAPID_VIDEOCR_BIN = os.environ.get(
     "RAPID_VIDEOCR_BIN",
-    "/home/js9s/.pyenv/versions/3.11.14/bin/rapid_videocr",
+    "/home/js9s/.pyenv/versions/3.13.15/bin/rapid_videocr",
 )
 
 # ── Default ports ──────────────────────────────────────────

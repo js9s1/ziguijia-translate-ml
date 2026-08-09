@@ -91,7 +91,7 @@ fi
 
 echo "Starting chatterbox server..."
 
-${HOME}/.pyenv/versions/3.11.14/bin/gunicorn \
+${HOME}/.pyenv/versions/3.13.15/bin/gunicorn \
     -c ${HOME}/子归家/code_ml/chatterbox-server/gunicorn_config.py \
     --access-logfile ${HOME}/logs/chatterbox-server/access.log \
     --error-logfile ${HOME}/logs/chatterbox-server/error.log \

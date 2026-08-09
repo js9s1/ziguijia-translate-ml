@@ -14,7 +14,6 @@ import shutil
 import subprocess
 import tempfile
 import time
-from contextlib import redirect_stderr, redirect_stdout
 
 from config import (
     AUDIO_PROMPT_PATH,
@@ -46,13 +45,16 @@ def run_gen_audio_step(
     output_wav: str = "output.wav",
     changed_json: str = "changed_segments.json",
 ) -> dict[str, str]:
-    """Generate audio from SRT (in-process, shares the singleton TTS model).
+    """Generate audio from SRT (subprocess — clean GPU).
 
-    Previously ran gen_audio.py as a subprocess, which contended for GPU
-    memory with the gunicorn worker.  Now runs in-process via
-    ``gen_audio.process_with_direct`` so the job queue's single-worker
-    serialisation naturally serialises GPU access.
+    Runs gen_audio.py as a subprocess so it gets a dedicated GPU context,
+    avoiding in-process memory contention that causes SIGSEGV on iGPUs.
+    The worker releases its GPU model before spawning.
     """
+    import gpu_manage as _gm
+
+    _gm._release_gpu()
+
     os.makedirs(output_dir, exist_ok=True)
 
     srt_path_out = os.path.join(output_dir, output_srt)
@@ -62,54 +64,41 @@ def run_gen_audio_step(
     log_path = os.path.join(output_dir, "job.log")
     job_log(access_code, output_dir, "--- gen_audio ---")
 
-    with open(log_path, "a") as proc_log, redirect_stdout(proc_log), redirect_stderr(proc_log):
-        import sys
+    gen_audio_script = os.path.join(PROJECT_ROOT, "gen_audio.py")
+    assets_dir = os.path.join(PROJECT_ROOT, "..", "assets")
 
-        sys.path.insert(0, PROJECT_ROOT)
-        from gen_audio import process_with_direct
+    cmd = [
+        PYTHON_BIN,
+        "-u",
+        gen_audio_script,
+        srt_path,
+        "--audio_prompt", audio_prompt,
+        "--temperature", str(temperature),
+        "--output_dir", output_dir,
+        "--assets_dir", assets_dir,
+        "--target_language", target_language,
+        "--cfg_weight", str(cfg_weight),
+        "--exaggeration", str(exaggeration),
+        "--output_srt", output_srt,
+        "--output_wav", output_wav,
+        "--changed_json", changed_json,
+    ]
 
-        try:
-            result = process_with_direct(
-                srt_path,
-                audio_prompt,
-                temperature,
-                output_dir,
-                assets_dir=os.path.join(PROJECT_ROOT, "..", "assets"),
-                target_language=target_language,
-                cfg_weight=cfg_weight,
-                exaggeration=exaggeration,
-            )
-        except SystemExit:
-            raise
-        except Exception:
-            import traceback
+    with open(log_path, "a") as proc_log:
+        proc_log.write(f"+ {' '.join(cmd)}\n")
+        proc_log.flush()
 
-            traceback.print_exc()
-            raise
+    result = subprocess.run(
+        cmd,
+        stdout=open(log_path, "a"),
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
 
-    if result is None:
-        raise RuntimeError("gen_audio produced no output (no subtitles?)")
+    if result.returncode != 0:
+        raise RuntimeError(f"gen_audio exited with code {result.returncode}")
 
-    combined_tensor, adjusted_subs, changed_segments, sample_rate, total_duration = result
-
-    import srt as srt_mod
-
-    with open(srt_path_out, "w", encoding="utf-8") as f:
-        for i, sub in enumerate(adjusted_subs):
-            f.write(f"{i + 1}\n")
-            f.write(
-                f"{srt_mod.timedelta_to_srt_timestamp(sub.start)} --> {srt_mod.timedelta_to_srt_timestamp(sub.end)}\n"
-            )
-            f.write(sub.content + "\n\n")
-
-    import torchaudio as ta
-
-    ta.save(wav_path_out, combined_tensor, sample_rate)
-
-    with open(changed_json_out, "w") as f:
-        json.dump(changed_segments, f)
-
-    job_log(access_code, output_dir, f"Generated {len(adjusted_subs)} audio segments (duration: {total_duration:.2f}s)")
+    job_log(access_code, output_dir, "gen_audio subprocess completed")
 
     return {
         "output_srt_path": srt_path_out,
