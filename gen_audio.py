@@ -489,8 +489,9 @@ def process_with_direct(
 
         seg_wav_path = _combined_seg_path(output_dir, i)
 
-        if not clean_content.strip():
-            # Empty segment — generate silence and preserve timing
+        if not clean_content.strip() or len(clean_content.strip()) <= 2:
+            # Empty or too-short segment — generate silence and preserve timing.
+            # Single characters (OCR artifacts like "A") cause TTS hallucination loops.
             silence_wav = generate_silence(orig_duration, sample_rate)
             save_audio(seg_wav_path, silence_wav, sample_rate)
             # Remove stale cache entry for empty segments
