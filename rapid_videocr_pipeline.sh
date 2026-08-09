@@ -43,8 +43,8 @@ OUTPUT_SRT="./output.srt"
 PREFIX="result"
 SAVE_DIR=""
 KEEP_FRAMES=0
-RAPID_VIDEOCR_BIN="${RAPID_VIDEOCR_BIN:-/home/js9s/.pyenv/versions/3.13.15/bin/rapid_videocr}"
-PYTHON313="${PYTHON313:-/home/js9s/.pyenv/versions/3.13.15/bin/python3}"
+RAPID_VIDEOCR_BIN="${RAPID_VIDEOCR_BIN:-/usr/bin/rapid_videocr}"
+PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
 
 # ---- OCR engine selection ----
 # Switch the rapidocr config.yaml to the desired engine.
@@ -53,16 +53,16 @@ OCR_ENGINE="${OCR_ENGINE:-openvino}"
 case "$OCR_ENGINE" in
     openvino|onnxruntime|torch)
         # Only rewrite if the engine actually differs from current config
-        CURRENT_ENGINE=$("${PYTHON313}" -c "
+        CURRENT_ENGINE=$("${PYTHON_BIN}" -c "
 import yaml
 from pathlib import Path
-p = Path('${PYTHON313}').parent.parent / 'lib/python3.13/site-packages/rapidocr/config.yaml'
+p = Path('${PYTHON_BIN}').parent.parent / 'lib/python3.14/site-packages/rapidocr/config.yaml'
 cfg = yaml.safe_load(p.read_text())
 print(cfg['Det']['engine_type'])
 " 2>/dev/null || echo "unknown")
         if [[ "$CURRENT_ENGINE" != "$OCR_ENGINE" ]]; then
             echo "Switching OCR engine: ${CURRENT_ENGINE} -> ${OCR_ENGINE}"
-            RAPIDOCR_CFG="$("${PYTHON313}" -c "
+            RAPIDOCR_CFG="$("${PYTHON_BIN}" -c "
 from rapidocr.main import root_dir
 print(root_dir / 'config.yaml')
 ")"
@@ -130,7 +130,7 @@ ffmpeg -y -i "$INPUT_VIDEO" -vf "${EXTRACT_FILTER}" -c:v png "$FRAMES_DIR/frame_
 
 # ---- 2. Rename frames to VSF naming convention ----
 echo "[2/4] Renaming frames to VSF convention..."
-FRAME_COUNT=$("${PYTHON313}" -c "
+FRAME_COUNT=$("${PYTHON_BIN}" -c "
 import os
 from pathlib import Path
 
@@ -223,7 +223,7 @@ echo "Raw SRT: $RAW_SRT (${#ALL_SRTS[@]} chunks, ${TOTAL_FRAMES} frames)"
 
 # ---- 4. Merge adjacent duplicate / near-duplicate segments ----
 echo "[4/4] Merging adjacent duplicate segments..."
-"${PYTHON313}" -c "
+"${PYTHON_BIN}" -c "
 import re
 from difflib import SequenceMatcher
 

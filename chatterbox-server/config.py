@@ -49,9 +49,15 @@ GEN_VIDEO_ORIG_SCRIPT = os.environ.get(
 )
 
 # ── External tools ───────────────────────────────────────────
+# GEN_AUDIO_PYTHON: Python 3.13 for TTS (chatterbox needs 3.13, not 3.14+)
+GEN_AUDIO_PYTHON = os.environ.get(
+    "GEN_AUDIO_PYTHON",
+    "/home/js9s/.pyenv/versions/3.13.15/bin/python3.13",
+)
+# PYTHON_BIN: system Python for everything else (gen_video, download, etc.)
 PYTHON_BIN = os.environ.get(
     "PYTHON_BIN",
-    "/home/js9s/.pyenv/versions/3.13.15/bin/python3.13",
+    "/usr/bin/python3",
 )
 WHISPER_MODEL = os.environ.get(
     "WHISPER_MODEL",
@@ -69,7 +75,7 @@ RAPID_VIDEOCR_PIPELINE_SCRIPT = os.environ.get(
 )
 RAPID_VIDEOCR_BIN = os.environ.get(
     "RAPID_VIDEOCR_BIN",
-    "/home/js9s/.pyenv/versions/3.13.15/bin/rapid_videocr",
+    "/usr/bin/rapid_videocr",
 )
 
 # ── Default ports ──────────────────────────────────────────

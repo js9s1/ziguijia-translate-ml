@@ -8,7 +8,9 @@ import torchaudio as ta
 from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 from config import AUDIO_PROMPT_PATH
 from singleton import singleton
-from video_util import read_srt_text
+# read_srt_text imported lazily in load_subs() to avoid pulling in
+# the full server dependency chain (video_util → jobqueue → flask)
+# when gen_audio runs as a standalone Python 3.13 subprocess.
 
 _default_audio_prompt_path = AUDIO_PROMPT_PATH
 
@@ -158,6 +160,8 @@ class NingAudio:
         return self.wav_to_bytes(combined, sample_rate)
 
     def load_subs(self, srt_path):
+        from video_util import read_srt_text
+
         return list(srt.parse(read_srt_text(srt_path)))
 
     def _fallback_to_cpu(self, error: Exception) -> bool:

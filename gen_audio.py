@@ -16,7 +16,30 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "chatterbox-server"))
 
 from config import ASSETS_DIR as CFG_ASSETS_DIR
 from config import AUDIO_PROMPT_PATH as CFG_AUDIO_PROMPT_PATH
-from video_util import read_srt_text
+
+# Inline read_srt_text to avoid pulling in the full server import chain
+# (video_util → jobqueue → middleware → flask). gen_audio is a standalone
+# subprocess on Python 3.13 — it doesn't need the Flask server.
+import re as _re
+
+_TIMESTAMP_RE = _re.compile(r"(\d{2}:\d{2}:\d{2})[.,](\d{3})")
+
+
+def _read_srt_text(path: str) -> str:
+    """Read SRT with encoding fallback, normalize timestamps to comma-milliseconds."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    for enc in ("utf-8-sig", "utf-16-le", "utf-16-be", "gbk", "gb2312", "gb18030", "utf-8"):
+        try:
+            text = raw.decode(enc)
+            break
+        except (UnicodeDecodeError, LookupError):
+            continue
+    else:
+        text = raw.decode("utf-8", errors="replace")
+    text = text.replace("\r\n", "\n")
+    text = _TIMESTAMP_RE.sub(r"\1,\2", text)
+    return text
 
 CHANGED_THRESHOLD = 0.05
 
@@ -263,7 +286,7 @@ def split_text(text, max_len=120):
 
 def load_subs(srt_path):
     """Parse SRT file preserving empty-content entries (unlike srt.parse which drops them)."""
-    content = read_srt_text(srt_path)
+    content = _read_srt_text(srt_path)
     # Split on blank lines to get raw entry blocks
     blocks = re.split(r"\n\n+", content.strip())
     subs = []

@@ -5,4 +5,4 @@ export HSA_XNACK=0
 export ROCBLAS_USE_HIPBLASLT=0
 export ROCBLAS_TENSILE_LIBPATH=/opt/rocm/lib/rocblas/library
 export LD_LIBRARY_PATH="${HOME}/.local/lib/rocm:/opt/rocm/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-exec /home/js9s/.pyenv/versions/3.13.15/bin/python3.13 "$@"
+exec /usr/bin/python3 "$@"

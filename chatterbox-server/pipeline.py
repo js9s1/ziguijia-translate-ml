@@ -17,6 +17,7 @@ import time
 
 from config import (
     AUDIO_PROMPT_PATH,
+    GEN_AUDIO_PYTHON,
     GEN_VIDEO_SCRIPT,
     LANG_MAP,
     PROJECT_ROOT,
@@ -51,10 +52,6 @@ def run_gen_audio_step(
     avoiding in-process memory contention that causes SIGSEGV on iGPUs.
     The worker releases its GPU model before spawning.
     """
-    import gpu_manage as _gm
-
-    _gm._release_gpu()
-
     os.makedirs(output_dir, exist_ok=True)
 
     srt_path_out = os.path.join(output_dir, output_srt)
@@ -68,7 +65,7 @@ def run_gen_audio_step(
     assets_dir = os.path.join(PROJECT_ROOT, "..", "assets")
 
     cmd = [
-        PYTHON_BIN,
+        GEN_AUDIO_PYTHON,
         "-u",
         gen_audio_script,
         srt_path,

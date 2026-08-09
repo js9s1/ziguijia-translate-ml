@@ -58,13 +58,14 @@ def post_fork(server, worker):
 
     get_job_queue()
 
-    # Reset TTS model singletons — these hold module-level GPU handles
-    # that point to the parent process and must not be reused post-fork.
-    from audio_utils import NingAudio
-    from gpu_manage import _clear_all_models
+    # Reset TTS model singletons — gen_audio now runs as a subprocess
+    # on its own Python 3.13, so the worker never holds GPU handles.
+    try:
+        from gpu_manage import _clear_all_models
 
-    NingAudio.clear()
-    _clear_all_models()
+        _clear_all_models()
+    except ImportError:
+        pass  # OK — torch/gpu_manage not needed in server worker
 
     fmt = JSONFormatter()
     req_filter = RequestIDFilter()
