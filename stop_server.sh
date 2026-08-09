@@ -11,6 +11,13 @@ if pgrep -f "gunicorn.*chatterbox" > /dev/null 2>&1; then
     pkill -9 -f "gunicorn" 2>/dev/null
 fi
 
+# Kill orphaned gen_audio subprocesses (spawned by gunicorn worker,
+# survive because they're not in the same process group)
+if pgrep -f "gen_audio.py" > /dev/null 2>&1; then
+    echo "Killing orphaned gen_audio processes..."
+    pkill -f "gen_audio.py" 2>/dev/null
+fi
+
 # Stop Valkey if it was started by start_server.sh (only if no other clients)
 # Load password from .env
 if [ -f "${HOME}/子归家/code_ml/.env" ]; then
