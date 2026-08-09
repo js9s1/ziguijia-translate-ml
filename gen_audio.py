@@ -489,7 +489,7 @@ def process_with_direct(
 
         seg_wav_path = _combined_seg_path(output_dir, i)
 
-        if not clean_content.strip() or len(clean_content.strip()) <= 12:
+        if not clean_content.strip() or len(clean_content.strip()) <= 4:
             # Empty or too-short segment — generate silence and preserve timing.
             # Single characters (OCR artifacts like "A") cause TTS hallucination loops.
             silence_wav = generate_silence(orig_duration, sample_rate)
@@ -562,10 +562,14 @@ def process_with_direct(
                             exaggeration=exaggeration,
                         )
                     except RuntimeError as e:
-                        raise RuntimeError(
-                            f"Segment {i} (\"{clean_content[:80]}{'...' if len(clean_content) > 80 else ''}\") "
-                            f"at chunk {ci + 1}/{len(chunks)}: {e}"
-                        ) from e
+                        # Stuck-loop or other generation error — log and use silence.
+                        # Don't fail the whole job for one bad segment.
+                        print(f"  ⚠ segment {i} TTS failed: {e}")
+                        print(f"     Using silence for this segment ({orig_duration:.1f}s)")
+                        chunk_wavs = [generate_silence(orig_duration, sample_rate)]
+                        total_wav_duration = orig_duration
+                        seg_counter += len(chunks)
+                        break  # exit chunk loop, use silence combined_wav below
                     if wav_data.dim() == 1:
                         wav_data = wav_data.unsqueeze(0)
                     chunk_wavs.append(wav_data)
