@@ -547,18 +547,24 @@ def process_with_direct(
             try:
                 chunk_wavs = []
                 total_wav_duration = 0.0
-                for chunk in chunks:
+                for ci, chunk in enumerate(chunks):
                     wav_path = os.path.join(output_dir, "tmp", f"segment_{seg_counter}.wav")
-                    wav_data, wav_duration = audio.generate_audio(
-                        chunk,
-                        wav_path,
-                        sample_rate,
-                        temperature,
-                        prompt_file=prompt,
-                        target_language=target_language,
-                        cfg_weight=cfg_weight,
-                        exaggeration=exaggeration,
-                    )
+                    try:
+                        wav_data, wav_duration = audio.generate_audio(
+                            chunk,
+                            wav_path,
+                            sample_rate,
+                            temperature,
+                            prompt_file=prompt,
+                            target_language=target_language,
+                            cfg_weight=cfg_weight,
+                            exaggeration=exaggeration,
+                        )
+                    except RuntimeError as e:
+                        raise RuntimeError(
+                            f"Segment {i} (\"{clean_content[:80]}{'...' if len(clean_content) > 80 else ''}\") "
+                            f"at chunk {ci + 1}/{len(chunks)}: {e}"
+                        ) from e
                     if wav_data.dim() == 1:
                         wav_data = wav_data.unsqueeze(0)
                     chunk_wavs.append(wav_data)
