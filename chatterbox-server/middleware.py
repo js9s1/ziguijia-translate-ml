@@ -337,9 +337,19 @@ def _validate_srt_language(text: str):
             if name in ("CJK", "Latin"):
                 continue  # CJK + occasional Latin is expected in OCR
             # Any other script found above threshold — that's genuinely mixed
+            script_names = [n for n in script_counts if script_counts.get(n, 0) / total > 0.15]
+            script_labels = {
+                "CJK": "中文/日文/韩文",
+                "Latin": "英文/拉丁字母",
+                "Cyrillic": "俄文/西里尔字母",
+                "Arabic": "阿拉伯文",
+                "Devanagari": "印地文/梵文",
+                "Thai": "泰文",
+                "Greek": "希腊文",
+                "Hebrew": "希伯来文",
+            }
+            detected = ", ".join(script_labels.get(s, s) for s in script_names)
             raise ValueError(
-                f"SRT file contains mixed languages (found {name} + "
-                + ", ".join(script_counts.keys())
-                + "). Please upload an SRT file in a single language."
+                f"SRT 文件包含多种语言，检测到: {detected}。请上传单一语言的 SRT 文件。"
             )
         # Only Latin + CJK found — that's acceptable
