@@ -587,6 +587,10 @@ def process_with_direct(
                             os.remove(_tombstone)
                         except OSError:
                             pass
+                    # If GPU internally fell back to CPU (OOM / stuck-loop),
+                    # stay on CPU for all remaining segments — GPU is unstable.
+                    if _gm._model is not None and _gm._get_device(_gm._model) != "cuda":
+                        _gpu_failed.update(range(i + 1, len(subs)))
 
             combined_wav = torch.cat(chunk_wavs, dim=1) if len(chunk_wavs) > 1 else chunk_wavs[0]
 
