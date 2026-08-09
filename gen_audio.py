@@ -560,7 +560,7 @@ def process_with_direct(
                             cfg_weight=cfg_weight,
                             exaggeration=exaggeration,
                         )
-                    except RuntimeError as e:
+                    except (RuntimeError, SystemExit) as e:
                         # Stuck-loop or other generation error — log and use silence.
                         # Don't fail the whole job for one bad segment.
                         print(f"  ⚠ segment {i} TTS failed: {e}")
