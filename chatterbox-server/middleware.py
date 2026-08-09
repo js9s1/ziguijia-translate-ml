@@ -309,7 +309,8 @@ def _validate_srt_language(text: str):
     from language_utils import UNICODE_SCRIPTS
 
     lines = text.splitlines()
-    found_scripts = set()
+    script_counts: dict[str, int] = {}
+    total_chars = 0
     for line in lines:
         stripped = line.strip()
         if not stripped:
@@ -319,7 +320,26 @@ def _validate_srt_language(text: str):
         if "-->" in stripped:
             continue
         for name, pattern in UNICODE_SCRIPTS.items():
-            if pattern.search(stripped):
-                found_scripts.add(name)
-        if len(found_scripts) > 1:
-            raise ValueError("SRT file contains mixed languages. Please upload an SRT file in a single language.")
+            matches = len(pattern.findall(stripped))
+            if matches:
+                script_counts[name] = script_counts.get(name, 0) + matches
+                total_chars += matches
+
+    # Only reject if there's substantial mixing (>15% minority script).
+    # Chinese OCR SRTs commonly contain occasional Latin letters
+    # (URLs, abbreviations, brand names) which should not block saving.
+    if len(script_counts) > 1:
+        total = sum(script_counts.values())
+        for name, count in script_counts.items():
+            if total > 0 and count / total < 0.15:
+                continue  # minority script, ignore
+            # All remaining scripts must be compatible
+            if name in ("CJK", "Latin"):
+                continue  # CJK + occasional Latin is expected in OCR
+            # Any other script found above threshold — that's genuinely mixed
+            raise ValueError(
+                f"SRT file contains mixed languages (found {name} + "
+                + ", ".join(script_counts.keys())
+                + "). Please upload an SRT file in a single language."
+            )
+        # Only Latin + CJK found — that's acceptable
