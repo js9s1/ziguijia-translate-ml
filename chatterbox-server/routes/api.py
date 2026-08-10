@@ -10,7 +10,6 @@ import zipfile
 
 from flask import Blueprint, jsonify, request, send_file, send_from_directory
 from jobqueue import get_job_queue
-from valkey_util import cache_get, cache_set
 
 api_bp = Blueprint("api", __name__)
 logger = logging.getLogger(__name__)
@@ -24,20 +23,10 @@ HTML_DIR = os.path.join(BASE_DIR, "html")
 
 @api_bp.route("/health", methods=["GET"])
 def health_check():
-    cached = cache_get("health:gpu")
-    if cached:
-        cuda_ok = cached == "1"
-    else:
-        import importlib
-
-        cuda_ok = importlib.import_module("torch").cuda.is_available()
-        cache_set("health:gpu", "1" if cuda_ok else "0", ttl=60)
     return jsonify(
         {
             "status": "healthy",
             "message": "Server is running",
-            "cuda": cuda_ok,
-            "hsa_override": os.environ.get("HSA_OVERRIDE_GFX_VERSION", "not set"),
         }
     )
 

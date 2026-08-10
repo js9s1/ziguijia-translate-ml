@@ -94,27 +94,7 @@
                     _submitUrl = '/video/ning/ocr-process';
                 }
 
-                fetch(_submitUrl, { method: 'POST', body: formData })
-                .then(function(response) {
-                    if (response.status === 401) {
-                        overlay.classList.remove('active');
-                        alert('请先登录');
-                        window.location.href = '/auth/login?next=' + encodeURIComponent('/video/ning');
-                        return;
-                    }
-                    return response.json();
-                })
-                .then(function(data) {
-                    if (!data) return;
-                    overlay.classList.remove('active');
-                    if (data.error) { alert('错误: ' + data.error); return; }
-                    if (data.cached_found) {
-                        showCachedPrompt(data);
-                        return;
-                    }
-                    showResult(data.access_code, '/result?code=' + data.access_code, 'checkProgressLink');
-                })
-                .catch(function(err) { overlay.classList.remove('active'); alert('错误: ' + err.message); });
+                submitJob(_submitUrl, formData, 'checkProgressLink', '/video/ning');
             }
         });
 

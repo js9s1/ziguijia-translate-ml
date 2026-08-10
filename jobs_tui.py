@@ -1310,21 +1310,16 @@ def run_output_browser(job: Job, console: Console):
                     stdin=subprocess.DEVNULL,
                 )
             else:
-                console.clear()
-                console.print(
-                    Panel(
-                        Align.center(f"📝 打开: [bold]{entry['name']}[/]"),
-                        border_style="yellow",
-                    )
-                )
-                console.print("\n[dim]按 Enter 启动 ghostty...[/dim]")
-                os.read(sys.stdin.fileno(), 1)
-                subprocess.Popen(
-                    ["ghostty", "-e", "sh", "-c", f"cat '{fpath}' | sed 's/\\r/\\n/g' | less"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    stdin=subprocess.DEVNULL,
-                )
+                fd = sys.stdin.fileno()
+                current = termios.tcgetattr(fd)
+                normal = termios.tcgetattr(fd)
+                normal[tty.LFLAG] |= termios.ECHO | termios.ICANON | termios.IEXTEN | termios.ISIG
+                normal[tty.IFLAG] |= termios.ICRNL | termios.IXON
+                normal[tty.CC][termios.VMIN] = 1
+                normal[tty.CC][termios.VTIME] = 0
+                termios.tcsetattr(fd, termios.TCSADRAIN, normal)
+                subprocess.call(["less", "-R", fpath])
+                termios.tcsetattr(fd, termios.TCSADRAIN, current)
 
         elif key in ("d", "D"):
             fi = cursor - file_offset

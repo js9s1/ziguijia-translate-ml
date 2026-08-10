@@ -24,6 +24,7 @@ from config import (
     PYTHON_BIN,
     RAPID_VIDEOCR_BIN,
     RAPID_VIDEOCR_PIPELINE_SCRIPT,
+    TRANSLATE_PYTHON,
     WHISPER_MODEL,
     WHISPER_OV_DEVICE,
 )
@@ -380,7 +381,7 @@ def run_translate_ckpt(
     intro_marker: str | None = None,
     outro_marker: str | None = None,
 ) -> str:
-    """Translate an SRT file via HY-MT. Returns path to translated SRT.
+    """Translate an SRT file via HY-MT (subprocess on ROCm Python 3.11).
 
     Checkpoint-aware: skips if ``"translate"`` is already marked.
     """
@@ -392,24 +393,39 @@ def run_translate_ckpt(
     job_log(
         access_code,
         output_dir,
-        "Translating subtitles..." + (" (intro/outro auto-detected)" if intro_marker or outro_marker else ""),
+        "Translating subtitles (GPU)..." + (" (intro/outro markers)" if intro_marker or outro_marker else ""),
     )
     target_language_name = LANG_MAP.get(target_language, target_language)
 
-    # Defer import to avoid circular dependency with video_util
-    from video_util import translate_srt_file
-
-    translate_srt_file(
+    translate_script = os.path.join(PROJECT_ROOT, "translate_srt.py")
+    cmd = [
+        TRANSLATE_PYTHON,
+        "-u",
+        translate_script,
         input_srt,
         translated_srt,
-        access_code,
-        output_dir,
-        target_language_name,
-        proc_log,
-        log_file,
-        intro_marker=intro_marker,
-        outro_marker=outro_marker,
+        "-l", target_language_name,
+    ]
+    if intro_marker:
+        cmd.extend(["--intro", intro_marker])
+    if outro_marker:
+        cmd.extend(["--outro", outro_marker])
+
+    with open(log_file, "a") as log_fh:
+        log_fh.write(f"+ {' '.join(cmd)}\n")
+        log_fh.flush()
+
+    result = subprocess.run(
+        cmd,
+        stdout=open(log_file, "a"),
+        stderr=subprocess.STDOUT,
+        check=False,
     )
+
+    if result.returncode != 0:
+        raise RuntimeError(f"translate_srt exited with code {result.returncode}")
+
+    job_log(access_code, output_dir, "  ✓ translation complete")
     if ckpt:
         ckpt.mark("translate")
     return translated_srt

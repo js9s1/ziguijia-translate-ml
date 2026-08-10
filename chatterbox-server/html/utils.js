@@ -379,39 +379,44 @@ function showResult(accessCode, resultUrl, linkId) {
 /* ── Form submission helper (shared) ────────────────────── */
 
 function submitJob(url, bodyOrFormData, resultLinkId, redirectPath) {
-    var overlay = document.getElementById('loadingOverlay');
-    if (overlay) overlay.classList.add('active');
+    fetch('/auth/me').then(function(r) { return r.json(); }).then(function(data) {
+        if (!data.authenticated) {
+            window.location.href = '/auth/login?next=' + encodeURIComponent(redirectPath || window.location.pathname);
+            return;
+        }
 
-    var options = { method: 'POST' };
-    if (bodyOrFormData instanceof FormData) {
-        options.body = bodyOrFormData;
-    } else {
-        options.headers = { 'Content-Type': 'application/json' };
-        options.body = JSON.stringify(bodyOrFormData);
-    }
+        var overlay = document.getElementById('loadingOverlay');
+        if (overlay) overlay.classList.add('active');
 
-    return fetch(url, options)
-        .then(function(r) {
-            if (r.status === 401) {
-                if (overlay) overlay.classList.remove('active');
-                var loginUrl = '/auth/login?next=' + encodeURIComponent(redirectPath || window.location.pathname);
-                if (confirm('请先登录')) { window.location.href = loginUrl; }
-                return Promise.reject(new Error('auth'));
-            }
-            return r.json();
-        })
-        .then(function(data) {
-            if (overlay) overlay.classList.remove('active');
-            if (!data) return;
-            if (data.error) { alert('错误: ' + data.error); return; }
-            if (data.access_code) {
-                showResult(data.access_code, '/result?code=' + data.access_code, resultLinkId);
-            }
-        })
-        .catch(function(err) {
-            if (overlay) overlay.classList.remove('active');
-            if (err.message !== 'auth') alert('错误: ' + err.message);
-        });
+        var form = document.createElement('form');
+        form.method = 'POST';
+        form.action = url;
+        form.enctype = 'multipart/form-data';
+
+        if (bodyOrFormData instanceof FormData) {
+            bodyOrFormData.forEach(function(value, key) {
+                if (value instanceof File) {
+                    var original = document.querySelector('[name="' + key + '"]');
+                    if (original) form.appendChild(original);
+                } else {
+                    addHidden(form, key, value);
+                }
+            });
+        } else {
+            for (var key in bodyOrFormData) { addHidden(form, key, bodyOrFormData[key]); }
+        }
+
+        document.body.appendChild(form);
+        form.submit();
+    });
+}
+
+function addHidden(form, name, value) {
+    var input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = name;
+    input.value = value;
+    form.appendChild(input);
 }
 
 

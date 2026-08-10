@@ -1,4 +1,3 @@
 #!/bin/bash
-# Run Python 3.11 with ROCm environment for AMD Strix Halo APU (gfx1151 / Radeon 8060S)
 export LD_LIBRARY_PATH="/opt/rocm/rocm/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-exec ~/.local/bin/python3.11 "$@"
+exec ~/.pyenv/versions/3.11.14/bin/python3.11 "$@"

@@ -5,13 +5,21 @@ Usage:
     app = create_app()
 """
 
+import json
 import logging
 import os
 import time
 import uuid
 
-from flask import Flask, g, jsonify, request, session
+from flask import Flask, g, jsonify, redirect, request, session
 from valkey_util import is_available as valkey_available
+
+
+def _is_ajax():
+    return (
+        request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or request.headers.get("Accept") == "application/json"
+    )
 
 
 def _get_secret_key() -> str:
@@ -72,12 +80,39 @@ def create_app():
             extra={"method": request.method, "endpoint": request.path, "ip": request.remote_addr},
         )
 
+    @app.before_request
+    def _handle_options():
+        if request.method == "OPTIONS":
+            resp = app.make_default_options_response()
+            resp.headers["Access-Control-Allow-Origin"] = "*"
+            resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+            resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+            return resp
+
     @app.after_request
     def _log_response(response):
         duration_ms = round((time.monotonic() - getattr(g, "request_start", 0)) * 1000)
+
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+
         if response.status_code >= 500:
             response.headers["X-Request-Id"] = getattr(g, "request_id", "-")
             return response
+
+        is_json = response.content_type and "application/json" in response.content_type
+        if is_json and not _is_ajax() and request.method == "POST":
+            try:
+                body = json.loads(response.get_data(as_text=True))
+                code = body.get("access_code")
+                if code:
+                    return redirect("/result?code=" + code)
+                if response.status_code == 401:
+                    return redirect("/auth/login?next=" + request.path)
+            except Exception:
+                pass
+
         logger.info(
             "← %s %s %d (%dms)",
             request.method,

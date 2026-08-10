@@ -56,6 +56,11 @@ GEN_AUDIO_PYTHON = os.environ.get(
     "GEN_AUDIO_PYTHON",
     os.path.expanduser("~/.pyenv/versions/3.11.14/bin/python3.11"),
 )
+# TRANSLATE_PYTHON: Python 3.11 for HY-MT translation subprocess (ROCm GPU)
+TRANSLATE_PYTHON = os.environ.get(
+    "TRANSLATE_PYTHON",
+    os.path.expanduser("~/.pyenv/versions/3.11.14/bin/python3.11"),
+)
 # PYTHON_BIN: system Python for everything else (gen_video, download, etc.)
 PYTHON_BIN = os.environ.get(
     "PYTHON_BIN",
@@ -70,7 +75,7 @@ HY_MT_DIR = os.environ.get(
     "HY_MT_DIR",
     "/home/ziguijia/src/HY-MT",
 )
-HY_MT_BACKEND = os.environ.get("HY_MT_BACKEND", "openvino")  # "openvino" | "pytorch"
+HY_MT_BACKEND = os.environ.get("HY_MT_BACKEND", "pytorch")  # "openvino" | "pytorch"
 RAPID_VIDEOCR_PIPELINE_SCRIPT = os.environ.get(
     "RAPID_VIDEOCR_PIPELINE_SCRIPT",
     os.path.join(PROJECT_ROOT, "rapid_videocr_pipeline.sh"),
