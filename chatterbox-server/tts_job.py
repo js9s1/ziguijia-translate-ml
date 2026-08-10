@@ -1,19 +1,16 @@
-"""TTS job — text-to-wave, queued and run in background."""
+"""TTS job — text-to-wave, runs gen_audio.py subprocess on Python 3.11."""
 
 import os
+import subprocess
 import uuid
 
-from config import AUDIO_TRACKS_DIR
+from config import AUDIO_TRACKS_DIR, AUDIO_PROMPT_PATH, GEN_AUDIO_PYTHON, PROJECT_ROOT
 from jobqueue import get_job_queue
 from log_utils import job_log
 from middleware import get_audio_params
 
 
 def _run_tts_job(job_data: dict):
-    from contextlib import redirect_stdout
-
-    from audio_utils import NingAudio
-
     text = job_data["text"]
     output_dir = job_data["output_dir"]
     filename = job_data.get("filename", "output.wav")
@@ -21,22 +18,38 @@ def _run_tts_job(job_data: dict):
     access_code = job_data["access_code"]
     os.makedirs(output_dir, exist_ok=True)
 
-    job_log(access_code, output_dir, "Starting TTS...")
-    log_file = os.path.join(output_dir, "job.log")
-    with open(log_file, "a") as lf:
-        with redirect_stdout(lf):
-            wav_data = NingAudio().text_to_wave_with_silence(
-                text,
-                temperature=ap["temperature"],
-                target_language=ap["target_language"],
-                cfg_weight=ap["cfg_weight"],
-                exaggeration=ap["exaggeration"],
-            )
+    srt_path = os.path.join(output_dir, "input.srt")
+    with open(srt_path, "w") as f:
+        f.write(f"1\n00:00:00,000 --> 00:01:00,000\n{text}\n\n")
 
-    output_path = os.path.join(output_dir, filename)
-    with open(output_path, "wb") as f:
-        f.write(wav_data.read())
-    job_log(access_code, output_dir, f"Wrote {output_path}")
+    gen_audio_script = os.path.join(PROJECT_ROOT, "gen_audio.py")
+    assets_dir = os.path.join(PROJECT_ROOT, "..", "assets")
+
+    job_log(access_code, output_dir, "--- gen_audio (TTS) ---")
+    cmd = [
+        GEN_AUDIO_PYTHON, "-u", gen_audio_script, srt_path,
+        "--audio_prompt", AUDIO_PROMPT_PATH,
+        "--temperature", str(ap["temperature"]),
+        "--output_dir", output_dir,
+        "--assets_dir", assets_dir,
+        "--target_language", ap["target_language"],
+        "--cfg_weight", str(ap["cfg_weight"]),
+        "--exaggeration", str(ap["exaggeration"]),
+        "--output_wav", filename,
+        "--output_srt", "output_adjusted.srt",
+        "--changed_json", "changed_segments.json",
+    ]
+
+    log_path = os.path.join(output_dir, "job.log")
+    with open(log_path, "a") as proc_log:
+        proc_log.write(f"+ {' '.join(cmd)}\n")
+        proc_log.flush()
+
+    result = subprocess.run(cmd, stdout=open(log_path, "a"), stderr=subprocess.STDOUT, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(f"gen_audio exited with code {result.returncode}")
+
+    job_log(access_code, output_dir, f"gen_audio subprocess completed")
 
 
 def process_tts(

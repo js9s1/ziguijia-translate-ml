@@ -18,12 +18,10 @@ _STEP_ARTIFACTS: dict[str, list[str]] = {
         "audio/output_adjusted.srt",
         "audio/output-final-modified.srt",
         "audio/changed_segments.json",
-        "audio/job.log",
         "audio_tracks/output.wav",
         "audio_tracks/output_adjusted.srt",
         "audio_tracks/output-final-modified.srt",
         "audio_tracks/changed_segments.json",
-        "audio_tracks/job.log",
     ],
     "video": ["output_modified.mp4", "output_final.mp4"],
 }

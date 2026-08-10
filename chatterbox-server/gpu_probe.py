@@ -14,11 +14,8 @@ import sys
 logger = logging.getLogger(__name__)
 
 _ROCm_ENV = {
-    "HSA_OVERRIDE_GFX_VERSION": "9.0.0",
-    "HSA_XNACK": "0",
-    "ROCBLAS_USE_HIPBLASLT": "0",
     "PYTHONUNBUFFERED": "1",
-    "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", "0"),
+    "HIP_VISIBLE_DEVICES": os.environ.get("HIP_VISIBLE_DEVICES", "0"),
 }
 
 
@@ -39,10 +36,6 @@ def _build_probe_script(sizes: list[int], include_softmax: bool, reset_peak_memo
 
     sizes_repr = repr(sizes)
     return (
-        "import os\n"
-        "os.environ.setdefault('HSA_OVERRIDE_GFX_VERSION', '9.0.0')\n"
-        "os.environ.setdefault('HSA_XNACK', '0')\n"
-        "os.environ.setdefault('ROCBLAS_USE_HIPBLASLT', '0')\n"
         "import torch\n"
         "ok = True\n"
         "try:\n"

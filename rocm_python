@@ -1,8 +1,4 @@
 #!/bin/bash
-# Run Python with ROCm environment for AMD Renoir APU (gfx90c)
-export HSA_OVERRIDE_GFX_VERSION=9.0.0
-export HSA_XNACK=0
-export ROCBLAS_USE_HIPBLASLT=0
-export ROCBLAS_TENSILE_LIBPATH=/opt/rocm/lib/rocblas/library
-export LD_LIBRARY_PATH="${HOME}/.local/lib/rocm:/opt/rocm/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-exec /usr/bin/python3 "$@"
+# Run Python 3.11 with ROCm environment for AMD Strix Halo APU (gfx1151 / Radeon 8060S)
+export LD_LIBRARY_PATH="/opt/rocm/rocm/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec ~/.local/bin/python3.11 "$@"

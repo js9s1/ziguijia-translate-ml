@@ -19,7 +19,7 @@ from config import AUDIO_PROMPT_PATH as CFG_AUDIO_PROMPT_PATH
 
 # Inline read_srt_text to avoid pulling in the full server import chain
 # (video_util → jobqueue → middleware → flask). gen_audio is a standalone
-# subprocess on Python 3.13 — it doesn't need the Flask server.
+# subprocess — it doesn't need the Flask server.
 import re as _re
 
 _TIMESTAMP_RE = _re.compile(r"(\d{2}:\d{2}:\d{2})[.,](\d{3})")
@@ -43,10 +43,10 @@ def _read_srt_text(path: str) -> str:
 
 CHANGED_THRESHOLD = 0.05
 
-# Thermal protection — Renoir iGPU (gfx90c via ROCm) is prone to GPU hangs
-# under sustained load.  Pause between segments when the GPU gets too hot.
-GPU_TEMP_LIMIT = float(os.environ.get("GPU_TEMP_LIMIT", "80"))  # °C — pause if exceeded
-GPU_COOLDOWN_TARGET = float(os.environ.get("GPU_COOLDOWN_TARGET", "60"))  # °C — resume when below
+# Thermal protection — Strix Halo iGPU (gfx1151) can handle sustained load
+# but still benefits from thermal monitoring on fanless/compact systems.
+GPU_TEMP_LIMIT = float(os.environ.get("GPU_TEMP_LIMIT", "90"))  # °C — pause if exceeded
+GPU_COOLDOWN_TARGET = float(os.environ.get("GPU_COOLDOWN_TARGET", "70"))  # °C — resume when below
 GPU_POLL_SECS = float(os.environ.get("GPU_POLL_SECS", "10"))
 _STOP_REQUESTED = False
 
@@ -285,7 +285,11 @@ def split_text(text, max_len=120):
 
 
 def load_subs(srt_path):
-    """Parse SRT file preserving empty-content entries (unlike srt.parse which drops them)."""
+    """Parse SRT file preserving empty-content entries (unlike srt.parse which drops them).
+
+    Also auto-repairs malformed blocks where a segment absorbed the next one
+    due to a missing blank-line separator.
+    """
     content = _read_srt_text(srt_path)
     # Split on blank lines to get raw entry blocks
     blocks = re.split(r"\n\n+", content.strip())
@@ -305,7 +309,41 @@ def load_subs(srt_path):
         end = srt.srt_timestamp_to_timedelta(ts_match.group(2))
         sub_content = lines[2] if len(lines) > 2 else ""
         subs.append(srt.Subtitle(index=idx, start=start, end=end, content=sub_content))
-    return subs
+
+    # Auto-repair swallowed segments
+    _swallowed_pat = re.compile(
+        r"\n(\d+)\n(\d{1,2}:\d{1,2}:\d{1,2},\d{3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2},\d{3})\n(.+)",
+        re.DOTALL,
+    )
+    repaired_subs = []
+    for sub in subs:
+        m = _swallowed_pat.search(sub.content)
+        if m:
+            next_idx = int(m.group(1))
+            ts_str = m.group(2)
+            remaining = m.group(3).rstrip()
+            ts_m = re.match(
+                r"(\d{1,2}:\d{1,2}:\d{1,2},\d{3})\s*-->\s*(\d{1,2}:\d{1,2}:\d{1,2},\d{3})",
+                ts_str,
+            )
+            if ts_m:
+                split_pos = sub.content.index("\n" + m.group(1) + "\n")
+                current_text = sub.content[:split_pos].strip()
+                repaired_subs.append(srt.Subtitle(
+                    index=sub.index, start=sub.start, end=sub.end, content=current_text,
+                ))
+                repaired_subs.append(srt.Subtitle(
+                    index=next_idx,
+                    start=srt.srt_timestamp_to_timedelta(ts_m.group(1)),
+                    end=srt.srt_timestamp_to_timedelta(ts_m.group(2)),
+                    content=remaining,
+                ))
+                print(f"  ⚠ SRT repair: split swallowed segment {sub.index} → "
+                      f"[{sub.index}] + recovered [{next_idx}]")
+                continue
+        repaired_subs.append(sub)
+
+    return repaired_subs
 
 
 def generate_silence(duration_sec, sample_rate):
@@ -495,6 +533,31 @@ def process_with_direct(
             save_audio(seg_wav_path, silence_wav, sample_rate)
             # Remove stale cache entry for empty segments
             cache.pop(str(i), None)
+            adjusted_subs.append(
+                srt.Subtitle(
+                    index=i,
+                    start=timedelta(seconds=new_start),
+                    end=timedelta(seconds=new_start + orig_duration),
+                    content=sub.content,
+                )
+            )
+            segments_info.append(
+                {
+                    "wav_path": seg_wav_path,
+                    "wav_duration": orig_duration,
+                    "new_start": new_start,
+                }
+            )
+            continue
+
+        # Non-verbal / sound-effect text → silence
+        _alpha_count = sum(1 for c in clean_content if c.isalpha())
+        if _alpha_count < 8:
+            print(f"  ↪ segment {i}: non-verbal ('{clean_content.strip()}') → silence ({orig_duration:.1f}s)")
+            silence_wav = generate_silence(orig_duration, sample_rate)
+            save_audio(seg_wav_path, silence_wav, sample_rate)
+            _set_cache(cache, i, clean_content, orig_duration)
+            _save_cache(output_dir, cache)
             adjusted_subs.append(
                 srt.Subtitle(
                     index=i,

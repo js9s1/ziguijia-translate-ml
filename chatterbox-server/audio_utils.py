@@ -2,10 +2,9 @@ import io
 
 # ── GPU / model management lives in gpu_manage.py ──
 import gpu_manage as _gm
+import soundfile as sf
 import srt
 import torch
-import torchaudio as ta
-from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 from config import AUDIO_PROMPT_PATH
 from singleton import singleton
 # read_srt_text imported lazily in load_subs() to avoid pulling in
@@ -40,14 +39,14 @@ class NingAudio:
         """Load the model for English (backward-compat; prefer _ensure_model)."""
         self._ensure_model("en")
 
-    def get_model(self, device: str = "cuda") -> ChatterboxMultilingualTTS:
+    def get_model(self, device: str = "cuda"):
         """Return the multilingual model (backward-compat; prefer _ensure_model)."""
         self._ensure_model("en")
         return self.model
 
     def wav_to_bytes(self, wav: torch.Tensor, sample_rate: int) -> io.BytesIO:
         buffer = io.BytesIO()
-        ta.save(buffer, wav, sample_rate, format="wav")
+        sf.write(buffer, wav.squeeze(0).cpu().numpy(), sample_rate, format="wav")
         buffer.seek(0)
         return buffer
 
@@ -148,7 +147,8 @@ class NingAudio:
                 cfg_weight=cfg_weight,
                 exaggeration=exaggeration,
             )
-            wav, sr = ta.load(wav_bytes)
+            data, sr = sf.read(wav_bytes)
+            wav = torch.from_numpy(data).float()
             if wav.dim() == 1:
                 wav = wav.unsqueeze(0)
             all_parts.append(wav)
@@ -176,6 +176,8 @@ class NingAudio:
             import warnings
 
             warnings.filterwarnings("ignore")
+            from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+
             _gm._model = ChatterboxMultilingualTTS.from_pretrained(device="cpu")
             _gm._model.prepare_conditionals(self.audio_prompt_path)
             self.model = _gm._model
@@ -205,7 +207,7 @@ class NingAudio:
             wav = _gm._generate_indonesian(text, prompt_file=prompt_file, temperature=temp)
             if wav.dim() == 1:
                 wav = wav.unsqueeze(0)
-            ta.save(output_path, wav, _gm._indonesian_model.sr)
+            sf.write(output_path, wav.squeeze(0).cpu().numpy(), _gm._indonesian_model.sr)
             wav_duration = wav.shape[1] / _gm._indonesian_model.sr
             return wav, wav_duration
 
@@ -238,7 +240,7 @@ class NingAudio:
         # Ensure wav is 2D tensor [1, samples]
         if wav.dim() == 1:
             wav = wav.unsqueeze(0)
-        ta.save(output_path, wav, sample_rate)
+        sf.write(output_path, wav.squeeze(0).cpu().numpy(), sample_rate)
         wav_duration = wav.shape[1] / sample_rate
         return wav, wav_duration
 
@@ -272,4 +274,4 @@ class NingAudio:
         return combined
 
     def save_audio(self, output_path, wav_tensor, sample_rate):
-        ta.save(output_path, wav_tensor, sample_rate)
+        sf.write(output_path, wav_tensor.squeeze(0).cpu().numpy(), sample_rate)

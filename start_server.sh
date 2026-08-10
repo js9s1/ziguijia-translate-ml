@@ -5,12 +5,15 @@ cd ${HOME}/子归家/code_ml/chatterbox-server
 export PYTHONPATH="${HOME}/子归家/code_ml/chatterbox-server:$PYTHONPATH"
 
 export FLASK_SECRET_KEY="chatterbox-fixed-secret-key-2024"
-export HF_TOKEN="$(cat ${HOME}/src/chatterbox/hf_t)"
+# HuggingFace token (optional — raises rate limits)
+if [ -f "${HOME}/src/chatterbox/hf_t" ]; then
+    export HF_TOKEN="$(cat ${HOME}/src/chatterbox/hf_t)"
+fi
 
 # PyTorch memory management — enable expandable segments to reduce fragmentation
 export PYTORCH_ALLOC_CONF=expandable_segments:True
 
-# ROCm: override gfx version for AMD Renoir iGPU (gfx90c → gfx900)
+# ROCm environment for AMD Strix Halo APU (gfx1151 / Radeon 8060S)
 source "${HOME}/子归家/code_ml/rocm_env.sh"
 
 #if ! docker ps --format '{{.Names}}' | grep -q qdrant; then
@@ -73,7 +76,7 @@ if ! valkey-cli -a "$VALKEYPW" --no-auth-warning ping > /dev/null 2>&1; then
         valkey-server --daemonize yes --loglevel warning
     fi
     # Clean up stale dump files that can crash valkey on startup
-    rm -f dump.rdb /home/js9s/子归家/code_ml/dump.rdb
+    rm -f dump.rdb /home/ziguijia/子归家/code_ml/dump.rdb
     # Wait for valkey to be ready (may take a few seconds)
     for i in 1 2 3 4 5; do
         sleep 1

@@ -173,7 +173,6 @@ def process_video_ning_ocr(
     existing = jq._find_failed_ocr_job(number, user_id)
     if existing:
         access_code, output_dir = existing
-        jq.invalidate_checkpoints_after(access_code, "download")
         job_log_lines(
             access_code, output_dir, [f"--- resubmit (temperature={temperature}, lang={target_language}) ---"]
         )

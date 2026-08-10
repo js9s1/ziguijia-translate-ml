@@ -86,28 +86,33 @@ def _get_device(m) -> str:
 
 def _load_multilingual_model():
     """Load ChatterboxMultilingualTTS, choosing device via health/memory check.
-
-    Calls ``_choose_device`` to decide whether GPU or CPU is safe.  This
-    prevents native ROCm crashes (SIGSEGV) on unstable iGPUs like Renoir
-    gfx90c by falling back to CPU when the GPU is degraded or low on memory.
     """
     global _model
     import warnings
 
     warnings.filterwarnings("ignore")
-    from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+    try:
+        from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+    except ModuleNotFoundError:
+        raise RuntimeError(
+            "chatterbox-tts is not installed for this Python interpreter. "
+            "In-process TTS requires chatterbox-tts. Use gen_audio.py subprocess instead."
+        ) from None
 
     device = _choose_device("cuda")
     print(f"Loading multilingual TTS model to {device}...")
     _model = ChatterboxMultilingualTTS.from_pretrained(device=device)
     _model.prepare_conditionals(AUDIO_PROMPT_PATH)
-    print(f"Multilingual TTS model ready ({device}).")
+    print(f"Multilingual TTS model ready ({device}, S3Gen on cpu).")
 
 
 def _load_indonesian_model():
     """Load Indonesian fine-tuned ChatterboxTTS via device health/memory check."""
     global _indonesian_model
-    from chatterbox.tts import ChatterboxTTS
+    try:
+        from chatterbox.tts import ChatterboxTTS
+    except ModuleNotFoundError:
+        raise RuntimeError("chatterbox-tts is not installed for this Python interpreter.") from None
     from huggingface_hub import hf_hub_download
     from safetensors.torch import load_file
 
@@ -169,7 +174,10 @@ def _switch_to_cpu() -> None:
     torch.cuda.synchronize()
 
     warnings.filterwarnings("ignore")
-    from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+    try:
+        from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+    except ModuleNotFoundError:
+        raise RuntimeError("chatterbox-tts is not installed for this Python interpreter.") from None
 
     _model = ChatterboxMultilingualTTS.from_pretrained(device="cpu")
     _model.prepare_conditionals(AUDIO_PROMPT_PATH)
@@ -202,7 +210,10 @@ def _reload_gpu() -> bool:
     torch.cuda.synchronize()
 
     warnings.filterwarnings("ignore")
-    from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+    try:
+        from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+    except ModuleNotFoundError:
+        raise RuntimeError("chatterbox-tts is not installed for this Python interpreter.") from None
 
     try:
         print("Reloading multilingual TTS model on GPU...")
@@ -236,6 +247,8 @@ def _clear_all_models():
 
 # ── Health / device probes ──────────────────────────────────
 
+_GPU_MIN_FREE_MEM_GiB = float(os.environ.get("GPU_MIN_FREE_MEM_GiB", "1.0"))
+
 
 def _check_gpu_healthy() -> bool:
     """Probe GPU health with a progressively heavier workload (with timeout).
@@ -267,8 +280,8 @@ def _choose_device(preferred: str = "cuda") -> str:
     try:
         free, _ = torch.cuda.mem_get_info()
         free_gb = free / (1024**3)
-        if free_gb < 6.6:
-            print(f"GPU free memory {free_gb:.1f} GiB — too low, using CPU")
+        if free_gb < _GPU_MIN_FREE_MEM_GiB:
+            print(f"GPU free memory {free_gb:.1f} GiB — too low (need {_GPU_MIN_FREE_MEM_GiB:.1f} GiB), using CPU")
             return "cpu"
         return "cuda"
     except (torch.cuda.CudaError, RuntimeError, AttributeError):

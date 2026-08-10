@@ -428,17 +428,22 @@ class JobQueue:
         if output_dir:
             # Kill any process whose cmdline references this output dir,
             # including subprocesses spawned by the job handler.
+            # Use targeted signalling (proc + children) instead of killpg
+            # to avoid taking down the gunicorn worker process group.
+            my_pid = os.getpid()
             killed_pids = set()
             killed_procs = []
             for proc in psutil.process_iter(["pid", "cmdline"]):
                 try:
                     if output_dir in " ".join(proc.info["cmdline"] or []):
-                        # Kill the entire process group so children don't orphan
-                        try:
-                            pgid = os.getpgid(proc.info["pid"])
-                            os.killpg(pgid, signal.SIGTERM)
-                        except (ProcessLookupError, PermissionError, AttributeError):
-                            proc.send_signal(signal.SIGTERM)
+                        if proc.info["pid"] == my_pid:
+                            continue
+                        proc.send_signal(signal.SIGTERM)
+                        for child in proc.children(recursive=True):
+                            try:
+                                child.send_signal(signal.SIGTERM)
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                pass
                         killed_pids.add(proc.info["pid"])
                         killed_procs.append(proc)
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
@@ -447,13 +452,14 @@ class JobQueue:
                 _, alive = psutil.wait_procs(killed_procs, timeout=3)
                 for p in alive:
                     try:
-                        pgid = os.getpgid(p.pid)
-                        os.killpg(pgid, signal.SIGKILL)
-                    except (ProcessLookupError, PermissionError, OSError):
-                        try:
-                            p.kill()
-                        except (psutil.NoSuchProcess, psutil.AccessDenied):
-                            pass
+                        p.kill()
+                        for child in p.children(recursive=True):
+                            try:
+                                child.kill()
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                pass
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                        pass
                 _safe_close_psutil_procs(killed_procs)
 
         # Signal the worker thread to skip completion logic

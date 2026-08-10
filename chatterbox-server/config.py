@@ -7,11 +7,13 @@ from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"))
 
-# ── ROCm environment for AMD Renoir APU (gfx90c) ────────────
+# ── ROCm environment for AMD Strix Halo APU (gfx1151) ────────
+# ROCm 7.2+ has native support for gfx1151 — no GFX override needed.
 # Must be set before any PyTorch/ROCm import.
-os.environ.setdefault("HSA_OVERRIDE_GFX_VERSION", "9.0.0")
-os.environ.setdefault("HSA_XNACK", "0")
-os.environ.setdefault("ROCBLAS_USE_HIPBLASLT", "0")
+if "LD_LIBRARY_PATH" in os.environ:
+    os.environ["LD_LIBRARY_PATH"] = "/opt/rocm/rocm/lib" + (":" + os.environ["LD_LIBRARY_PATH"] if os.environ["LD_LIBRARY_PATH"] else "")
+else:
+    os.environ["LD_LIBRARY_PATH"] = "/opt/rocm/rocm/lib"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BASE_DIR)  # /home/js9s/子归家/code_ml
@@ -49,10 +51,10 @@ GEN_VIDEO_ORIG_SCRIPT = os.environ.get(
 )
 
 # ── External tools ───────────────────────────────────────────
-# GEN_AUDIO_PYTHON: Python 3.13 for TTS (chatterbox needs 3.13, not 3.14+)
+# GEN_AUDIO_PYTHON: Python 3.11 for TTS subprocess (pyenv-managed)
 GEN_AUDIO_PYTHON = os.environ.get(
     "GEN_AUDIO_PYTHON",
-    "/home/js9s/.pyenv/versions/3.13.15/bin/python3.13",
+    os.path.expanduser("~/.pyenv/versions/3.11.14/bin/python3.11"),
 )
 # PYTHON_BIN: system Python for everything else (gen_video, download, etc.)
 PYTHON_BIN = os.environ.get(
@@ -61,12 +63,12 @@ PYTHON_BIN = os.environ.get(
 )
 WHISPER_MODEL = os.environ.get(
     "WHISPER_MODEL",
-    "__WHISPER_MODEL__",
+    os.path.expanduser("~/.local/share/whisper-models/ggml-medium.bin"),
 )
 WHISPER_OV_DEVICE = os.environ.get("WHISPER_OV_DEVICE", "CPU")
 HY_MT_DIR = os.environ.get(
     "HY_MT_DIR",
-    "__HY_MT_DIR__",
+    "/home/ziguijia/src/HY-MT",
 )
 HY_MT_BACKEND = os.environ.get("HY_MT_BACKEND", "openvino")  # "openvino" | "pytorch"
 RAPID_VIDEOCR_PIPELINE_SCRIPT = os.environ.get(
@@ -75,7 +77,7 @@ RAPID_VIDEOCR_PIPELINE_SCRIPT = os.environ.get(
 )
 RAPID_VIDEOCR_BIN = os.environ.get(
     "RAPID_VIDEOCR_BIN",
-    "/usr/bin/rapid_videocr",
+    os.path.expanduser("~/.local/bin/rapid_videocr"),
 )
 
 # ── Default ports ──────────────────────────────────────────

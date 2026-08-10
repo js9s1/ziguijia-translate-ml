@@ -43,7 +43,7 @@ OUTPUT_SRT="./output.srt"
 PREFIX="result"
 SAVE_DIR=""
 KEEP_FRAMES=0
-RAPID_VIDEOCR_BIN="${RAPID_VIDEOCR_BIN:-/usr/bin/rapid_videocr}"
+RAPID_VIDEOCR_BIN="${RAPID_VIDEOCR_BIN:-${HOME}/.local/bin/rapid_videocr}"
 PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
 
 # ---- OCR engine selection ----
@@ -54,9 +54,10 @@ case "$OCR_ENGINE" in
     openvino|onnxruntime|torch)
         # Only rewrite if the engine actually differs from current config
         CURRENT_ENGINE=$("${PYTHON_BIN}" -c "
-import yaml
+from rapidocr.main import root_dir
 from pathlib import Path
-p = Path('${PYTHON_BIN}').parent.parent / 'lib/python3.14/site-packages/rapidocr/config.yaml'
+import yaml
+p = Path(root_dir) / 'config.yaml'
 cfg = yaml.safe_load(p.read_text())
 print(cfg['Det']['engine_type'])
 " 2>/dev/null || echo "unknown")

@@ -133,13 +133,7 @@ def _extract_failure_reason(output_dir: str | None) -> str | None:
 
 def _reset_gpu_state():
     """Reset the ROCm/HIP GPU driver state between jobs.
-
-    Long-running jobs (especially video processing) can leave the AMD
-    Renoir iGPU (gfx90c) ROCm driver in an unstable state, causing
-    subsequent jobs to crash with SIGABRT during heavier GPU workloads
-    even though a lightweight health probe passes.
-
-    Uses the shared ``gpu_probe.run_gpu_probe`` — a heavier workload
+    "
     (256–1024 tensors) than the TTS pre-flight check.
     """
     from gpu_probe import run_gpu_probe
@@ -206,11 +200,6 @@ def _try_mark_failed(jq, access_code, error_msg):
 def _run_job(jq, access_code: str):
     """Execute a single job directly in the worker thread.
 
-    Runs the job handler in-process — no multiprocessing child.  This
-    avoids the unreliable HIP context re-initialisation that causes
-    SIGSEGV on AMD Renoir iGPUs (gfx90c via ROCm) when a fresh spawn
-    child loads the Chatterbox TTS model to GPU.
-
     If a genuine crash takes down this process, gunicorn restarts the
     worker, and checkpointed jobs resume on next startup.
     """
@@ -263,11 +252,7 @@ def _run_job(jq, access_code: str):
     job.pop("run_func_name", None)
     job.pop("created_at", None)
 
-    # Execute the job handler directly in this thread.  No more
-    # multiprocessing child — the spawn boundary causes unreliable
-    # HIP context re-initialisation on AMD Renoir iGPUs (gfx90c via
-    # ROCm), leading to silent SIGSEGV during GPU model loads.  Running
-    # in-process keeps the existing (working) HIP context.
+    # Execute the job handler directly in this thread.
     #
     # If this process crashes (e.g. genuine GPU bug), gunicorn
     # restarts the worker, and checkpointed jobs resume at the failed

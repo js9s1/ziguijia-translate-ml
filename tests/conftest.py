@@ -8,10 +8,7 @@ import tempfile
 
 import pytest
 
-# ── Prevent config.py from loading real .env and setting GPU env vars ──
-os.environ.setdefault("HSA_OVERRIDE_GFX_VERSION", "9.0.0")
-os.environ.setdefault("HSA_XNACK", "0")
-os.environ.setdefault("ROCBLAS_USE_HIPBLASLT", "0")
+# ── Prevent config.py from loading real .env ──
 os.environ["FLASK_SECRET_KEY"] = "test-secret-key-42"
 os.environ["VALKEY_PASSWORD"] = ""
 
