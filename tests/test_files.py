@@ -47,7 +47,11 @@ class TestFilesRead:
 
 class TestFilesDelete:
     def test_unauthorized(self, client):
-        resp = client.post("/files/delete", json={"path": "/tmp/x.txt"})
+        resp = client.post(
+            "/files/delete",
+            json={"path": "/tmp/x.txt"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
         assert resp.status_code == 401
 
     def test_no_path(self, auth_client, csrf_headers):
@@ -77,6 +81,7 @@ class TestSRTSave:
                 "content": "00:00:01,000 --> 00:00:03,000\ntest",
                 "access_code": "ABC",
             },
+            headers={"X-Requested-With": "XMLHttpRequest"},
         )
         assert resp.status_code == 401
 
@@ -123,7 +128,10 @@ class TestSRTSave:
 
 class TestSRTResubmit:
     def test_unauthorized(self, client):
-        resp = client.post("/files/srt-resubmit/ABC")
+        resp = client.post(
+            "/files/srt-resubmit/ABC",
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
         assert resp.status_code == 401
 
     def test_nonexistent_job(self, auth_client, csrf_headers):

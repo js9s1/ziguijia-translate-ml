@@ -21,7 +21,6 @@ sys.modules["valkey"] = _mock_valkey
 sys.modules["valkey_util"] = _mock_redis
 sys.modules["psutil"] = mock.MagicMock()
 sys.modules["log_utils"] = mock.MagicMock()
-sys.modules["config"] = mock.MagicMock()
 
 from video_util import (  # noqa: E402
     _normalize_srt_timestamps,

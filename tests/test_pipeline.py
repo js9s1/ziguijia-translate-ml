@@ -23,7 +23,6 @@ sys.modules["valkey"] = _mock_valkey
 sys.modules["valkey_util"] = _mock_redis
 sys.modules["psutil"] = mock.MagicMock()
 sys.modules["log_utils"] = mock.MagicMock()
-sys.modules["config"] = mock.MagicMock()
 
 from pipeline import (  # noqa: E402
     _build_atempo_filter,

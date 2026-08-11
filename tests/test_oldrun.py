@@ -204,8 +204,11 @@ class TestWriteStaticHtml:
         _write_static_html("en", [])
         content = (html_dir / "srt-en.html").read_text()
         assert "async" in content
-        assert "DecompressionStream" in content
         assert "srt-en.json.gz" in content
+        # .gz is served with Content-Encoding: gzip, so the browser
+        # decompresses at the transport layer — JS just parses the JSON.
+        assert "await resp.json()" in content
+        assert "DecompressionStream" not in content
 
     def test_gz_is_valid_compressed_json(self, oldrun_dirs):
         from oldrun import _write_static_html

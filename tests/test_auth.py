@@ -212,6 +212,7 @@ class TestChangePassword:
                 "old_password": "old",
                 "new_password": "new123456",
             },
+            headers={"X-Requested-With": "XMLHttpRequest"},
         )
         assert resp.status_code == 401
 

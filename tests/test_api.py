@@ -7,7 +7,7 @@ class TestHealthEndpoint:
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["status"] == "healthy"
-        assert "cuda" in data
+        assert "message" in data
 
 
 class TestLanguagesEndpoint:
@@ -57,11 +57,17 @@ class TestJobManagementUnauthorized:
         assert resp.status_code == 401
 
     def test_cancel_unauthorized(self, client):
-        resp = client.post("/api/jobs/X/cancel")
+        resp = client.post(
+            "/api/jobs/X/cancel",
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
         assert resp.status_code == 401
 
     def test_resubmit_unauthorized(self, client):
-        resp = client.post("/api/jobs/X/resubmit")
+        resp = client.post(
+            "/api/jobs/X/resubmit",
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
         assert resp.status_code == 401
 
 

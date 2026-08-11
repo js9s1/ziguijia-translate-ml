@@ -59,7 +59,7 @@ def post_fork(server, worker):
     get_job_queue()
 
     # Reset TTS model singletons — gen_audio now runs as a subprocess
-    # on its own Python 3.13, so the worker never holds GPU handles.
+    # on its own Python 3.11, so the worker never holds GPU handles.
     try:
         from gpu_manage import _clear_all_models
 

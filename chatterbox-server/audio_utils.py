@@ -9,7 +9,7 @@ from config import AUDIO_PROMPT_PATH
 from singleton import singleton
 # read_srt_text imported lazily in load_subs() to avoid pulling in
 # the full server dependency chain (video_util → jobqueue → flask)
-# when gen_audio runs as a standalone Python 3.13 subprocess.
+# when gen_audio runs as a standalone Python 3.11 subprocess.
 
 _default_audio_prompt_path = AUDIO_PROMPT_PATH
 
