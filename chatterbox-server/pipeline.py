@@ -30,6 +30,7 @@ from config import (
 )
 from jobqueue import get_job_queue
 from log_utils import job_log, job_log_lines
+from segment_utils import build_segment_defs
 
 # ── Low-level subprocess wrappers ──────────────────────────
 
@@ -86,12 +87,13 @@ def run_gen_audio_step(
         proc_log.write(f"+ {' '.join(cmd)}\n")
         proc_log.flush()
 
-    result = subprocess.run(
-        cmd,
-        stdout=open(log_path, "a"),
-        stderr=subprocess.STDOUT,
-        check=False,
-    )
+    with open(log_path, "a") as proc_log:
+        result = subprocess.run(
+            cmd,
+            stdout=proc_log,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
 
     if result.returncode != 0:
         raise RuntimeError(f"gen_audio exited with code {result.returncode}")
@@ -415,12 +417,13 @@ def run_translate_ckpt(
         log_fh.write(f"+ {' '.join(cmd)}\n")
         log_fh.flush()
 
-    result = subprocess.run(
-        cmd,
-        stdout=open(log_file, "a"),
-        stderr=subprocess.STDOUT,
-        check=False,
-    )
+    with open(log_file, "a") as log_fh:
+        result = subprocess.run(
+            cmd,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
 
     if result.returncode != 0:
         raise RuntimeError(f"translate_srt exited with code {result.returncode}")
@@ -566,88 +569,6 @@ def _build_atempo_filter(stretch: float) -> str:
     return ",".join(parts)
 
 
-# Small overlap used when bridging non-existent gaps between subtitles
-# to give ffmpeg a non-zero timespan to work with (40 ms).
-_FFMPEG_SEGMENT_SLOP = 0.04
-
-
-def _build_audio_segment_defs(
-    orig_subs: list,
-    adj_subs: list,
-    video_duration: float,
-    audio_offset: float = 0.0,
-) -> list[dict]:
-    """Build a list of {start, end, stretch} segment definitions for audio stretching.
-
-    Mirrors the same segment-stretch logic that ``gen_video.py process_video``
-    applies to the video track (leading gap, subtitle segments, inter-subtitle
-    gaps, trailing gap).
-    """
-    seg_defs = []
-    video_cumul = 0.0
-
-    # Leading gap: video start → first subtitle
-    first_adj_start = adj_subs[0].start.total_seconds()
-    first_orig_start = orig_subs[0].start.total_seconds() - audio_offset
-    if first_adj_start > 0 and first_orig_start > 0:
-        stretch = first_adj_start / first_orig_start
-        seg_defs.append(
-            {"start": 0, "end": min(first_orig_start, video_duration), "stretch": stretch}
-        )
-        video_cumul += first_orig_start * stretch
-
-    for i in range(len(orig_subs)):
-        orig_start = orig_subs[i].start.total_seconds() - audio_offset
-        orig_end = orig_subs[i].end.total_seconds() - audio_offset
-        adj_start = adj_subs[i].start.total_seconds()
-        adj_end = adj_subs[i].end.total_seconds()
-        orig_dur = orig_end - orig_start
-        adj_dur = adj_end - adj_start
-
-        if orig_start >= video_duration:
-            break
-        if orig_end > video_duration:
-            orig_end = video_duration
-            orig_dur = orig_end - orig_start
-
-        # Gap before this subtitle (stretch to fill adjusted timing gap)
-        if i > 0:
-            prev_orig_end = orig_subs[i - 1].end.total_seconds() - audio_offset
-            orig_gap = orig_start - prev_orig_end
-            needed_gap = adj_start - video_cumul
-            if orig_gap > 0.001:
-                gap_start, gap_end = prev_orig_end, min(orig_start, video_duration)
-            elif needed_gap > 0.001:
-                gap_start = max(0, prev_orig_end - _FFMPEG_SEGMENT_SLOP)
-                gap_end = min(prev_orig_end, video_duration)
-                orig_gap = gap_end - gap_start
-            else:
-                orig_gap = 0.0
-            if orig_gap > 0:
-                stretch = max(0.0, min(100.0, needed_gap / orig_gap))
-                seg_defs.append(
-                    {"start": gap_start, "end": gap_end, "stretch": stretch}
-                )
-                video_cumul += orig_gap * stretch
-
-        # Subtitle segment (never squeeze, only stretch)
-        stretch = adj_dur / orig_dur if orig_dur > 0 else 1.0
-        stretch = max(1.0, min(10.0, stretch))
-        seg_defs.append(
-            {"start": orig_start, "end": orig_end, "stretch": stretch}
-        )
-        video_cumul += orig_dur * stretch
-
-    # Trailing gap
-    last_orig_end = orig_subs[-1].end.total_seconds() - audio_offset
-    if last_orig_end < video_duration:
-        seg_defs.append(
-            {"start": last_orig_end, "end": video_duration, "stretch": 1.0}
-        )
-
-    return seg_defs
-
-
 def adjust_original_audio(
     video_path: str,
     original_srt_path: str,
@@ -727,7 +648,14 @@ def adjust_original_audio(
 
     # ── Build segment list (mirrors gen_video.py process_video) ──
     video_duration = _get_video_duration(video_path) - audio_offset
-    seg_defs = _build_audio_segment_defs(orig_subs, adj_subs, video_duration, audio_offset)
+    seg_defs = build_segment_defs(
+        orig_starts=[s.start.total_seconds() for s in orig_subs],
+        orig_ends=[s.end.total_seconds() for s in orig_subs],
+        adj_starts=[s.start.total_seconds() for s in adj_subs],
+        adj_ends=[s.end.total_seconds() for s in adj_subs],
+        video_duration=video_duration,
+        offset=audio_offset,
+    )
 
     # ── Process audio segments ───────────────────────────────
     tmp_dir = tempfile.mkdtemp(prefix="adj_zh_audio_")

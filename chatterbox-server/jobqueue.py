@@ -26,7 +26,7 @@ try:
 except RuntimeError:
     pass  # already set in a parent context
 
-from db_schema import ConnectionManager, init_jobs_schema
+from db_schema import ConnectionManager, INSERT_COLUMNS, init_jobs_schema, insert_job_sql
 from middleware import _DEFAULT_PARAMS
 from singleton import singleton
 from valkey_util import publish_job_status, queue_push, queue_pop, JOB_QUEUE_KEY
@@ -171,44 +171,42 @@ class JobQueue:
 
         run_func_name = run_func.__name__
 
-        # Preserve existing checkpoint on resubmit — OR REPLACE would otherwise
-        # wipe it since the INSERT column list omits the checkpoint column.
         existing_checkpoint = conn.execute(
             "SELECT checkpoint FROM jobs WHERE access_code = ?", (access_code,)
         ).fetchone()
         prev_ckpt = existing_checkpoint[0] if existing_checkpoint else ""
 
         now = _now_str()
+
+        values: dict[str, object] = {
+            "access_code": access_code,
+            "srt_path": job_data.get("srt_path"),
+            "output_dir": job_data.get("output_dir"),
+            "temperature": job_data.get("temperature"),
+            "status": JobStatus.PENDING.value,
+            "error": None,
+            "run_func_name": run_func_name,
+            "video_number": job_data.get("video_number"),
+            "video_file": job_data.get("video_file"),
+            "user_id": user_id,
+            "text": job_data.get("text"),
+            "blur": job_data.get("blur", "yes"),
+            "target_language": job_data.get("target_language", "en"),
+            "cfg_weight": job_data.get("cfg_weight", _DEFAULT_PARAMS["cfg_weight"]),
+            "exaggeration": job_data.get("exaggeration", _DEFAULT_PARAMS["exaggeration"]),
+            "start_trim": job_data.get("start_trim"),
+            "end_trim": job_data.get("end_trim"),
+            "cached_path": job_data.get("cached_path"),
+            "filename": job_data.get("filename"),
+            "ocr_only": job_data.get("ocr_only"),
+            "checkpoint": prev_ckpt,
+            "created_at": now,
+            "status_changed_at": now,
+        }
+
         conn.execute(
-            """
-            INSERT OR REPLACE INTO jobs (access_code, srt_path, output_dir, temperature, status, error, run_func_name, video_number, video_file, user_id, text, blur, target_language, cfg_weight, exaggeration, start_trim, end_trim, cached_path, filename, ocr_only, checkpoint, created_at, status_changed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-            (
-                access_code,
-                job_data.get("srt_path"),
-                job_data.get("output_dir"),
-                job_data.get("temperature"),
-                JobStatus.PENDING.value,
-                None,
-                run_func_name,
-                job_data.get("video_number"),
-                job_data.get("video_file"),
-                user_id,
-                job_data.get("text"),
-                job_data.get("blur", "yes"),
-                job_data.get("target_language", "en"),
-                job_data.get("cfg_weight", _DEFAULT_PARAMS["cfg_weight"]),
-                job_data.get("exaggeration", _DEFAULT_PARAMS["exaggeration"]),
-                job_data.get("start_trim"),
-                job_data.get("end_trim"),
-                job_data.get("cached_path"),
-                job_data.get("filename"),
-                job_data.get("ocr_only"),
-                prev_ckpt,
-                now,
-                now,
-            ),
+            insert_job_sql(),
+            [values[col] for col in INSERT_COLUMNS],
         )
         conn.commit()
 

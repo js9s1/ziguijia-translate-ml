@@ -30,18 +30,20 @@ def singleton(cls):
     (e.g., after ``os.fork``).
     """
     _lock = threading.Lock()
-    _instance = [None]
+    _instance: object | None = None
 
     def _get_instance(*args, **kwargs):
-        if _instance[0] is None:
+        nonlocal _instance
+        if _instance is None:
             with _lock:
-                if _instance[0] is None:
-                    _instance[0] = cls(*args, **kwargs)
-        return _instance[0]
+                if _instance is None:
+                    _instance = cls(*args, **kwargs)
+        return _instance
 
     def _clear():
+        nonlocal _instance
         with _lock:
-            _instance[0] = None
+            _instance = None
 
     _get_instance.clear = _clear
     _get_instance.__name__ = cls.__name__

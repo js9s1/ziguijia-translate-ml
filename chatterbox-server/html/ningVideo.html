@@ -125,7 +125,7 @@
                     fd.set('ocr_only', getOcrOnlyValue());
                 }
                 overlay.classList.add('active');
-                fetch(_submitUrl, { method: 'POST', body: fd })
+                fetchWithCsrf(_submitUrl, { method: 'POST', body: fd })
                 .then(function(r) { return r.json(); })
                 .then(function(d) {
                     overlay.classList.remove('active');

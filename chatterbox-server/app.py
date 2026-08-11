@@ -36,9 +36,14 @@ def _get_secret_key() -> str:
         with open(key_file) as f:
             return f.read().strip()
     new_key = os.urandom(24).hex()
-    with open(key_file, "w") as f:
-        f.write(new_key)
-    os.chmod(key_file, 0o600)
+    fd = os.open(key_file, os.O_CREAT | os.O_WRONLY, 0o600)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(new_key)
+    except Exception:
+        os.close(fd)
+        os.unlink(key_file)
+        raise
     return new_key
 
 

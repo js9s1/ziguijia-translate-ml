@@ -5,7 +5,7 @@ import os
 
 from flask import Blueprint, jsonify, request, session
 from lazy_imports import _lazy
-from middleware import get_video_metadata, login_required, parse_job_params, validate_file_upload
+from middleware import api_endpoint, csrf_required, get_video_metadata, login_required, parse_job_params, validate_file_upload
 
 video_bp = Blueprint("video", __name__)
 logger = logging.getLogger(__name__)
@@ -77,119 +77,111 @@ def _video_process_with_cache(
 
 @video_bp.route("/video/ning/process", methods=["POST"])
 @login_required
+@csrf_required
+@api_endpoint
 def video_ning_process():
-    try:
-        number = request.form.get("number")
-        if not number:
-            return jsonify({"error": "No video number provided"}), 400
+    number = request.form.get("number")
+    if not number:
+        return jsonify({"error": "No video number provided"}), 400
 
-        if "srt_file" not in request.files:
-            return jsonify({"error": "No file uploaded"}), 400
+    if "srt_file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
 
-        srt_file = request.files["srt_file"]
-        validate_file_upload(srt_file, "SRT")
-        params = parse_job_params(request.form)
+    srt_file = request.files["srt_file"]
+    validate_file_upload(srt_file, "SRT")
+    params = parse_job_params(request.form)
 
-        process_video_ning = _lazy("video_ning_job", "process_video_ning")
-        find_cached = _lazy("video_ning_job", "_find_cached_video")
-        blur = request.form.get("blur", "yes")
+    process_video_ning = _lazy("video_ning_job", "process_video_ning")
+    find_cached = _lazy("video_ning_job", "_find_cached_video")
+    blur = request.form.get("blur", "yes")
 
-        def _process(**kwargs):
-            return jsonify(
-                process_video_ning(
-                    number,
-                    srt_file,
-                    params["temperature"],
-                    session["user_id"],
-                    blur,
-                    target_language=params["target_language"],
-                    cfg_weight=params["cfg_weight"],
-                    exaggeration=params["exaggeration"],
-                    **kwargs,
-                )
+    def _process(**kwargs):
+        return jsonify(
+            process_video_ning(
+                number,
+                srt_file,
+                params["temperature"],
+                session["user_id"],
+                blur,
+                target_language=params["target_language"],
+                cfg_weight=params["cfg_weight"],
+                exaggeration=params["exaggeration"],
+                **kwargs,
             )
+        )
 
-        return _video_process_with_cache(number, find_cached, _process, blur)
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
-    except Exception as e:
-        logger.error(f"Error processing video: {str(e)}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+    return _video_process_with_cache(number, find_cached, _process, blur)
 
 
 @video_bp.route("/video/ning/ocr-process", methods=["POST"])
 @login_required
+@csrf_required
+@api_endpoint
 def video_ning_ocr_process():
-    try:
-        number = request.form.get("number")
-        if not number:
-            return jsonify({"error": "No video number provided"}), 400
+    number = request.form.get("number")
+    if not number:
+        return jsonify({"error": "No video number provided"}), 400
 
-        params = parse_job_params(request.form)
-        mode = request.form.get("ocr_mode", "full")
-        ocr_only = request.form.get("ocr_only", "yes")
-        process_video_ning_ocr = _lazy(
-            "video_ning_job", "process_video_ning_ocr" if mode == "full" else "process_video_ning_ocr_translate_only"
+    params = parse_job_params(request.form)
+    mode = request.form.get("ocr_mode", "full")
+    ocr_only = request.form.get("ocr_only", "yes")
+    process_video_ning_ocr = _lazy(
+        "video_ning_job", "process_video_ning_ocr" if mode == "full" else "process_video_ning_ocr_translate_only"
+    )
+    find_cached = _lazy("video_ning_job", "_find_cached_video")
+    blur = request.form.get("blur", "yes")
+
+    def _process(**kwargs):
+        kwargs_dict = dict(
+            target_language=params["target_language"],
+            cfg_weight=params["cfg_weight"],
+            exaggeration=params["exaggeration"],
         )
-        find_cached = _lazy("video_ning_job", "_find_cached_video")
-        blur = request.form.get("blur", "yes")
-
-        def _process(**kwargs):
-            kwargs_dict = dict(
-                target_language=params["target_language"],
-                cfg_weight=params["cfg_weight"],
-                exaggeration=params["exaggeration"],
+        if mode != "full":
+            kwargs_dict["ocr_only"] = ocr_only
+        return jsonify(
+            process_video_ning_ocr(
+                number,
+                params["temperature"],
+                session["user_id"],
+                blur,
+                **kwargs_dict,
+                **kwargs,
             )
-            if mode != "full":
-                kwargs_dict["ocr_only"] = ocr_only
-            return jsonify(
-                process_video_ning_ocr(
-                    number,
-                    params["temperature"],
-                    session["user_id"],
-                    blur,
-                    **kwargs_dict,
-                    **kwargs,
-                )
-            )
+        )
 
-        return _video_process_with_cache(number, find_cached, _process, blur)
-    except Exception as e:
-        logger.error(f"Error OCR processing ning video: {str(e)}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+    return _video_process_with_cache(number, find_cached, _process, blur)
 
 
 @video_bp.route("/video/ning/auto-process", methods=["POST"])
 @login_required
+@csrf_required
+@api_endpoint
 def video_ning_auto_process():
-    try:
-        number = request.form.get("number")
-        if not number:
-            return jsonify({"error": "No video number provided"}), 400
+    number = request.form.get("number")
+    if not number:
+        return jsonify({"error": "No video number provided"}), 400
 
-        params = parse_job_params(request.form)
-        process_video_ning_auto = _lazy("video_ning_job", "process_video_ning_auto")
-        find_cached = _lazy("video_ning_job", "_find_cached_video")
-        blur = request.form.get("blur", "yes")
+    params = parse_job_params(request.form)
+    process_video_ning_auto = _lazy("video_ning_job", "process_video_ning_auto")
+    find_cached = _lazy("video_ning_job", "_find_cached_video")
+    blur = request.form.get("blur", "yes")
 
-        def _process(**kwargs):
-            return jsonify(
-                process_video_ning_auto(
-                    number,
-                    params["temperature"],
-                    session["user_id"],
-                    blur,
-                    target_language=params["target_language"],
-                    cfg_weight=params["cfg_weight"],
-                    exaggeration=params["exaggeration"],
-                    **kwargs,
-                )
+    def _process(**kwargs):
+        return jsonify(
+            process_video_ning_auto(
+                number,
+                params["temperature"],
+                session["user_id"],
+                blur,
+                target_language=params["target_language"],
+                cfg_weight=params["cfg_weight"],
+                exaggeration=params["exaggeration"],
+                **kwargs,
             )
+        )
 
-        return _video_process_with_cache(number, find_cached, _process, blur)
-    except Exception as e:
-        logger.error(f"Error auto processing ning video: {str(e)}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+    return _video_process_with_cache(number, find_cached, _process, blur)
 
 
 # ── Custom video routes ───────────────────────────────────
@@ -197,63 +189,55 @@ def video_ning_auto_process():
 
 @video_bp.route("/video/custom/process", methods=["POST"])
 @login_required
+@csrf_required
+@api_endpoint
 def video_custom_process():
-    try:
-        if "video_file" not in request.files:
-            return jsonify({"error": "No video file uploaded"}), 400
-        if "srt_file" not in request.files:
-            return jsonify({"error": "No SRT file uploaded"}), 400
+    if "video_file" not in request.files:
+        return jsonify({"error": "No video file uploaded"}), 400
+    if "srt_file" not in request.files:
+        return jsonify({"error": "No SRT file uploaded"}), 400
 
-        video_file = request.files["video_file"]
-        validate_file_upload(video_file, "video")
-        srt_file = request.files["srt_file"]
-        validate_file_upload(srt_file, "SRT")
-        params = parse_job_params(request.form)
+    video_file = request.files["video_file"]
+    validate_file_upload(video_file, "video")
+    srt_file = request.files["srt_file"]
+    validate_file_upload(srt_file, "SRT")
+    params = parse_job_params(request.form)
 
-        process_video_custom = _lazy("video_custom_job", "process_video_custom")
-        result = process_video_custom(
-            video_file,
-            srt_file,
-            params["temperature"],
-            session["user_id"],
-            target_language=params["target_language"],
-            cfg_weight=params["cfg_weight"],
-            exaggeration=params["exaggeration"],
-        )
-        return jsonify(result)
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
-    except Exception as e:
-        logger.error(f"Error processing custom video: {str(e)}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+    process_video_custom = _lazy("video_custom_job", "process_video_custom")
+    result = process_video_custom(
+        video_file,
+        srt_file,
+        params["temperature"],
+        session["user_id"],
+        target_language=params["target_language"],
+        cfg_weight=params["cfg_weight"],
+        exaggeration=params["exaggeration"],
+    )
+    return jsonify(result)
 
 
 @video_bp.route("/video/custom/auto-process", methods=["POST"])
 @login_required
+@csrf_required
+@api_endpoint
 def video_custom_auto_process():
-    try:
-        if "video_file" not in request.files:
-            return jsonify({"error": "No video file uploaded"}), 400
+    if "video_file" not in request.files:
+        return jsonify({"error": "No video file uploaded"}), 400
 
-        video_file = request.files["video_file"]
-        validate_file_upload(video_file, "video")
-        params = parse_job_params(request.form)
+    video_file = request.files["video_file"]
+    validate_file_upload(video_file, "video")
+    params = parse_job_params(request.form)
 
-        process_video_auto = _lazy("video_custom_job", "process_video_auto")
-        result = process_video_auto(
-            video_file,
-            params["temperature"],
-            session["user_id"],
-            target_language=params["target_language"],
-            cfg_weight=params["cfg_weight"],
-            exaggeration=params["exaggeration"],
-        )
-        return jsonify(result)
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
-    except Exception as e:
-        logger.error(f"Error auto processing video: {str(e)}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+    process_video_auto = _lazy("video_custom_job", "process_video_auto")
+    result = process_video_auto(
+        video_file,
+        params["temperature"],
+        session["user_id"],
+        target_language=params["target_language"],
+        cfg_weight=params["cfg_weight"],
+        exaggeration=params["exaggeration"],
+    )
+    return jsonify(result)
 
 
 # ── OCR routes ────────────────────────────────────────────
@@ -261,58 +245,50 @@ def video_custom_auto_process():
 
 @video_bp.route("/video/ocr/process", methods=["POST"])
 @login_required
+@csrf_required
+@api_endpoint
 def video_ocr_process():
-    try:
-        if "video_file" not in request.files:
-            return jsonify({"error": "No video file uploaded"}), 400
+    if "video_file" not in request.files:
+        return jsonify({"error": "No video file uploaded"}), 400
 
-        video_file = request.files["video_file"]
-        validate_file_upload(video_file, "video")
-        process_ocr_only = _lazy("video_ocr_job", "process_ocr_only")
-        result = process_ocr_only(video_file, session["user_id"])
-        return jsonify(result)
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
-    except Exception as e:
-        logger.error(f"Error processing OCR-only job: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+    video_file = request.files["video_file"]
+    validate_file_upload(video_file, "video")
+    process_ocr_only = _lazy("video_ocr_job", "process_ocr_only")
+    result = process_ocr_only(video_file, session["user_id"])
+    return jsonify(result)
 
 
 @video_bp.route("/video/custom/ocr-process", methods=["POST"])
 @login_required
+@csrf_required
+@api_endpoint
 def video_custom_ocr_process():
-    try:
-        if "video_file" not in request.files:
-            return jsonify({"error": "No video file uploaded"}), 400
+    if "video_file" not in request.files:
+        return jsonify({"error": "No video file uploaded"}), 400
 
-        video_file = request.files["video_file"]
-        validate_file_upload(video_file, "video")
-        params = parse_job_params(request.form)
-        mode = request.form.get("ocr_mode", "full")
-        ocr_only = request.form.get("ocr_only", "yes")
+    video_file = request.files["video_file"]
+    validate_file_upload(video_file, "video")
+    params = parse_job_params(request.form)
+    mode = request.form.get("ocr_mode", "full")
+    ocr_only = request.form.get("ocr_only", "yes")
 
-        if mode == "translate-only":
-            process_video_ocr = _lazy("video_custom_job", "process_video_ocr_translate_only")
-        else:
-            process_video_ocr = _lazy("video_custom_job", "process_video_ocr")
+    if mode == "translate-only":
+        process_video_ocr = _lazy("video_custom_job", "process_video_ocr_translate_only")
+    else:
+        process_video_ocr = _lazy("video_custom_job", "process_video_ocr")
 
-        kwargs = dict(
-            target_language=params["target_language"],
-            cfg_weight=params["cfg_weight"],
-            exaggeration=params["exaggeration"],
-        )
-        if mode == "translate-only":
-            kwargs["ocr_only"] = ocr_only
+    kwargs = dict(
+        target_language=params["target_language"],
+        cfg_weight=params["cfg_weight"],
+        exaggeration=params["exaggeration"],
+    )
+    if mode == "translate-only":
+        kwargs["ocr_only"] = ocr_only
 
-        result = process_video_ocr(
-            video_file,
-            params["temperature"],
-            session["user_id"],
-            **kwargs,
-        )
-        return jsonify(result)
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
-    except Exception as e:
-        logger.error(f"Error OCR processing video: {str(e)}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+    result = process_video_ocr(
+        video_file,
+        params["temperature"],
+        session["user_id"],
+        **kwargs,
+    )
+    return jsonify(result)

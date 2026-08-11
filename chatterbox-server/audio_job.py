@@ -127,7 +127,8 @@ def _run_audio_segmentation_job(job_data: dict):
         proc_log.write(f"+ {' '.join(cmd)}\n")
         proc_log.flush()
 
-    result = _sp.run(cmd, stdout=open(log_path, "a"), stderr=_sp.STDOUT, check=False)
+    with open(log_path, "a") as proc_log:
+        result = _sp.run(cmd, stdout=proc_log, stderr=_sp.STDOUT, check=False)
     if result.returncode != 0:
         raise RuntimeError(f"gen_audio exited with code {result.returncode}")
 

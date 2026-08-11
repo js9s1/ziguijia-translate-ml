@@ -385,29 +385,32 @@ function submitJob(url, bodyOrFormData, resultLinkId, redirectPath) {
             return;
         }
 
-        var overlay = document.getElementById('loadingOverlay');
-        if (overlay) overlay.classList.add('active');
+        getCsrfToken().then(function(csrf) {
+            var overlay = document.getElementById('loadingOverlay');
+            if (overlay) overlay.classList.add('active');
 
-        var form = document.createElement('form');
-        form.method = 'POST';
-        form.action = url;
-        form.enctype = 'multipart/form-data';
+            var form = document.createElement('form');
+            form.method = 'POST';
+            form.action = url;
+            form.enctype = 'multipart/form-data';
+            addHidden(form, 'csrf_token', csrf);
 
-        if (bodyOrFormData instanceof FormData) {
-            bodyOrFormData.forEach(function(value, key) {
-                if (value instanceof File) {
-                    var original = document.querySelector('[name="' + key + '"]');
-                    if (original) form.appendChild(original);
-                } else {
-                    addHidden(form, key, value);
-                }
-            });
-        } else {
-            for (var key in bodyOrFormData) { addHidden(form, key, bodyOrFormData[key]); }
-        }
+            if (bodyOrFormData instanceof FormData) {
+                bodyOrFormData.forEach(function(value, key) {
+                    if (value instanceof File) {
+                        var original = document.querySelector('[name="' + key + '"]');
+                        if (original) form.appendChild(original);
+                    } else {
+                        addHidden(form, key, value);
+                    }
+                });
+            } else {
+                for (var key in bodyOrFormData) { addHidden(form, key, bodyOrFormData[key]); }
+            }
 
-        document.body.appendChild(form);
-        form.submit();
+            document.body.appendChild(form);
+            form.submit();
+        });
     });
 }
 

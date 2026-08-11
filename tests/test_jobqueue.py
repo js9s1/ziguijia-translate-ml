@@ -1,10 +1,10 @@
 """Tests for JobQueue: add, status, cancel, resubmit, delete, checkpoints."""
 
 import pytest
+from job_types import _get_run_func
 from jobqueue import (
     JobStatus,
     _get_job_type_label,
-    _get_run_func,
     _safe_close_proc,
     _safe_close_psutil_procs,
     get_job_queue,

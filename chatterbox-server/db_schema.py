@@ -89,7 +89,28 @@ def _create_jobs_table(conn: sqlite3.Connection):
             error TEXT,
             run_func_name TEXT,
             video_number TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            video_file TEXT,
+            user_id TEXT,
+            text TEXT,
+            blur TEXT DEFAULT 'yes',
+            target_language TEXT DEFAULT 'en',
+            cfg_weight REAL DEFAULT 0.5,
+            exaggeration REAL DEFAULT 0.5,
+            completed_at TIMESTAMP,
+            failed_at TIMESTAMP,
+            cancelled_at TIMESTAMP,
+            status_changed_at TIMESTAMP,
+            deleted_at TIMESTAMP,
+            checkpoint TEXT DEFAULT '',
+            checkpoint_edited INTEGER DEFAULT 0,
+            edited_srt_files TEXT DEFAULT '',
+            start_trim REAL DEFAULT NULL,
+            end_trim REAL DEFAULT NULL,
+            cached_path TEXT,
+            filename TEXT,
+            ocr_only TEXT,
+            progress TEXT
         )
     """)
 
@@ -145,7 +166,8 @@ def _migrate_users_table(conn: sqlite3.Connection):
 # ── public API ───────────────────────────────────────────────────
 
 # Canonical column list for the jobs table. Shared between schema
-# migration and query construction so there is a single source of truth.
+# migration and SELECT in job_worker._run_job so there is a single
+# source of truth for query rows.
 JOB_COLUMNS = [
     "access_code",
     "srt_path",
@@ -169,6 +191,44 @@ JOB_COLUMNS = [
     "filename",
     "ocr_only",
 ]
+
+# Columns written by jobqueue.add_job — drives the parameterised
+# INSERT so column order, placeholder count, and value tuple are
+# always consistent.
+INSERT_COLUMNS = [
+    "access_code",
+    "srt_path",
+    "output_dir",
+    "temperature",
+    "status",
+    "error",
+    "run_func_name",
+    "video_number",
+    "video_file",
+    "user_id",
+    "text",
+    "blur",
+    "target_language",
+    "cfg_weight",
+    "exaggeration",
+    "start_trim",
+    "end_trim",
+    "cached_path",
+    "filename",
+    "ocr_only",
+    "checkpoint",
+    "created_at",
+    "status_changed_at",
+]
+
+
+def insert_job_sql() -> str:
+    """Return a parameterised INSERT OR REPLACE statement for the jobs table.
+    The column list and placeholders are generated from ``INSERT_COLUMNS`` so
+    they always stay in sync."""
+    cols = ", ".join(INSERT_COLUMNS)
+    placeholders = ", ".join("?" for _ in INSERT_COLUMNS)
+    return f"INSERT OR REPLACE INTO jobs ({cols}) VALUES ({placeholders})"
 
 
 def init_jobs_schema(conn: sqlite3.Connection):

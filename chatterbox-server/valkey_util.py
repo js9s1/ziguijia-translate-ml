@@ -182,6 +182,8 @@ class InMemoryRateLimiter:
     Used when Valkey is unavailable.  One instance per limiter policy.
     """
 
+    _MAX_ENTRIES = 10000
+
     def __init__(self, limit: int, window: int):
         self.limit = limit
         self.window = window
@@ -200,4 +202,15 @@ class InMemoryRateLimiter:
         if len(pruned) >= self.limit:
             return False
         self._store.setdefault(key, pruned).append(now)
+        self._maybe_cleanup(now)
         return True
+
+    def _maybe_cleanup(self, now: float):
+        """Drop stale entries and evict oldest if over capacity."""
+        if len(self._store) <= self._MAX_ENTRIES:
+            return
+        stale = [k for k, v in self._store.items() if not v or v[-1] <= now - self.window]
+        for k in stale:
+            self._store.pop(k, None)
+        while len(self._store) > self._MAX_ENTRIES:
+            self._store.pop(next(iter(self._store)), None)

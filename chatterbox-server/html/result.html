@@ -516,7 +516,7 @@
         function resubmitJob() {
             if (!accessCode) return;
             if (!confirm('确定要重新提交此任务吗？')) return;
-            fetch('/srt/resubmit/' + accessCode, { method: 'POST' })
+            fetchWithCsrf('/srt/resubmit/' + accessCode, { method: 'POST' })
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {

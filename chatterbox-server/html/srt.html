@@ -52,7 +52,7 @@
 
             const formData = new FormData(this);
 
-            fetch('/srt/process', {
+            fetchWithCsrf('/srt/process', {
                 method: 'POST',
                 body: formData
             })

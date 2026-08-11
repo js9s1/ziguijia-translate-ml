@@ -13,7 +13,8 @@ from functools import wraps
 
 import valkey
 from config import AUDIO_TRACKS_DIR, VIDEO_DIR, is_screen_recording_filename, validate_upload_filename
-from flask import abort, jsonify, request, session
+from werkzeug.exceptions import HTTPException
+from flask import jsonify, request, session
 from valkey_util import (
     InMemoryRateLimiter,
     check_rate_limit,
@@ -90,7 +91,8 @@ def generate_csrf_token() -> str:
 def csrf_required(f):
     """Decorator: require a valid CSRF token on state-changing POST requests.
 
-    The token must be supplied via the ``X-CSRF-Token`` header.
+    The token must be supplied via the ``X-CSRF-Token`` header (JSON/fetch
+    requests) or a ``csrf_token`` form field (native form submissions).
     Auth-related endpoints (/auth/*) are exempt because they establish
     the session in the first place.
     """
@@ -98,6 +100,11 @@ def csrf_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         token = request.headers.get("X-CSRF-Token", "")
+        if not token:
+            try:
+                token = request.form.get("csrf_token", "")
+            except Exception:
+                token = ""
         expected = session.get("_csrf_token", "")
         if not expected or not token or not secrets.compare_digest(token, expected):
             logger.warning(f"CSRF token mismatch from {request.remote_addr}")
@@ -140,16 +147,16 @@ def parse_float_param(source: dict, key: str, default: float) -> float:
 
 
 def parse_job_params(source: dict) -> dict:
-    """Parse common job parameters from request.form or JSON body."""
-    try:
-        return {
-            "temperature": parse_float_param(source, "temperature", _DEFAULT_PARAMS["temperature"]),
-            "target_language": source.get("target_language", _DEFAULT_PARAMS["target_language"]),
-            "cfg_weight": parse_float_param(source, "cfg_weight", _DEFAULT_PARAMS["cfg_weight"]),
-            "exaggeration": parse_float_param(source, "exaggeration", _DEFAULT_PARAMS["exaggeration"]),
-        }
-    except ValueError as e:
-        abort(400, description=str(e))
+    """Parse common job parameters from request.form or JSON body.
+
+    Raises ValueError (→ 400 via api_endpoint or route handlers) on invalid input.
+    """
+    return {
+        "temperature": parse_float_param(source, "temperature", _DEFAULT_PARAMS["temperature"]),
+        "target_language": source.get("target_language", _DEFAULT_PARAMS["target_language"]),
+        "cfg_weight": parse_float_param(source, "cfg_weight", _DEFAULT_PARAMS["cfg_weight"]),
+        "exaggeration": parse_float_param(source, "exaggeration", _DEFAULT_PARAMS["exaggeration"]),
+    }
 
 
 def get_audio_params(job_data: dict) -> dict:
@@ -180,9 +187,11 @@ def safe_file_path(requested_path: str) -> str | None:
     """Resolve a file path and verify it falls within allowed directories."""
     resolved = os.path.realpath(requested_path)
     for allowed in ALLOWED_FILE_DIRS:
-        if resolved.startswith(allowed + "/") or resolved == allowed:
-            if os.path.isfile(resolved):
+        try:
+            if os.path.commonpath([resolved, allowed]) == allowed and os.path.isfile(resolved):
                 return resolved
+        except ValueError:
+            pass
     logger.warning(f"Blocked path traversal attempt: {requested_path}")
     return None
 
@@ -279,24 +288,15 @@ def validate_srt_content(text: str, label: str = "SRT"):
 def _validate_video_codec(content: bytes):
     import json
 
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+    with tempfile.NamedTemporaryFile(suffix=".mp4") as tmp:
         tmp.write(content)
         tmp.flush()
-        try:
-            result = None
-            result = subprocess.run(
-                ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", "-select_streams", "v:0", tmp.name],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-        finally:
-            try:
-                os.unlink(tmp.name)
-            except OSError:
-                pass
-    if result is None:
-        raise ValueError("Cannot probe video codec — ffprobe timed out or failed.")
+        result = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", "-select_streams", "v:0", tmp.name],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
     if result.returncode != 0:
         raise ValueError("Cannot probe video codec — file may be corrupt.")
     info = json.loads(result.stdout)
@@ -308,22 +308,27 @@ def _validate_video_codec(content: bytes):
 def _validate_srt_language(text: str):
     from language_utils import UNICODE_SCRIPTS
 
+    # Skip index lines and timing lines so we only classify subtitle text.
     lines = text.splitlines()
-    script_counts: dict[str, int] = {}
-    total_chars = 0
+    content_lines = []
     for line in lines:
         stripped = line.strip()
-        if not stripped:
+        if not stripped or stripped.isdigit() or "-->" in stripped:
             continue
-        if stripped.isdigit():
-            continue
-        if "-->" in stripped:
-            continue
-        for name, pattern in UNICODE_SCRIPTS.items():
-            matches = len(pattern.findall(stripped))
-            if matches:
-                script_counts[name] = script_counts.get(name, 0) + matches
-                total_chars += matches
+        content_lines.append(stripped)
+
+    if not content_lines:
+        return
+
+    # Single-pass character classification: for each char, find the first
+    # matching script pattern.  O(chars) instead of O(lines × patterns).
+    script_counts: dict[str, int] = {}
+    for line in content_lines:
+        for ch in line:
+            for name, pattern in UNICODE_SCRIPTS.items():
+                if pattern.match(ch):
+                    script_counts[name] = script_counts.get(name, 0) + 1
+                    break
 
     # Only reject if there's substantial mixing (>15% minority script).
     # Chinese OCR SRTs commonly contain occasional Latin letters
@@ -353,3 +358,34 @@ def _validate_srt_language(text: str):
                 f"SRT 文件包含多种语言，检测到: {detected}。请上传单一语言的 SRT 文件。"
             )
         # Only Latin + CJK found — that's acceptable
+
+
+# ── Route error-handling decorator ────────────────────────
+
+
+def api_endpoint(f):
+    """Decorator: wrap a Flask view so ValueError → 400, Exception → 500.
+
+    Eliminates the repeated try/except boilerplate in every route::
+
+        @bp.route("/foo", methods=["POST"])
+        @login_required
+        @csrf_required
+        @api_endpoint
+        def foo():
+            ...
+    """
+
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        try:
+            return f(*args, **kwargs)
+        except HTTPException:
+            raise
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            logger.error("Unhandled error in %s: %s", f.__name__, e, exc_info=True)
+            return jsonify({"error": str(e)}), 500
+
+    return decorated

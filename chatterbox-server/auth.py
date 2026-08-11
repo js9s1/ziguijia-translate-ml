@@ -21,6 +21,33 @@ DB_FILE = os.path.join(BASE_DIR, "users.db")
 _DUMMY_HASH = generate_password_hash("dummy-timing-guard")
 
 
+_EMAIL_VERIFY_SUBJECT = "验证您的邮箱 - 宁师的视频翻译工具"
+_EMAIL_VERIFY_BODY = """您好，
+
+感谢您注册宁师的视频翻译工具。
+
+您的验证码是：{code}
+
+请在验证页面输入此验证码完成邮箱验证。
+
+如果这不是您本人的操作，请忽略此邮件。
+
+宁师的视频翻译工具
+"""
+
+_EMAIL_RESET_SUBJECT = "重置密码 - 宁师的视频翻译工具"
+_EMAIL_RESET_BODY = """您好，
+
+您请求了重置密码。
+
+您的验证码是：{code}
+
+验证码有效期为30分钟。如果这不是您本人的操作，请忽略此邮件。
+
+宁师的视频翻译工具
+"""
+
+
 @singleton
 class UserManager:
     def __init__(self):
@@ -58,11 +85,11 @@ class UserManager:
         conn = self._get_conn()
         user = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
         if not user:
-            return {"success": False, "error": "用户不存在"}
+            return {"success": False, "error": "验证失败，请检查邮箱和验证码"}
         if user["verified"]:
             return {"success": True, "message": "邮箱已验证"}
         if user["verification_code"] != code:
-            return {"success": False, "error": "验证码错误"}
+            return {"success": False, "error": "验证失败，请检查邮箱和验证码"}
         conn.execute(
             "UPDATE users SET verified = 1, verification_code = NULL WHERE email = ?",
             (email,),
@@ -113,7 +140,7 @@ class UserManager:
         conn = self._get_conn()
         user = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
         if not user:
-            return {"success": False, "error": "用户不存在"}
+            return {"success": True, "message": "如果该邮箱已注册，验证码已重新发送"}
         if user["verified"]:
             return {"success": True, "message": "邮箱已验证"}
         code = "".join(secrets.choice(string.digits) for _ in range(6))
@@ -201,18 +228,7 @@ class UserManager:
             return False
 
     def _send_reset_email(self, email: str, code: str) -> bool:
-        subject = "重置密码 - 宁师的视频翻译工具"
-        body = f"""您好，
-
-您请求了重置密码。
-
-您的验证码是：{code}
-
-验证码有效期为30分钟。如果这不是您本人的操作，请忽略此邮件。
-
-宁师的视频翻译工具
-"""
-        sent = self._send_email(email, subject, body)
+        sent = self._send_email(email, _EMAIL_RESET_SUBJECT, _EMAIL_RESET_BODY.format(code=code))
         if sent:
             logger.info(f"Reset email sent to {email}")
         else:
@@ -220,20 +236,7 @@ class UserManager:
         return sent
 
     def _send_verification_email(self, email: str, code: str) -> bool:
-        subject = "验证您的邮箱 - 宁师的视频翻译工具"
-        body = f"""您好，
-
-感谢您注册宁师的视频翻译工具。
-
-您的验证码是：{code}
-
-请在验证页面输入此验证码完成邮箱验证。
-
-如果这不是您本人的操作，请忽略此邮件。
-
-宁师的视频翻译工具
-"""
-        sent = self._send_email(email, subject, body)
+        sent = self._send_email(email, _EMAIL_VERIFY_SUBJECT, _EMAIL_VERIFY_BODY.format(code=code))
         if sent:
             logger.info(f"Verification email sent to {email}")
         else:
