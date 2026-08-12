@@ -92,6 +92,36 @@ else
     echo "Valkey already running"
 fi
 
+# Start the shared warm ROCm OCR daemon (used by rapid_videocr_pipeline.sh
+# for both code_ml and batch jobs; daemon lives in code_ml/rapid_videocr_daemon,
+# socket/pid in $XDG_RUNTIME_DIR/rapid_videocr_daemon)
+RUNTIME_DAEMON_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/rapid_videocr_daemon"
+export RAPID_VIDEOCR_DAEMON_SOCK="${RAPID_VIDEOCR_DAEMON_SOCK:-${RUNTIME_DAEMON_DIR}/daemon.sock}"
+export RAPID_VIDEOCR_DAEMON_PID="${RAPID_VIDEOCR_DAEMON_PID:-${RUNTIME_DAEMON_DIR}/daemon.pid}"
+export DAEMON_MAX_JOBS="${DAEMON_MAX_JOBS:-2}"
+DAEMON_PYTHON="${DAEMON_PYTHON:-${HOME}/子归家/code_ml/rapid_videocr_daemon/.venv-rocm/bin/python}"
+DAEMON_SCRIPT="${DAEMON_SCRIPT:-${HOME}/子归家/code_ml/rapid_videocr_daemon/rapid_videocr_daemon.py}"
+DAEMON_CLIENT="${DAEMON_CLIENT:-${HOME}/子归家/code_ml/daemon_ocr_client.py}"
+OCR_DAEMON_LOG="${HOME}/logs/rapid_videocr_daemon.log"
+
+if "${PYTHON_BIN:-/usr/bin/python3}" "$DAEMON_CLIENT" ping > /dev/null 2>&1; then
+    echo "OCR daemon already running"
+else
+    echo "Starting ROCm OCR daemon..."
+    mkdir -p "$(dirname "$OCR_DAEMON_LOG")"
+    nohup "$DAEMON_PYTHON" "$DAEMON_SCRIPT" >> "$OCR_DAEMON_LOG" 2>&1 &
+    for i in 1 2 3 4 5 6; do
+        sleep 2
+        if "${PYTHON_BIN:-/usr/bin/python3}" "$DAEMON_CLIENT" ping > /dev/null 2>&1; then
+            echo "OCR daemon ready"
+            break
+        fi
+    done
+    if ! "${PYTHON_BIN:-/usr/bin/python3}" "$DAEMON_CLIENT" ping > /dev/null 2>&1; then
+        echo "Warning: OCR daemon failed to start — OCR jobs will fall back to per-chunk subprocess"
+    fi
+fi
+
 echo "Starting chatterbox server..."
 
 ${HOME}/.local/bin/gunicorn \

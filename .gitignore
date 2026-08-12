@@ -32,3 +32,9 @@ gpucore.*bash
 flask_session/
 gpucore.*
 regenerate_srt_pages.py
+
+# ── OCR daemon runtime (socket/pid live in $XDG_RUNTIME_DIR, log in ~/logs) ──
+rapid_videocr_daemon/.venv-rocm/
+rapid_videocr_daemon/log/
+rapid_videocr_daemon/*.sock
+rapid_videocr_daemon/*.pid

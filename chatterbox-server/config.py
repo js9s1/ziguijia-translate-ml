@@ -84,6 +84,10 @@ RAPID_VIDEOCR_BIN = os.environ.get(
     "RAPID_VIDEOCR_BIN",
     os.path.expanduser("~/.local/bin/rapid_videocr"),
 )
+RAPID_VIDEOCR_DAEMON_CLIENT = os.environ.get(
+    "RAPID_VIDEOCR_DAEMON_CLIENT",
+    os.path.join(PROJECT_ROOT, "daemon_ocr_client.py"),
+)
 
 # ── Default ports ──────────────────────────────────────────
 PORT = 18789

@@ -20,9 +20,9 @@
 #   -h, --help             Show this help
 #
 # Engine selection (via env var OCR_ENGINE):
-#   openvino   — CPU via OpenVINO (default, ~6 fps, stable)
-#   torch      — GPU via ROCm/PyTorch (~1 fps, experimental, requires ROCm stack)
-#   onnxruntime — CPU via ONNX Runtime (fallback if above not available)
+#   openvino    — CPU via OpenVINO (default, ~13 fps on Strix Halo, stable)
+#   torch       — GPU via ROCm/PyTorch (~9 fps, experimental, requires ROCm stack)
+#   onnxruntime — CPU via ONNX Runtime (~3 fps, slowest)
 #
 # Examples:
 #   ./rapid_videocr_pipeline.sh -i video.mp4                          # openvino (default)
@@ -45,6 +45,10 @@ SAVE_DIR=""
 KEEP_FRAMES=0
 RAPID_VIDEOCR_BIN="${RAPID_VIDEOCR_BIN:-${HOME}/.local/bin/rapid_videocr}"
 PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
+# Shared warm ROCm OCR daemon client (pure stdlib; daemon lives in batch/)
+DAEMON_CLIENT="${DAEMON_CLIENT:-${HOME}/子归家/code_ml/daemon_ocr_client.py}"
+# OCR_MODE=subprocess disables the daemon and runs one subprocess per chunk.
+OCR_MODE="${OCR_MODE:-daemon}"
 
 # ---- OCR engine selection ----
 # Switch the rapidocr config.yaml to the desired engine.
@@ -196,7 +200,11 @@ for ((chunk=0; chunk<CHUNK_COUNT; chunk++)); do
 
     CHUNK_PREFIX="${PREFIX}_chunk${chunk}"
     echo "  Chunk $((chunk+1))/${CHUNK_COUNT}: ${CHUNK_PREFIX} (frames $((start+1))-${end})"
-    "$RAPID_VIDEOCR_BIN" -i "$CHUNK_DIR" -s "$CHUNK_DIR" -f "$CHUNK_PREFIX" -o srt || true
+    if [[ "$OCR_MODE" == "subprocess" ]]; then
+        "$RAPID_VIDEOCR_BIN" -i "$CHUNK_DIR" -s "$CHUNK_DIR" -f "$CHUNK_PREFIX" -o srt || true
+    else
+        "${PYTHON_BIN}" "${DAEMON_CLIENT}" ocr "$CHUNK_DIR" "$CHUNK_DIR" "$CHUNK_PREFIX" || true
+    fi
 
     CHUNK_SRT="${CHUNK_DIR}/${CHUNK_PREFIX}.srt"
     [[ ! -f "$CHUNK_SRT" ]] && CHUNK_SRT="${CHUNK_DIR}/outputs/${CHUNK_PREFIX}.srt"
