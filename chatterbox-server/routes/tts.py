@@ -20,7 +20,7 @@ MAX_TEXT_LENGTH = 500
 @csrf_required
 @api_endpoint
 def tts_process():
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True) or request.form
     text = data.get("text", "")
     if not text:
         return jsonify({"error": "Missing text"}), 400
@@ -115,7 +115,7 @@ def audio_process():
         )
         return jsonify(result)
     else:
-        data = request.get_json(silent=True) or {}
+        data = request.get_json(silent=True) or request.form
         text = data.get("text", "")
         if not text:
             return jsonify({"error": "Missing text"}), 400
