@@ -188,6 +188,33 @@ class NingAudio:
             print(f"CPU fallback also failed: {e2}")
             return False
 
+    def _generate_with_retry(
+        self,
+        text,
+        target_language,
+        temperature,
+        cfg_weight,
+        exaggeration,
+        attempts=3,
+    ):
+        for attempt in range(attempts):
+            try:
+                return self.model.generate(
+                    text,
+                    language_id=target_language,
+                    temperature=temperature + attempt * 0.02,
+                    cfg_weight=cfg_weight,
+                    exaggeration=exaggeration,
+                )
+            except Exception as e:
+                if "not finite" not in str(e):
+                    raise
+                print(
+                    f"Non-finite audio buffer (attempt {attempt + 1}/{attempts}), "
+                    f"retrying with temperature={temperature + (attempt + 1) * 0.02}"
+                )
+        raise RuntimeError(f"model produced non-finite audio {attempts} times")
+
     def generate_audio(
         self,
         text,
@@ -217,12 +244,12 @@ class NingAudio:
         if prompt_file:
             self.model.prepare_conditionals(prompt_file)
         try:
-            wav = self.model.generate(
+            wav = self._generate_with_retry(
                 text,
-                language_id=target_language,
-                temperature=temperature,
-                cfg_weight=cfg_weight,
-                exaggeration=exaggeration,
+                target_language,
+                temperature,
+                cfg_weight,
+                exaggeration,
             )
         except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
             if not self._fallback_to_cpu(e):
@@ -230,12 +257,12 @@ class NingAudio:
             # Retry with CPU model
             if prompt_file:
                 self.model.prepare_conditionals(prompt_file)
-            wav = self.model.generate(
+            wav = self._generate_with_retry(
                 text,
-                language_id=target_language,
-                temperature=temperature,
-                cfg_weight=cfg_weight,
-                exaggeration=exaggeration,
+                target_language,
+                temperature,
+                cfg_weight,
+                exaggeration,
             )
         # Ensure wav is 2D tensor [1, samples]
         if wav.dim() == 1:
