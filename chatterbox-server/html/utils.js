@@ -118,7 +118,7 @@ function validateFloatInput(input, min, max) {
 }
 
 var _floatSlidersConfig = [
-    { id: 'temperature',   label: '温度',       min: 0.5, max: 1.5, step: 0.01, val: 0.6,  desc: '越高输出越随机，越低越稳定' },
+    { id: 'temperature',   label: '温度',       min: 0.2, max: 1.2, step: 0.01, val: 0.6,  desc: '越高输出越随机，越低越稳定' },
     { id: 'cfg_weight',    label: 'CFG 权重',    min: 0,   max: 1.5, step: 0.01, val: 0.25, desc: '控制生成音频与提示的契合度' },
     { id: 'exaggeration',  label: '口音夸张度',  min: 0,   max: 1.0, step: 0.01, val: 0.5,  desc: '口音/语气的夸张程度' },
 ];
