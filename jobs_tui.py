@@ -15,6 +15,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import http.cookiejar
+import json
 import os
 import select
 import shutil
@@ -25,6 +27,8 @@ import sys
 import termios
 import time
 import tty
+import urllib.error
+import urllib.request
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -503,6 +507,23 @@ def get_checkpoint(code: str) -> str:
     return ",".join(steps)
 
 
+def _post_with_csrf(path: str, timeout: float = 5.0) -> tuple[int, dict]:
+    """POST to the local server with a fresh session + CSRF token.
+
+    The server uses server-side sessions (flask-session) and requires an
+    X-CSRF-Token header on state-changing routes, so we fetch a token with a
+    cookie jar and send the cookie + token on the POST.
+    """
+    jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    base = f"http://localhost:{RESUBMIT_PORT}"
+    with opener.open(base + "/auth/csrf-token", timeout=timeout) as resp:
+        token = json.loads(resp.read().decode("utf-8")).get("csrf_token", "")
+    req = urllib.request.Request(base + path, method="POST", headers={"X-CSRF-Token": token})
+    with opener.open(req, timeout=timeout) as resp:
+        return resp.status, json.loads(resp.read().decode("utf-8"))
+
+
 def resubmit_job(code: str, keep_steps: list[str] | None = None) -> str:
     """Resubmit a failed/completed job.
 
@@ -543,20 +564,12 @@ def resubmit_job(code: str, keep_steps: list[str] | None = None) -> str:
     conn.commit()
     conn.close()
     try:
-        import json
-        import urllib.request
-
-        req = urllib.request.Request(
-            f"http://localhost:{RESUBMIT_PORT}/srt/resubmit/{code}",
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            if resp.status == 200 and data.get("success"):
-                return f"✅ 任务 {code} 已重新提交"
-            else:
-                error_msg = data.get("error", "未知错误")
-                return f"⚠️ 检查点已更新，但服务器拒绝: {error_msg}"
+        status, data = _post_with_csrf(f"/srt/resubmit/{code}")
+        if status == 200 and data.get("success"):
+            return f"✅ 任务 {code} 已重新提交"
+        else:
+            error_msg = data.get("error", "未知错误")
+            return f"⚠️ 检查点已更新，但服务器拒绝: {error_msg}"
     except urllib.error.HTTPError as e:
         error_data = e.read().decode("utf-8") if e.fp else ""
         return f"⚠️ 检查点已更新，但服务器返回错误 ({e.code}): {error_data}"
