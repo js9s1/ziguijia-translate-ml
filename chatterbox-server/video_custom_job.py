@@ -1,5 +1,6 @@
 """Custom/auto video jobs — user video + SRT, or auto-extract+translate+generate."""
 
+import contextlib
 import os
 import uuid
 
@@ -10,7 +11,7 @@ from config import (
 )
 from jobqueue import get_job_queue
 from log_utils import job_log
-from middleware import get_audio_params
+from middleware import get_audio_params, validate_video_srt_duration
 from pipeline import (
     _adjust_original_audio_nonfatal,
     run_audio_ckpt,
@@ -70,6 +71,16 @@ def process_video_custom(
 
     srt_path = os.path.join(output_dir, srt_file.filename)
     srt_file.save(srt_path)
+
+    try:
+        validate_video_srt_duration(video_path, srt_path)
+    except ValueError:
+        for p in (video_path, srt_path):
+            with contextlib.suppress(OSError):
+                os.remove(p)
+        with contextlib.suppress(OSError):
+            os.rmdir(output_dir)
+        raise
 
     job_data = {
         "video_file": video_path,

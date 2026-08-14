@@ -1,13 +1,17 @@
 """Tests for middleware: rate limiting, CSRF, login_required, file validation."""
 
 import os
+import shutil
+import subprocess
 
 import pytest
 from middleware import (
     _SRT_TIMING_RE,
+    DURATION_MISMATCH_MESSAGE,
     parse_float_param,
     parse_job_params,
     safe_file_path,
+    validate_video_srt_duration,
 )
 
 
@@ -78,3 +82,83 @@ class TestSRTTimingRegex:
 
     def test_invalid(self):
         assert not _SRT_TIMING_RE.search("hello world")
+
+
+ffmpeg = pytest.mark.skipif(
+    shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None, reason="ffmpeg/ffprobe not available"
+)
+
+
+def _make_mp4(path, seconds):
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"testsrc=duration={seconds}:size=160x120:rate=10",
+            "-pix_fmt",
+            "yuv420p",
+            str(path),
+        ],
+        capture_output=True,
+        check=True,
+    )
+
+
+def _write_srt(path, end_seconds):
+    from datetime import timedelta
+
+    end = timedelta(seconds=end_seconds)
+    hours, rem = divmod(end.seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    stamp = f"{hours:02d}:{minutes:02d}:{secs:02d},{int(end.microseconds / 1000):03d}"
+    path.write_text(f"1\n00:00:00,000 --> {stamp}\nhello\n", encoding="utf-8")
+
+
+class TestValidateVideoSrtDuration:
+    @ffmpeg
+    def test_matching_durations_pass(self, tmp_path):
+        _make_mp4(tmp_path / "v.mp4", 10)
+        _write_srt(tmp_path / "v.srt", 10)
+        validate_video_srt_duration(str(tmp_path / "v.mp4"), str(tmp_path / "v.srt"))
+
+    @ffmpeg
+    def test_within_tolerance_pass(self, tmp_path):
+        _make_mp4(tmp_path / "v.mp4", 10)
+        _write_srt(tmp_path / "v.srt", 10.4)
+        validate_video_srt_duration(str(tmp_path / "v.mp4"), str(tmp_path / "v.srt"))
+
+    @ffmpeg
+    def test_beyond_tolerance_raises(self, tmp_path):
+        _make_mp4(tmp_path / "v.mp4", 10)
+        _write_srt(tmp_path / "v.srt", 11)
+        with pytest.raises(ValueError, match=DURATION_MISMATCH_MESSAGE):
+            validate_video_srt_duration(str(tmp_path / "v.mp4"), str(tmp_path / "v.srt"))
+
+    @ffmpeg
+    def test_srt_shorter_than_video_raises(self, tmp_path):
+        _make_mp4(tmp_path / "v.mp4", 11)
+        _write_srt(tmp_path / "v.srt", 10)
+        with pytest.raises(ValueError, match=DURATION_MISMATCH_MESSAGE):
+            validate_video_srt_duration(str(tmp_path / "v.mp4"), str(tmp_path / "v.srt"))
+
+    def test_boundary_exactly_five_percent_passes(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("middleware._probe_video_duration", lambda p: 100.0)
+        monkeypatch.setattr("middleware._srt_duration_seconds", lambda p: 95.0)
+        validate_video_srt_duration("v", "s")
+
+    def test_just_beyond_boundary_raises(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("middleware._probe_video_duration", lambda p: 100.0)
+        monkeypatch.setattr("middleware._srt_duration_seconds", lambda p: 94.9)
+        with pytest.raises(ValueError, match=DURATION_MISMATCH_MESSAGE):
+            validate_video_srt_duration("v", "s")
+
+    def test_unprobeable_video_passes(self, tmp_path):
+        _write_srt(tmp_path / "v.srt", 10)
+        validate_video_srt_duration(str(tmp_path / "nonexistent.mp4"), str(tmp_path / "v.srt"))
+
+    def test_unparseable_srt_passes(self, tmp_path):
+        (tmp_path / "v.srt").write_text("not an srt", encoding="utf-8")
+        validate_video_srt_duration(str(tmp_path / "nonexistent.mp4"), str(tmp_path / "v.srt"))

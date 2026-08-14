@@ -360,6 +360,67 @@ def _validate_srt_language(text: str):
         # Only Latin + CJK found — that's acceptable
 
 
+# ── Video/SRT duration validation ─────────────────────────
+
+DURATION_TOLERANCE = 0.05
+DURATION_MISMATCH_MESSAGE = "input video file does not match the uploaded srt file"
+
+
+def _probe_video_duration(video_path: str) -> float | None:
+    """Return the video duration in seconds, or None if it can't be probed."""
+    import json
+
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", video_path],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            return None
+        info = json.loads(result.stdout)
+        duration = info.get("format", {}).get("duration")
+        return float(duration) if duration else None
+    except (subprocess.TimeoutExpired, OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _srt_duration_seconds(srt_path: str) -> float | None:
+    """Return the SRT duration (last cue end) in seconds, or None on failure."""
+    try:
+        import srt
+        from video_util import read_srt_text
+
+        text = read_srt_text(srt_path)
+        subs = list(srt.parse(text))
+        if not subs:
+            return None
+        return max(sub.end.total_seconds() for sub in subs)
+    except Exception:
+        return None
+
+
+def validate_video_srt_duration(video_path: str, srt_path: str) -> None:
+    """Raise ValueError if the video and SRT durations differ by more than 5%.
+
+    Applies to any input video (user-uploaded or automatically downloaded)
+    that is paired with an uploaded SRT. Tolerates up to 5% of the larger
+    duration; beyond that the files are considered mismatched.
+    """
+    video_duration = _probe_video_duration(video_path)
+    if video_duration is None:
+        return
+    srt_duration = _srt_duration_seconds(srt_path)
+    if srt_duration is None:
+        return
+    larger = max(video_duration, srt_duration)
+    if larger <= 0:
+        return
+    if abs(video_duration - srt_duration) / larger > DURATION_TOLERANCE:
+        raise ValueError(DURATION_MISMATCH_MESSAGE)
+
+
 # ── Route error-handling decorator ────────────────────────
 
 

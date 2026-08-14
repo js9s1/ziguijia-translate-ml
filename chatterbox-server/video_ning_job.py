@@ -7,7 +7,7 @@ import uuid
 from config import MARKER_INTRO, MARKER_OUTRO, VIDEO_DIR
 from jobqueue import get_job_queue
 from log_utils import job_log, job_log_lines
-from middleware import get_audio_params
+from middleware import get_audio_params, validate_video_srt_duration
 from pipeline import (
     _adjust_original_audio_nonfatal,
     run_audio_ckpt,
@@ -57,6 +57,7 @@ def _run_video_job(job_data: dict):
         ckpt = CheckpointHelper(access_code, output_dir, valid_steps)
 
         video_path = run_download_ckpt(video_number, output_dir, access_code, ckpt, proc_log, job_data)
+        validate_video_srt_duration(video_path, srt_path)
         audio_out = run_audio_ckpt(
             srt_path,
             output_dir,
