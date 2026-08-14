@@ -120,7 +120,7 @@ def _prompt_raw(model, tokenizer, text, target_language):
     tokenized_chat = tokenizer.apply_chat_template(
         messages, tokenize=True, add_generation_prompt=False, return_tensors="pt"
     )
-    outputs = model.generate(tokenized_chat.to(model.device), **hy_mt.GENERATION_KWARGS)
+    outputs = model.generate(**tokenized_chat.to(model.device), **hy_mt.GENERATION_KWARGS)
     return tokenizer.decode(outputs[0][len(tokenized_chat[0]) :], skip_special_tokens=True)
 
 
