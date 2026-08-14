@@ -22,7 +22,8 @@ import time
 
 sys.path.insert(0, os.path.expanduser("~/src/HY-MT"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "chatterbox-server"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chatterbox-server"))
 
 from rocm_env import setup as _rocm_setup  # noqa: E402
 

@@ -22,7 +22,7 @@ def _run_tts_job(job_data: dict):
     with open(srt_path, "w") as f:
         f.write(f"1\n00:00:00,000 --> 00:01:00,000\n{text}\n\n")
 
-    gen_audio_script = os.path.join(PROJECT_ROOT, "gen_audio.py")
+    gen_audio_script = os.path.join(PROJECT_ROOT, "gen_audio", "gen_audio.py")
     assets_dir = os.path.join(PROJECT_ROOT, "..", "assets")
 
     job_log(access_code, output_dir, "--- gen_audio (TTS) ---")

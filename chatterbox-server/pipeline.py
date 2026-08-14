@@ -62,7 +62,7 @@ def run_gen_audio_step(
     log_path = os.path.join(output_dir, "job.log")
     job_log(access_code, output_dir, "--- gen_audio ---")
 
-    gen_audio_script = os.path.join(PROJECT_ROOT, "gen_audio.py")
+    gen_audio_script = os.path.join(PROJECT_ROOT, "gen_audio", "gen_audio.py")
     assets_dir = os.path.join(PROJECT_ROOT, "..", "assets")
 
     cmd = [
@@ -398,7 +398,7 @@ def run_translate_ckpt(
     )
     target_language_name = LANG_MAP.get(target_language, target_language)
 
-    translate_script = os.path.join(PROJECT_ROOT, "translate_srt.py")
+    translate_script = os.path.join(PROJECT_ROOT, "translate", "translate_srt.py")
     cmd = [
         TRANSLATE_PYTHON,
         "-u",

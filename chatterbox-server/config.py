@@ -42,11 +42,11 @@ AUDIO_PROMPT_PATH = os.environ.get(
 )
 GEN_AUDIO_SCRIPT = os.environ.get(
     "GEN_AUDIO_SCRIPT",
-    os.path.join(PROJECT_ROOT, "gen_audio.py"),
+    os.path.join(PROJECT_ROOT, "gen_audio", "gen_audio.py"),
 )
 GEN_AUDIO_DAEMON_SCRIPT = os.environ.get(
     "GEN_AUDIO_DAEMON_SCRIPT",
-    os.path.join(PROJECT_ROOT, "gen_audio_daemon.py"),
+    os.path.join(PROJECT_ROOT, "gen_audio", "gen_audio_daemon.py"),
 )
 
 
@@ -78,7 +78,7 @@ def _translate_daemon_runtime_dir():
 
 TRANSLATE_DAEMON_SCRIPT = os.environ.get(
     "TRANSLATE_DAEMON_SCRIPT",
-    os.path.join(PROJECT_ROOT, "translate_daemon.py"),
+    os.path.join(PROJECT_ROOT, "translate", "translate_daemon.py"),
 )
 TRANSLATE_DAEMON_SOCK = os.environ.get(
     "TRANSLATE_DAEMON_SOCK",

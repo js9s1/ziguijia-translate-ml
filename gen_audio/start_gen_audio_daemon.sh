@@ -13,7 +13,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/rocm_env.sh"
+source "$SCRIPT_DIR/../rocm_env.sh"
 export GEN_AUDIO_MAX_JOBS="${GEN_AUDIO_MAX_JOBS:-2}"
 
 GEN_AUDIO_PYTHON="${GEN_AUDIO_PYTHON:-$HOME/.pyenv/versions/3.11.14/bin/python3.11}"

@@ -23,6 +23,11 @@ Protocol (newline-delimited JSON per request, connection-per-request):
   request  {"cmd": "ping"}
   response {"ok": true, "engine": "hy-mt", "device": "..."}
 
+  request  {"cmd": "ensure_model"}
+  response {"ok": true, "device": "cuda"}
+    or     {"ok": false, "code": "busy", "retry_after": 5}
+           (all worker slots busy — model will load on first translate)
+
   request  {"cmd": "translate", "input_path": "...", "output_path": "...",
             "language": "English", "intro": null, "outro": null}
   response {"ok": true, "output_path": "...", "segments": 42}
@@ -35,6 +40,7 @@ Protocol (newline-delimited JSON per request, connection-per-request):
 
 SIGTERM or SIGINT stops the daemon cleanly after in-flight jobs finish.
 """
+import contextlib
 import gc
 import json
 import os
@@ -54,7 +60,8 @@ if sys.stderr is not None:
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-sys.path.insert(0, str(HERE / "chatterbox-server"))
+sys.path.insert(0, str(HERE.parent))
+sys.path.insert(0, str(HERE.parent / "chatterbox-server"))
 sys.path.insert(0, os.path.expanduser("~/src/HY-MT"))
 
 from rocm_env import setup as _rocm_setup  # noqa: E402
@@ -234,6 +241,33 @@ def _send_response(conn, resp):
             pass
 
 
+def _submit_ensure_model(conn, req):
+    """Load the HY-MT model on a worker thread (slot-protected)."""
+
+    def run_job():
+        global _LAST_ACTIVE_TS
+        try:
+            model, _ = _thread_model()
+            device = "cpu"
+            with contextlib.suppress(StopIteration, AttributeError):
+                device = str(next(model.parameters()).device)
+            _send_response(conn, {"ok": True, "device": device})
+        except Exception as e:  # noqa: BLE001
+            _send_response(conn, {"ok": False, "error": f"{type(e).__name__}: {e}"})
+        finally:
+            _LAST_ACTIVE_TS = time.monotonic()
+            JOB_SLOTS.release()
+
+    try:
+        TTS_POOL.submit(run_job)
+        print("[daemon] ensure_model: run_job submitted to worker pool")
+    except Exception as e:  # executor shut down mid-request
+        print(f"[daemon] ensure_model: submit failed ({type(e).__name__}: {e})")
+        with contextlib.suppress(ValueError):
+            JOB_SLOTS.release()
+        _send_response(conn, {"ok": False, "error": "daemon shutting down"})
+
+
 def _submit_translate(conn, req):
     def run_job():
         global _ACTIVE, _LAST_ACTIVE_TS
@@ -309,6 +343,16 @@ def _handle(conn, device_name):
         _send_response(conn, {"ok": True})
         global _QUIT
         _QUIT = True
+        return
+
+    if cmd == "ensure_model":
+        if not JOB_SLOTS.acquire(blocking=False):
+            print("[daemon] ensure_model: busy — all worker slots occupied")
+            _send_response(
+                conn, {"ok": False, "code": "busy", "error": "daemon busy - retry later", "retry_after": 5}
+            )
+            return
+        _submit_ensure_model(conn, req)
         return
 
     if cmd == "translate":

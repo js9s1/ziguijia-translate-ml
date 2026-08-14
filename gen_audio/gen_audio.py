@@ -9,6 +9,8 @@ import sys
 import time
 from datetime import timedelta
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from rocm_env import setup as _rocm_setup
 
 _rocm_setup()  # before any torch import
@@ -17,7 +19,7 @@ import soundfile as sf
 import srt
 import torch
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "chatterbox-server"))
+sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chatterbox-server"))
 
 from config import ASSETS_DIR as CFG_ASSETS_DIR
 from config import AUDIO_PROMPT_PATH as CFG_AUDIO_PROMPT_PATH
@@ -582,47 +584,6 @@ class _DaemonTTSClient:
         return wav, float(resp["duration"])
 
 
-class _DirectTTSBackend:
-    """In-process NingAudio wrapper (legacy fallback when no daemon runs)."""
-
-    def __init__(self, audio_prompt: str, target_language: str):
-        import gpu_manage as _gm
-        from audio_utils import NingAudio
-
-        self._gm = _gm
-        self._audio = NingAudio(audio_prompt=audio_prompt)
-        self._audio._ensure_model(target_language)
-        if target_language == "id":
-            self._sample_rate = _gm._indonesian_model.sr
-        else:
-            self._sample_rate = self._audio.sample_rate
-
-    @property
-    def sample_rate(self) -> int:
-        return self._sample_rate
-
-    def generate(
-        self,
-        text: str,
-        wav_path: str,
-        temperature: float,
-        prompt_file: str | None,
-        target_language: str,
-        cfg_weight: float,
-        exaggeration: float,
-    ):
-        return self._audio.generate_audio(
-            text,
-            wav_path,
-            self._sample_rate,
-            temperature,
-            prompt_file=prompt_file,
-            target_language=target_language,
-            cfg_weight=cfg_weight,
-            exaggeration=exaggeration,
-        )
-
-
 def process_with_direct(
     srt_path,
     audio_prompt,
@@ -634,6 +595,7 @@ def process_with_direct(
     exaggeration=0.5,
     backend=None,
 ):
+    """Process an SRT into audio via the TTS backend (gen_audio daemon client)."""
     subs = load_subs(srt_path)
     if not subs:
         print("No subtitles found in SRT file")
@@ -725,11 +687,7 @@ def process_with_direct(
         return combined_tensor, adjusted_subs, changed_segments, sample_rate, total_duration
 
     # ── Some segments need generation — init TTS backend ─────
-    if backend is None:
-        backend = _DirectTTSBackend(audio_prompt, target_language)
-        sample_rate = backend.sample_rate
-    else:
-        sample_rate = backend.ensure_model(target_language)
+    sample_rate = backend.ensure_model(target_language)
 
     adjusted_subs = []
     segments_info = []
@@ -940,9 +898,9 @@ def main():
     parser.add_argument("--changed_json", default="changed_segments.json")
     parser.add_argument(
         "--mode",
-        choices=["auto", "daemon", "direct"],
+        choices=["auto", "daemon"],
         default="auto",
-        help="TTS backend: auto (daemon with direct fallback), daemon (require daemon), direct (in-process)",
+        help="TTS backend: auto (start daemon if needed), daemon (require running daemon)",
     )
     args = parser.parse_args()
 
@@ -966,26 +924,20 @@ def main():
     )
     print()
 
-    backend = None
-    if args.mode in ("auto", "daemon"):
-        client = _DaemonTTSClient(GEN_AUDIO_DAEMON_SOCK, auto_start=(args.mode == "auto"))
-        if args.mode == "auto" and client.ping() is None:
-            print(f"gen_audio daemon not running — starting it ({GEN_AUDIO_DAEMON_SOCK})")
-            client.ensure_daemon()
-        resp = client.ping()
-        if resp is not None and resp.get("ok"):
-            print(
-                f"Using gen_audio daemon ({GEN_AUDIO_DAEMON_SOCK}, "
-                f"engine={resp.get('engine')}, device={resp.get('device')}, max_jobs={resp.get('max_jobs')})"
-            )
-            backend = client
-        elif args.mode == "daemon":
-            print(f"ERROR: gen_audio daemon not reachable at {GEN_AUDIO_DAEMON_SOCK}", file=sys.stderr)
-            return 1
-        else:
-            print("WARNING: gen_audio daemon not reachable — falling back to direct in-process mode")
-    if backend is None:
-        print("Using direct NingAudio (in-process)")
+    client = _DaemonTTSClient(GEN_AUDIO_DAEMON_SOCK, auto_start=(args.mode == "auto"))
+    if args.mode == "auto" and client.ping() is None:
+        print(f"gen_audio daemon not running — starting it ({GEN_AUDIO_DAEMON_SOCK})")
+        client.ensure_daemon()
+    resp = client.ping()
+    if resp is not None and resp.get("ok"):
+        print(
+            f"Using gen_audio daemon ({GEN_AUDIO_DAEMON_SOCK}, "
+            f"engine={resp.get('engine')}, device={resp.get('device')}, max_jobs={resp.get('max_jobs')})"
+        )
+        backend = client
+    else:
+        print(f"ERROR: gen_audio daemon not reachable at {GEN_AUDIO_DAEMON_SOCK}", file=sys.stderr)
+        return 1
 
     result = process_with_direct(
         args.srt,

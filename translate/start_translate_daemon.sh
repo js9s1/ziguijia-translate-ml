@@ -13,7 +13,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/rocm_env.sh"
+source "$SCRIPT_DIR/../rocm_env.sh"
 export TRANSLATE_MAX_JOBS="${TRANSLATE_MAX_JOBS:-2}"
 
 TRANSLATE_PYTHON="${TRANSLATE_PYTHON:-$HOME/.pyenv/versions/3.11.14/bin/python3.11}"

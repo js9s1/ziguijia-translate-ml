@@ -62,7 +62,8 @@ if sys.stderr is not None:
     sys.stderr.reconfigure(line_buffering=True)
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE / "chatterbox-server"))
+sys.path.insert(0, str(HERE.parent))
+sys.path.insert(0, str(HERE.parent / "chatterbox-server"))
 
 from config import AUDIO_PROMPT_PATH, GEN_AUDIO_DAEMON_PID, GEN_AUDIO_DAEMON_SOCK  # noqa: E402
 from gpu_thermal import get_gpu_temp  # noqa: E402
