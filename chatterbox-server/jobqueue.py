@@ -78,7 +78,6 @@ class JobQueue:
         self._graceful_shutdown = False
         self._shutdown_timeout = 60
         self._shutdown_done = threading.Event()
-        self._last_gpu_reset_ts = 0.0
         self._init_db()
         self._load_pending_jobs()
         if not _SKIP_QUEUE_INIT:

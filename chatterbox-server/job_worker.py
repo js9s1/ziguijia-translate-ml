@@ -131,38 +131,6 @@ def _extract_failure_reason(output_dir: str | None) -> str | None:
     return None
 
 
-def _reset_gpu_state():
-    """Reset the ROCm/HIP GPU driver state between jobs.
-    "
-    (256–1024 tensors) than the TTS pre-flight check.
-    """
-    from gpu_probe import run_gpu_probe
-
-    r = run_gpu_probe([256, 512, 1024], reset_peak_memory=True)
-    if r is None:
-        return
-    if "OK" in r.stdout:
-        logger.info("GPU state reset between jobs — ok")
-    else:
-        logger.warning(
-            "GPU state reset between jobs — probe failed: stderr=%s stdout=%s",
-            r.stderr.strip()[:200],
-            r.stdout.strip()[:200],
-        )
-
-
-def _reset_gpu_state_cooldown(jq) -> bool:
-    """Conditionally reset GPU state with a 60 s cooldown.
-    Returns True if a reset was attempted.
-    """
-    now = time.monotonic()
-    if now - jq._last_gpu_reset_ts < 60:
-        return False
-    jq._last_gpu_reset_ts = now
-    _reset_gpu_state()
-    return True
-
-
 # ── Job lifecycle functions (take JobQueue instance) ────────
 
 
@@ -276,8 +244,5 @@ def _run_job(jq, access_code: str):
         conn.commit()
         publish_job_status(access_code, JobStatus.COMPLETED.value)
         logger.info(f"Job {access_code} completed successfully")
-
-    # ── GPU state reset between jobs ─────────────────────────
-    _reset_gpu_state_cooldown(jq)
 
     conn.commit()

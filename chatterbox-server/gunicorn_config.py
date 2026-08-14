@@ -45,9 +45,7 @@ class RequestIDFilter(logging.Filter):
 
 def post_fork(server, worker):
     """Called after a worker is forked. Reset the JobQueue singleton so each
-    worker gets its own worker thread and DB connection. Also reset the
-    NingAudio singleton and Indonesian model handle so no stale GPU
-    references leak from the parent process. Finally install
+    worker gets its own worker thread and DB connection. Finally install
     structured JSON logging on gunicorn's existing handler."""
     from jobqueue import JobQueue
 
@@ -57,15 +55,6 @@ def post_fork(server, worker):
     from jobqueue import get_job_queue
 
     get_job_queue()
-
-    # Reset TTS model singletons — gen_audio now runs as a subprocess
-    # on its own Python 3.11, so the worker never holds GPU handles.
-    try:
-        from gpu_manage import _clear_all_models
-
-        _clear_all_models()
-    except ImportError:
-        pass  # OK — torch/gpu_manage not needed in server worker
 
     fmt = JSONFormatter()
     req_filter = RequestIDFilter()

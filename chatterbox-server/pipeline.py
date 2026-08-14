@@ -48,11 +48,10 @@ def run_gen_audio_step(
     output_wav: str = "output.wav",
     changed_json: str = "changed_segments.json",
 ) -> dict[str, str]:
-    """Generate audio from SRT (subprocess — clean GPU).
+    """Generate audio from SRT (subprocess — dedicated GPU context).
 
-    Runs gen_audio.py as a subprocess so it gets a dedicated GPU context,
-    avoiding in-process memory contention that causes SIGSEGV on iGPUs.
-    The worker releases its GPU model before spawning.
+    Runs gen_audio.py as a subprocess on its own Python interpreter so
+    TTS keeps its GPU context separate from the server worker.
     """
     os.makedirs(output_dir, exist_ok=True)
 

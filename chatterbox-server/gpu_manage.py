@@ -1,10 +1,8 @@
 """GPU model management — one model at a time, lazy swap on language change.
 
-All TTS model globals, loading, and GPU acquisition live here so the
-single-worker job queue naturally serialises GPU access.  *NingAudio*
-imports from this module; job functions call :func:`_release_gpu` after
-each job to free VRAM for subprocesses (now unused — gen_audio runs
-in-process, but kept for manual intervention).
+All TTS model globals, loading, and GPU acquisition live here.  This
+module only runs inside the gen_audio.py subprocess — the server
+worker never imports it.
 """
 
 import gc
@@ -45,20 +43,6 @@ def _acquire_gpu_for(lang: str) -> None:
     else:
         if _model is None:
             _load_multilingual_model()
-
-
-def _release_gpu() -> None:
-    """Unload whichever model is on GPU so other processes can use it."""
-    global _model, _indonesian_model
-    if _model is not None:
-        print("Releasing multilingual model from GPU...")
-        del _model
-    if _indonesian_model is not None:
-        print("Releasing Indonesian model from GPU...")
-        del _indonesian_model
-    _model = None
-    _indonesian_model = None
-    torch.cuda.empty_cache()
 
 
 def _get_device(m) -> str:
@@ -152,130 +136,17 @@ def _generate_indonesian(text: str, prompt_file: str | None = None, temperature:
     return wav
 
 
-def _switch_to_cpu() -> None:
-    """Switch the multilingual model from GPU to CPU.
-
-    No-op if model is already on CPU or not loaded.  Call this before a
-    segment that needs CPU, then call :func:`_reload_gpu` to switch back.
-    """
-    global _model
-    if _model is None:
-        _load_multilingual_model()  # load straight to CPU — _choose_device will fall back
-        return
-    if _get_device(_model) != "cuda":
-        return  # already on CPU
-    print("Switching multilingual TTS model from GPU to CPU...")
-    import warnings
-
-    del _model
-    _model = None
-    gc.collect()
-    torch.cuda.empty_cache()
-    torch.cuda.synchronize()
-
-    warnings.filterwarnings("ignore")
-    try:
-        from chatterbox.mtl_tts import ChatterboxMultilingualTTS
-    except ModuleNotFoundError:
-        raise RuntimeError("chatterbox-tts is not installed for this Python interpreter.") from None
-
-    _model = ChatterboxMultilingualTTS.from_pretrained(device="cpu")
-    _model.prepare_conditionals(AUDIO_PROMPT_PATH)
-    print("Multilingual TTS model now on CPU.")
-
-
-def _reload_gpu() -> bool:
-    """Switch the multilingual model from CPU back to GPU.
-
-    Returns True on success, False if GPU is not available / unhealthy.
-    Call after a temporary CPU fallback for a single segment.
-    """
-    global _model
-    import warnings
-
-    if not torch.cuda.is_available():
-        print("CUDA not available — cannot reload on GPU")
-        return False
-    device_choice = _choose_device("cuda")
-    if device_choice != "cuda":
-        print(f"GPU not healthy — keeping model on CPU (device check returned {device_choice})")
-        return False
-
-    # Unload current (CPU) model
-    if _model is not None:
-        del _model
-        _model = None
-    gc.collect()
-    torch.cuda.empty_cache()
-    torch.cuda.synchronize()
-
-    warnings.filterwarnings("ignore")
-    try:
-        from chatterbox.mtl_tts import ChatterboxMultilingualTTS
-    except ModuleNotFoundError:
-        raise RuntimeError("chatterbox-tts is not installed for this Python interpreter.") from None
-
-    try:
-        print("Reloading multilingual TTS model on GPU...")
-        _model = ChatterboxMultilingualTTS.from_pretrained(device="cuda")
-        _model.prepare_conditionals(AUDIO_PROMPT_PATH)
-        print("Multilingual TTS model reloaded on GPU.")
-        return True
-    except (torch.cuda.OutOfMemoryError, RuntimeError, torch.cuda.CudaError) as e:
-        print(f"GPU reload failed ({e}), keeping CPU model")
-        # Reload on CPU instead
-        _model = ChatterboxMultilingualTTS.from_pretrained(device="cpu")
-        _model.prepare_conditionals(AUDIO_PROMPT_PATH)
-        return False
-
-
-# ── Fork safety ─────────────────────────────────────────────
-
-
-def _clear_indonesian_model():
-    """Reset Indonesian model handle (used by gunicorn post_fork)."""
-    global _indonesian_model
-    _indonesian_model = None
-
-
-def _clear_all_models():
-    """Reset both model handles (used by gunicorn post_fork)."""
-    global _model, _indonesian_model
-    _model = None
-    _indonesian_model = None
-
-
-# ── Health / device probes ──────────────────────────────────
+# ── Device selection ────────────────────────────────────────
 
 _GPU_MIN_FREE_MEM_GiB = float(os.environ.get("GPU_MIN_FREE_MEM_GiB", "1.0"))
 
 
-def _check_gpu_healthy() -> bool:
-    """Probe GPU health with a progressively heavier workload (with timeout).
-
-    Returns True only if all sizes pass, indicating the GPU is genuinely
-    healthy enough for TTS inference.
-    """
-    from gpu_probe import run_gpu_probe
-
-    r = run_gpu_probe([128, 256, 512, 768], include_softmax=True)
-    if r is None:
-        return False
-    ok = "OK" in r.stdout
-    if not ok:
-        print(f"GPU health check failed — stderr: {r.stderr.strip()}")
-    return ok
-
-
 def _choose_device(preferred: str = "cuda") -> str:
-    """Pick device: GPU if healthy with enough free memory, otherwise CPU."""
+    """Pick device: GPU if enough free memory, otherwise CPU."""
     if preferred == "cpu":
         return "cpu"
     if not torch.cuda.is_available():
         print("CUDA not available — using CPU")
-        return "cpu"
-    if not _check_gpu_healthy():
-        print("GPU unhealthy (hang detected) — falling back to CPU")
         return "cpu"
     try:
         free, _ = torch.cuda.mem_get_info()

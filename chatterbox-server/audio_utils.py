@@ -68,26 +68,13 @@ class NingAudio:
         self._ensure_model(target_language)
         if prompt_file:
             self.model.prepare_conditionals(prompt_file)
-        try:
-            wav = self.model.generate(
-                text,
-                language_id=target_language,
-                temperature=temperature,
-                cfg_weight=cfg_weight,
-                exaggeration=exaggeration,
-            )
-        except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
-            if not self._fallback_to_cpu(e):
-                raise
-            if prompt_file:
-                self.model.prepare_conditionals(prompt_file)
-            wav = self.model.generate(
-                text,
-                language_id=target_language,
-                temperature=temperature,
-                cfg_weight=cfg_weight,
-                exaggeration=exaggeration,
-            )
+        wav = self.model.generate(
+            text,
+            language_id=target_language,
+            temperature=temperature,
+            cfg_weight=cfg_weight,
+            exaggeration=exaggeration,
+        )
         return self.wav_to_bytes(wav, self.model.sr)
 
     def generate_silence(self, duration_sec, sample_rate):
@@ -164,30 +151,6 @@ class NingAudio:
 
         return list(srt.parse(read_srt_text(srt_path)))
 
-    def _fallback_to_cpu(self, error: Exception) -> bool:
-        """Reload multilingual model to CPU after a GPU error."""
-        if _gm._model is None or _gm._get_device(_gm._model) != "cuda":
-            return False
-        print(f"GPU error during generation ({error}), falling back to CPU")
-        _gm._model = None
-        self.model = None
-        torch.cuda.empty_cache()
-        try:
-            import warnings
-
-            warnings.filterwarnings("ignore")
-            from chatterbox.mtl_tts import ChatterboxMultilingualTTS
-
-            _gm._model = ChatterboxMultilingualTTS.from_pretrained(device="cpu")
-            _gm._model.prepare_conditionals(self.audio_prompt_path)
-            self.model = _gm._model
-            self.sample_rate = _gm._model.sr
-            print("Successfully reloaded model on CPU")
-            return True
-        except Exception as e2:
-            print(f"CPU fallback also failed: {e2}")
-            return False
-
     def _generate_with_retry(
         self,
         text,
@@ -243,27 +206,13 @@ class NingAudio:
         self._ensure_model(target_language)
         if prompt_file:
             self.model.prepare_conditionals(prompt_file)
-        try:
-            wav = self._generate_with_retry(
-                text,
-                target_language,
-                temperature,
-                cfg_weight,
-                exaggeration,
-            )
-        except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
-            if not self._fallback_to_cpu(e):
-                raise
-            # Retry with CPU model
-            if prompt_file:
-                self.model.prepare_conditionals(prompt_file)
-            wav = self._generate_with_retry(
-                text,
-                target_language,
-                temperature,
-                cfg_weight,
-                exaggeration,
-            )
+        wav = self._generate_with_retry(
+            text,
+            target_language,
+            temperature,
+            cfg_weight,
+            exaggeration,
+        )
         # Ensure wav is 2D tensor [1, samples]
         if wav.dim() == 1:
             wav = wav.unsqueeze(0)
