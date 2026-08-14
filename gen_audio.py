@@ -345,6 +345,82 @@ def generate_silence(duration_sec, sample_rate):
     return torch.zeros(1, num_frames)
 
 
+_SILENCE_MARKER_RE = re.compile(r"<(\d+(?:\.\d+)?)>\s*")
+
+
+def _generate_chunk_with_markers(
+    backend,
+    text,
+    wav_path,
+    temperature,
+    prompt_file,
+    target_language,
+    cfg_weight,
+    exaggeration,
+    sample_rate,
+):
+    """Generate one chunk, honouring inline ``<seconds>`` silence markers.
+
+    Text like ``"你好<1.5>世界"`` generates "你好", then 1.5 s of silence,
+    then "世界".  Returns (wav_tensor[1, n], duration_s) — the combined
+    waveform including inserted silences.
+    """
+    parts = _SILENCE_MARKER_RE.split(text)
+    if len(parts) == 1:
+        return backend.generate(
+            text,
+            wav_path,
+            temperature,
+            prompt_file=prompt_file,
+            target_language=target_language,
+            cfg_weight=cfg_weight,
+            exaggeration=exaggeration,
+        )
+
+    segs = []
+    total = 0.0
+    first = parts[0].strip()
+    if first:
+        wav, dur = backend.generate(
+            first,
+            wav_path,
+            temperature,
+            prompt_file=prompt_file,
+            target_language=target_language,
+            cfg_weight=cfg_weight,
+            exaggeration=exaggeration,
+        )
+        segs.append(wav)
+        total += dur
+
+    i = 1
+    while i < len(parts) - 1:
+        silence_sec = float(parts[i])
+        seg_text = parts[i + 1].strip()
+        if seg_text:
+            part_path = f"{os.path.splitext(wav_path)[0]}_p{i}.wav"
+            wav, dur = backend.generate(
+                seg_text,
+                part_path,
+                temperature,
+                prompt_file=prompt_file,
+                target_language=target_language,
+                cfg_weight=cfg_weight,
+                exaggeration=exaggeration,
+            )
+            segs.append(wav)
+            total += dur
+        if silence_sec > 0:
+            segs.append(generate_silence(silence_sec, sample_rate))
+            total += silence_sec
+        i += 2
+
+    if not segs:
+        return generate_silence(0.0, sample_rate), 0.0
+    wav = torch.cat(segs, dim=1) if len(segs) > 1 else segs[0]
+    return wav, total
+
+
 def combine_audio_segments(segments_info, total_duration, sample_rate):
     max_end = 0
     for seg in segments_info:
@@ -743,7 +819,8 @@ def process_with_direct(
             for ci, chunk in enumerate(chunks):
                 wav_path = os.path.join(output_dir, "tmp", f"segment_{seg_counter}.wav")
                 try:
-                    wav_data, wav_duration = backend.generate(
+                    wav_data, wav_duration = _generate_chunk_with_markers(
+                        backend,
                         chunk,
                         wav_path,
                         temperature,
@@ -751,6 +828,7 @@ def process_with_direct(
                         target_language=target_language,
                         cfg_weight=cfg_weight,
                         exaggeration=exaggeration,
+                        sample_rate=sample_rate,
                     )
                 except _DaemonUnavailable:
                     raise
