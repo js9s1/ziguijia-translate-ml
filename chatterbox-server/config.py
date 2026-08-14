@@ -66,6 +66,28 @@ GEN_AUDIO_DAEMON_PID = os.environ.get(
     "GEN_AUDIO_DAEMON_PID",
     os.path.join(_gen_audio_daemon_runtime_dir(), "daemon.pid"),
 )
+
+
+def _translate_daemon_runtime_dir():
+    """Per-user tmpfs dir (0700) for the translate daemon socket + pid."""
+    base = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    if not base or not os.path.isdir(base):
+        base = "/tmp"
+    return os.path.join(base, "translate_daemon")
+
+
+TRANSLATE_DAEMON_SCRIPT = os.environ.get(
+    "TRANSLATE_DAEMON_SCRIPT",
+    os.path.join(PROJECT_ROOT, "translate_daemon.py"),
+)
+TRANSLATE_DAEMON_SOCK = os.environ.get(
+    "TRANSLATE_DAEMON_SOCK",
+    os.path.join(_translate_daemon_runtime_dir(), "daemon.sock"),
+)
+TRANSLATE_DAEMON_PID = os.environ.get(
+    "TRANSLATE_DAEMON_PID",
+    os.path.join(_translate_daemon_runtime_dir(), "daemon.pid"),
+)
 GEN_VIDEO_SCRIPT = os.environ.get(
     "GEN_VIDEO_SCRIPT",
     os.path.join(PROJECT_ROOT, "gen_video.py"),
