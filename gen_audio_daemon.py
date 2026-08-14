@@ -3,7 +3,7 @@
 
 Keeps the Chatterbox TTS model(s) resident on GPU and serves text-to-wav
 requests over a Unix socket, so per-job gen_audio.py subprocesses no longer
-pay model load cost.  Up to GEN_AUDIO_MAX_JOBS (default 1) requests run
+pay model load cost.  Up to GEN_AUDIO_MAX_JOBS (default 2) requests run
 concurrently, one per worker thread; each thread owns its own model
 instance (Chatterbox keeps mutable per-call state, so instances cannot be
 shared).  A thread lazily loads the model for the requested language and
@@ -71,7 +71,7 @@ DAEMON_SOCK = Path(GEN_AUDIO_DAEMON_SOCK).resolve()
 DAEMON_PID = Path(GEN_AUDIO_DAEMON_PID).resolve()
 
 MAX_REQ_BYTES = 1 << 20  # 1 MB cap per request
-MAX_JOBS = max(1, int(os.environ.get("GEN_AUDIO_MAX_JOBS", "1")))
+MAX_JOBS = max(1, int(os.environ.get("GEN_AUDIO_MAX_JOBS", "2")))
 
 # Idle shutdown: the ROCm HSA exception-monitor thread busy-polls (~1 core,
 # heat) once any GPU work has happened, so the daemon exits after this many

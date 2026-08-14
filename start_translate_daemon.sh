@@ -2,7 +2,7 @@
 # Start the warm translate daemon (translate_daemon.py) on Python 3.11 + ROCm env.
 #
 # Usage:
-#   ./start_translate_daemon.sh                 # foreground, MAX_JOBS=1
+#   ./start_translate_daemon.sh                 # foreground, MAX_JOBS=2
 #   TRANSLATE_MAX_JOBS=2 ./start_translate_daemon.sh
 #   nohup ./start_translate_daemon.sh >> ~/logs/translate_daemon.log 2>&1 &
 #
@@ -14,7 +14,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/rocm_env.sh"
-export TRANSLATE_MAX_JOBS="${TRANSLATE_MAX_JOBS:-1}"
+export TRANSLATE_MAX_JOBS="${TRANSLATE_MAX_JOBS:-2}"
 
 TRANSLATE_PYTHON="${TRANSLATE_PYTHON:-$HOME/.pyenv/versions/3.11.14/bin/python3.11}"
 

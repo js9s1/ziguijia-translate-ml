@@ -3,7 +3,7 @@
 
 Keeps the HY-MT 1.8B model resident on GPU and translates whole SRT files
 over a Unix socket, so per-job translate_srt.py subprocesses no longer pay
-model load cost.  Up to TRANSLATE_MAX_JOBS (default 1) files translate
+model load cost.  Up to TRANSLATE_MAX_JOBS (default 2) files translate
 concurrently, one per worker thread; each thread owns its own model
 instance (HY-MT keeps module-global state, so instances cannot be shared).
 
@@ -72,7 +72,7 @@ DAEMON_SOCK = Path(TRANSLATE_DAEMON_SOCK).resolve()
 DAEMON_PID = Path(TRANSLATE_DAEMON_PID).resolve()
 
 MAX_REQ_BYTES = 1 << 20  # 1 MB cap per request
-MAX_JOBS = max(1, int(os.environ.get("TRANSLATE_MAX_JOBS", "1")))
+MAX_JOBS = max(1, int(os.environ.get("TRANSLATE_MAX_JOBS", "2")))
 
 # Idle shutdown (see module docstring).
 IDLE_TIMEOUT = float(os.environ.get("TRANSLATE_IDLE_TIMEOUT", "300"))
