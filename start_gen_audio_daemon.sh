@@ -8,8 +8,8 @@
 #
 # The daemon keeps the Chatterbox TTS model(s) resident on GPU and serves
 # text-to-wav requests over a Unix socket ($XDG_RUNTIME_DIR/gen_audio_daemon/).
-# gen_audio.py jobs auto-detect the daemon and fall back to in-process mode
-# when it is not running.
+# gen_audio.py jobs auto-detect the daemon and start it on demand when it is
+# not running (it also exits after GEN_AUDIO_IDLE_TIMEOUT seconds idle).
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

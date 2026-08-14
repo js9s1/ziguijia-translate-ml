@@ -4,6 +4,7 @@ import os
 import re
 import signal
 import socket
+import subprocess
 import sys
 import time
 from datetime import timedelta
@@ -389,8 +390,47 @@ class _DaemonUnavailable(RuntimeError):
 
 
 class _DaemonTTSClient:
-    def __init__(self, sock_path: str):
+    def __init__(self, sock_path: str, auto_start: bool = False):
         self._sock = sock_path
+        self._auto_start = auto_start
+
+    def ping(self, timeout: float = 3.0) -> dict | None:
+        """Return the ping response, or None if the daemon is unreachable."""
+        try:
+            return self._request({"cmd": "ping"}, timeout=timeout)
+        except _DaemonUnavailable:
+            return None
+
+    def ensure_daemon(self, start_wait: float = 120.0) -> bool:
+        """Attach to a running daemon or launch one. Returns True when ready."""
+        if self.ping() is not None:
+            return True
+
+        from config import GEN_AUDIO_DAEMON_SCRIPT, GEN_AUDIO_PYTHON
+
+        log_path = os.path.join(
+            os.path.expanduser("~"), "logs", "gen_audio_daemon.log"
+        )
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, "a") as logf:
+            try:
+                subprocess.Popen(
+                    [GEN_AUDIO_PYTHON, "-u", GEN_AUDIO_DAEMON_SCRIPT],
+                    stdout=logf,
+                    stderr=logf,
+                    start_new_session=True,
+                    stdin=subprocess.DEVNULL,
+                )
+            except Exception as e:
+                print(f"  ⚠ failed to start gen_audio daemon: {e}")
+                return False
+
+        deadline = time.time() + start_wait
+        while time.time() < deadline:
+            if self.ping() is not None:
+                return True
+            time.sleep(1)
+        return False
 
     def _request(self, payload: dict, timeout: float = 600.0) -> dict:
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -850,21 +890,21 @@ def main():
 
     backend = None
     if args.mode in ("auto", "daemon"):
-        client = _DaemonTTSClient(GEN_AUDIO_DAEMON_SOCK)
-        try:
-            resp = client._request({"cmd": "ping"}, timeout=5.0)
-            if resp.get("ok"):
-                print(
-                    f"Using gen_audio daemon ({GEN_AUDIO_DAEMON_SOCK}, "
-                    f"engine={resp.get('engine')}, device={resp.get('device')}, max_jobs={resp.get('max_jobs')})"
-                )
-                backend = client
-        except _DaemonUnavailable:
-            pass
-        if backend is None:
-            if args.mode == "daemon":
-                print(f"ERROR: gen_audio daemon not reachable at {GEN_AUDIO_DAEMON_SOCK}", file=sys.stderr)
-                return 1
+        client = _DaemonTTSClient(GEN_AUDIO_DAEMON_SOCK, auto_start=(args.mode == "auto"))
+        if args.mode == "auto" and client.ping() is None:
+            print(f"gen_audio daemon not running — starting it ({GEN_AUDIO_DAEMON_SOCK})")
+            client.ensure_daemon()
+        resp = client.ping()
+        if resp is not None and resp.get("ok"):
+            print(
+                f"Using gen_audio daemon ({GEN_AUDIO_DAEMON_SOCK}, "
+                f"engine={resp.get('engine')}, device={resp.get('device')}, max_jobs={resp.get('max_jobs')})"
+            )
+            backend = client
+        elif args.mode == "daemon":
+            print(f"ERROR: gen_audio daemon not reachable at {GEN_AUDIO_DAEMON_SOCK}", file=sys.stderr)
+            return 1
+        else:
             print("WARNING: gen_audio daemon not reachable — falling back to direct in-process mode")
     if backend is None:
         print("Using direct NingAudio (in-process)")

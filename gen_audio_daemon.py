@@ -13,6 +13,12 @@ A global thermal gate pauses all workers while the GPU is above
 GEN_AUDIO_TEMP_LIMIT and resumes them once it cools to
 GEN_AUDIO_COOLDOWN_TARGET.
 
+The daemon exits after GEN_AUDIO_IDLE_TIMEOUT seconds without jobs
+(default 1800; 0 disables).  This avoids burning a core while idle:
+ROCm's HSA exception-monitor thread busy-polls once any GPU work has
+happened, which keeps the box warm.  Clients restart the daemon on
+demand (gen_audio.py auto mode does this).
+
 Runtime files: socket + pid live in $XDG_RUNTIME_DIR/gen_audio_daemon/
 (tmpfs, 0700, auto-cleaned on reboot).
 
@@ -67,6 +73,11 @@ DAEMON_PID = Path(GEN_AUDIO_DAEMON_PID).resolve()
 MAX_REQ_BYTES = 1 << 20  # 1 MB cap per request
 MAX_JOBS = max(1, int(os.environ.get("GEN_AUDIO_MAX_JOBS", "1")))
 
+# Idle shutdown: the ROCm HSA exception-monitor thread busy-polls (~1 core,
+# heat) once any GPU work has happened, so the daemon exits after this many
+# seconds without jobs.  0 = never exit.  The client restarts it on demand.
+IDLE_TIMEOUT = float(os.environ.get("GEN_AUDIO_IDLE_TIMEOUT", "1800"))
+
 # Thermal gate (global — all workers pause together)
 GPU_TEMP_LIMIT = float(os.environ.get("GEN_AUDIO_TEMP_LIMIT", "90"))  # °C
 GPU_COOLDOWN_TARGET = float(os.environ.get("GEN_AUDIO_COOLDOWN_TARGET", "70"))  # °C
@@ -77,6 +88,7 @@ _THERMAL_BLOCKED = threading.Event()
 _ACTIVE = 0
 _ACTIVE_LOCK = threading.Lock()
 _LAST_FUTURES = []  # debugging: recently submitted tts futures
+_LAST_ACTIVE_TS = time.monotonic()  # last job completion — for idle shutdown
 
 _WORKER_TL = threading.local()  # one TTS model per worker thread
 TTS_POOL = None  # ThreadPoolExecutor, max_workers == MAX_JOBS
@@ -227,6 +239,7 @@ def _generate_with_retry(model, text, target_language, temperature, cfg_weight, 
 
 
 def _thermal_monitor():
+    global _QUIT, _LAST_ACTIVE_TS
     while not _QUIT:
         temp = get_gpu_temp()
         if temp is not None:
@@ -236,6 +249,12 @@ def _thermal_monitor():
             elif temp <= GPU_COOLDOWN_TARGET and _THERMAL_BLOCKED.is_set():
                 print(f"[daemon] GPU cooled to {temp:.0f}°C — resuming workers")
                 _THERMAL_BLOCKED.clear()
+        if IDLE_TIMEOUT > 0:
+            idle = time.monotonic() - _LAST_ACTIVE_TS
+            if idle >= IDLE_TIMEOUT and _ACTIVE == 0:
+                print(f"[daemon] idle for {idle:.0f}s ≥ {IDLE_TIMEOUT:.0f}s — shutting down")
+                _QUIT = True
+                return
         time.sleep(GPU_POLL_SECS)
 
 
@@ -297,6 +316,7 @@ def _submit_ensure_model(conn, req):
     """Load the requested model on a worker thread (slot-protected)."""
 
     def run_job():
+        global _LAST_ACTIVE_TS
         try:
             lang = str(req.get("language", "en"))
             model = _ensure_thread_model(lang)
@@ -304,6 +324,7 @@ def _submit_ensure_model(conn, req):
         except Exception as e:  # noqa: BLE001
             _send_response(conn, {"ok": False, "error": f"{type(e).__name__}: {e}"})
         finally:
+            _LAST_ACTIVE_TS = time.monotonic()
             JOB_SLOTS.release()
 
     try:
@@ -315,7 +336,7 @@ def _submit_ensure_model(conn, req):
 
 def _submit_tts(conn, req):
     def run_job():
-        global _ACTIVE
+        global _ACTIVE, _LAST_ACTIVE_TS
         try:
             with _ACTIVE_LOCK:
                 _ACTIVE += 1
@@ -356,6 +377,7 @@ def _submit_tts(conn, req):
         finally:
             with _ACTIVE_LOCK:
                 _ACTIVE -= 1
+            _LAST_ACTIVE_TS = time.monotonic()
             JOB_SLOTS.release()
 
     try:
@@ -520,7 +542,7 @@ def main():
     print(
         f"[daemon] TTS daemon ready on {DAEMON_SOCK} "
         f"(device: {device_name}, max concurrent jobs: {MAX_JOBS}, "
-        f"temp limit: {GPU_TEMP_LIMIT:.0f}°C)"
+        f"temp limit: {GPU_TEMP_LIMIT:.0f}°C, idle timeout: {IDLE_TIMEOUT:.0f}s)"
     )
 
     while not _QUIT:
@@ -545,6 +567,10 @@ def main():
     server.close()
     try:
         DAEMON_SOCK.unlink()
+    except OSError:
+        pass
+    try:
+        DAEMON_PID.unlink()
     except OSError:
         pass
     print("[daemon] stopped")
