@@ -3,10 +3,10 @@ import json
 import os
 import re
 import signal
+import socket
 import sys
 import time
 from datetime import timedelta
-from pathlib import Path
 
 import soundfile as sf
 import srt
@@ -16,6 +16,8 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "chatterbox-server"))
 
 from config import ASSETS_DIR as CFG_ASSETS_DIR
 from config import AUDIO_PROMPT_PATH as CFG_AUDIO_PROMPT_PATH
+from config import GEN_AUDIO_DAEMON_SOCK
+from gpu_thermal import get_gpu_temp
 
 # Inline read_srt_text to avoid pulling in the full server import chain
 # (video_util → jobqueue → middleware → flask). gen_audio is a standalone
@@ -53,20 +55,7 @@ _STOP_REQUESTED = False
 
 def _get_gpu_temp():
     """Read AMD GPU (amdgpu) temperature in °C via hwmon. Returns float or None."""
-    try:
-        for card in Path("/sys/class/drm").glob("card*"):
-            hwmons = list(card.glob("device/hwmon/hwmon*"))
-            for hw in hwmons:
-                try:
-                    name = (hw / "name").read_text().strip()
-                    if name == "amdgpu":
-                        raw = int((hw / "temp1_input").read_text().strip())
-                        return raw / 1000.0
-                except (OSError, ValueError):
-                    continue
-    except (OSError, FileNotFoundError):
-        pass
-    return None
+    return get_gpu_temp()
 
 
 def _signal_handler(signum, frame):
@@ -382,6 +371,138 @@ def save_audio(output_path, wav_tensor, sample_rate):
     sf.write(output_path, wav_tensor.squeeze(0).cpu().numpy(), sample_rate)
 
 
+# ── TTS backends ────────────────────────────────────────────
+# Backend objects expose:
+#   sample_rate -> int (direct mode; property)
+#   ensure_model(lang) -> sample_rate (daemon mode)
+#   generate(text, wav_path, temperature, prompt_file, target_language,
+#            cfg_weight, exaggeration) -> (wav_tensor[1, n], duration_s)
+
+
+class _DaemonUnavailable(RuntimeError):
+    """Raised when the TTS daemon cannot be reached — abort the job so it
+    can be retried later (cached segments keep completed work)."""
+
+
+class _DaemonTTSClient:
+    def __init__(self, sock_path: str):
+        self._sock = sock_path
+
+    def _request(self, payload: dict, timeout: float = 600.0) -> dict:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            s.settimeout(timeout)
+            s.connect(self._sock)
+            s.sendall((json.dumps(payload) + "\n").encode())
+            buf = b""
+            while True:
+                chunk = s.recv(65536)
+                if not chunk:
+                    break
+                buf += chunk
+                if b"\n" in buf:
+                    break
+            if not buf:
+                raise _DaemonUnavailable("daemon closed connection without response")
+            return json.loads(buf.split(b"\n", 1)[0].decode())
+        except (FileNotFoundError, ConnectionRefusedError, socket.timeout, OSError) as e:
+            raise _DaemonUnavailable(f"daemon unreachable: {e}") from None
+        finally:
+            try:
+                s.close()
+            except OSError:
+                pass
+
+    def _request_retry(self, payload: dict, timeout: float = 600.0) -> dict:
+        while True:
+            resp = self._request(payload, timeout)
+            if resp.get("code") == "busy":
+                if _STOP_REQUESTED:
+                    raise SystemExit(1)
+                retry_after = float(resp.get("retry_after", 5))
+                print(f"  ⏳ daemon busy — retrying in {retry_after:.0f}s")
+                time.sleep(retry_after)
+                continue
+            return resp
+
+    def ensure_model(self, lang: str) -> int:
+        resp = self._request_retry({"cmd": "ensure_model", "language": lang}, timeout=1800.0)
+        if not resp.get("ok"):
+            raise _DaemonUnavailable(f"daemon ensure_model failed: {resp.get('error')}")
+        print(f"  ✓ daemon model ready ({resp.get('device')}, sr={resp.get('sr')})")
+        return int(resp["sr"])
+
+    def generate(
+        self,
+        text: str,
+        wav_path: str,
+        temperature: float,
+        prompt_file: str | None,
+        target_language: str,
+        cfg_weight: float,
+        exaggeration: float,
+    ):
+        resp = self._request_retry(
+            {
+                "cmd": "tts",
+                "text": text,
+                "language": target_language,
+                "prompt_file": prompt_file,
+                "temperature": temperature,
+                "cfg_weight": cfg_weight,
+                "exaggeration": exaggeration,
+                "output_path": wav_path,
+            },
+            timeout=1800.0,
+        )
+        if not resp.get("ok"):
+            raise RuntimeError(f"daemon tts failed: {resp.get('error')}")
+        wav_np, _ = sf.read(wav_path, dtype="float32")
+        wav = torch.from_numpy(wav_np).unsqueeze(0)
+        return wav, float(resp["duration"])
+
+
+class _DirectTTSBackend:
+    """In-process NingAudio wrapper (legacy fallback when no daemon runs)."""
+
+    def __init__(self, audio_prompt: str, target_language: str):
+        import gpu_manage as _gm
+        from audio_utils import NingAudio
+
+        self._gm = _gm
+        self._audio = NingAudio(audio_prompt=audio_prompt)
+        self._audio._ensure_model(target_language)
+        if target_language == "id":
+            self._sample_rate = _gm._indonesian_model.sr
+        else:
+            self._sample_rate = self._audio.sample_rate
+
+    @property
+    def sample_rate(self) -> int:
+        return self._sample_rate
+
+    def generate(
+        self,
+        text: str,
+        wav_path: str,
+        temperature: float,
+        prompt_file: str | None,
+        target_language: str,
+        cfg_weight: float,
+        exaggeration: float,
+    ):
+        return self._audio.generate_audio(
+            text,
+            wav_path,
+            self._sample_rate,
+            temperature,
+            prompt_file=prompt_file,
+            target_language=target_language,
+            cfg_weight=cfg_weight,
+            exaggeration=exaggeration,
+        )
+
+
 def process_with_direct(
     srt_path,
     audio_prompt,
@@ -391,6 +512,7 @@ def process_with_direct(
     target_language="en",
     cfg_weight=0.5,
     exaggeration=0.5,
+    backend=None,
 ):
     subs = load_subs(srt_path)
     if not subs:
@@ -482,16 +604,12 @@ def process_with_direct(
         _save_cache(output_dir, cache)
         return combined_tensor, adjusted_subs, changed_segments, sample_rate, total_duration
 
-    # ── Some segments need generation — init GPU model ──────
-    import gpu_manage as _gm
-    from audio_utils import NingAudio
-
-    audio = NingAudio(audio_prompt=audio_prompt)
-    audio._ensure_model(target_language)
-    if target_language == "id":
-        sample_rate = _gm._indonesian_model.sr
+    # ── Some segments need generation — init TTS backend ─────
+    if backend is None:
+        backend = _DirectTTSBackend(audio_prompt, target_language)
+        sample_rate = backend.sample_rate
     else:
-        sample_rate = audio.sample_rate
+        sample_rate = backend.ensure_model(target_language)
 
     adjusted_subs = []
     segments_info = []
@@ -581,16 +699,17 @@ def process_with_direct(
             for ci, chunk in enumerate(chunks):
                 wav_path = os.path.join(output_dir, "tmp", f"segment_{seg_counter}.wav")
                 try:
-                    wav_data, wav_duration = audio.generate_audio(
+                    wav_data, wav_duration = backend.generate(
                         chunk,
                         wav_path,
-                        sample_rate,
                         temperature,
                         prompt_file=prompt,
                         target_language=target_language,
                         cfg_weight=cfg_weight,
                         exaggeration=exaggeration,
                     )
+                except _DaemonUnavailable:
+                    raise
                 except (RuntimeError, SystemExit) as e:
                     # Stuck-loop or other generation error — log and use silence.
                     # Don't fail the whole job for one bad segment.
@@ -697,6 +816,12 @@ def main():
     parser.add_argument("--output_srt", default="output_adjusted.srt")
     parser.add_argument("--output_wav", default="output.wav")
     parser.add_argument("--changed_json", default="changed_segments.json")
+    parser.add_argument(
+        "--mode",
+        choices=["auto", "daemon", "direct"],
+        default="auto",
+        help="TTS backend: auto (daemon with direct fallback), daemon (require daemon), direct (in-process)",
+    )
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -719,7 +844,27 @@ def main():
     )
     print()
 
-    print("Using direct NingAudio (in-process)")
+    backend = None
+    if args.mode in ("auto", "daemon"):
+        client = _DaemonTTSClient(GEN_AUDIO_DAEMON_SOCK)
+        try:
+            resp = client._request({"cmd": "ping"}, timeout=5.0)
+            if resp.get("ok"):
+                print(
+                    f"Using gen_audio daemon ({GEN_AUDIO_DAEMON_SOCK}, "
+                    f"engine={resp.get('engine')}, device={resp.get('device')}, max_jobs={resp.get('max_jobs')})"
+                )
+                backend = client
+        except _DaemonUnavailable:
+            pass
+        if backend is None:
+            if args.mode == "daemon":
+                print(f"ERROR: gen_audio daemon not reachable at {GEN_AUDIO_DAEMON_SOCK}", file=sys.stderr)
+                return 1
+            print("WARNING: gen_audio daemon not reachable — falling back to direct in-process mode")
+    if backend is None:
+        print("Using direct NingAudio (in-process)")
+
     result = process_with_direct(
         args.srt,
         args.audio_prompt,
@@ -729,6 +874,7 @@ def main():
         target_language=args.target_language,
         cfg_weight=args.cfg_weight,
         exaggeration=args.exaggeration,
+        backend=backend,
     )
 
     if result is None:

@@ -1,0 +1,20 @@
+#!/bin/bash
+# Start the warm TTS daemon (gen_audio_daemon.py) on Python 3.11 + ROCm env.
+#
+# Usage:
+#   ./start_gen_audio_daemon.sh                 # foreground, MAX_JOBS=1
+#   GEN_AUDIO_MAX_JOBS=2 ./start_gen_audio_daemon.sh
+#   nohup ./start_gen_audio_daemon.sh >> ~/logs/gen_audio_daemon.log 2>&1 &
+#
+# The daemon keeps the Chatterbox TTS model(s) resident on GPU and serves
+# text-to-wav requests over a Unix socket ($XDG_RUNTIME_DIR/gen_audio_daemon/).
+# gen_audio.py jobs auto-detect the daemon and fall back to in-process mode
+# when it is not running.
+set -e
+
+export LD_LIBRARY_PATH="/opt/rocm/rocm/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export GEN_AUDIO_MAX_JOBS="${GEN_AUDIO_MAX_JOBS:-1}"
+
+GEN_AUDIO_PYTHON="${GEN_AUDIO_PYTHON:-$HOME/.pyenv/versions/3.11.14/bin/python3.11}"
+
+exec "$GEN_AUDIO_PYTHON" -u "$(dirname "$0")/gen_audio_daemon.py" "$@"
