@@ -14,7 +14,7 @@ GEN_AUDIO_TEMP_LIMIT and resumes them once it cools to
 GEN_AUDIO_COOLDOWN_TARGET.
 
 The daemon exits after GEN_AUDIO_IDLE_TIMEOUT seconds without jobs
-(default 1800; 0 disables).  This avoids burning a core while idle:
+(default 300; 0 disables).  This avoids burning a core while idle:
 ROCm's HSA exception-monitor thread busy-polls once any GPU work has
 happened, which keeps the box warm.  Clients restart the daemon on
 demand (gen_audio.py auto mode does this).
@@ -76,7 +76,7 @@ MAX_JOBS = max(1, int(os.environ.get("GEN_AUDIO_MAX_JOBS", "1")))
 # Idle shutdown: the ROCm HSA exception-monitor thread busy-polls (~1 core,
 # heat) once any GPU work has happened, so the daemon exits after this many
 # seconds without jobs.  0 = never exit.  The client restarts it on demand.
-IDLE_TIMEOUT = float(os.environ.get("GEN_AUDIO_IDLE_TIMEOUT", "1800"))
+IDLE_TIMEOUT = float(os.environ.get("GEN_AUDIO_IDLE_TIMEOUT", "300"))
 
 # Thermal gate (global — all workers pause together)
 GPU_TEMP_LIMIT = float(os.environ.get("GEN_AUDIO_TEMP_LIMIT", "90"))  # °C
