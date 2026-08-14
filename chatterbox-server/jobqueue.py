@@ -213,6 +213,13 @@ class JobQueue:
         queue_push(access_code)
         self._ensure_worker()
 
+        # Pre-warm only the daemon(s) this job type will use (TTS for audio
+        # jobs, HY-MT for jobs with a translate step).  Best-effort, detached
+        # thread — never blocks or fails the enqueue.
+        from daemon_prewarm import prewarm_for_job
+
+        prewarm_for_job(run_func_name, job_data)
+
         return access_code
 
     def _kill_processes_by_output_dir(self, output_dir: str, sig: int = signal.SIGTERM):
@@ -484,7 +491,10 @@ class JobQueue:
 
     def resubmit_job(self, access_code: str) -> dict:
         conn = self._get_conn()
-        row = conn.execute("SELECT status FROM jobs WHERE access_code = ?", (access_code,)).fetchone()
+        row = conn.execute(
+            "SELECT status, run_func_name, target_language, ocr_only FROM jobs WHERE access_code = ?",
+            (access_code,),
+        ).fetchone()
 
         if not row:
             return {"success": False, "error": "Job not found"}
@@ -519,6 +529,14 @@ class JobQueue:
         self._queue.put(access_code)
         queue_push(access_code)
         self._ensure_worker()
+
+        # Pre-warm the daemon(s) this job type will use (see add_job).
+        from daemon_prewarm import prewarm_for_job
+
+        prewarm_for_job(
+            row[1],
+            {"target_language": row[2], "ocr_only": row[3]},
+        )
 
         return {"success": True, "message": "Job resubmitted"}
 

@@ -79,23 +79,11 @@ def _patch_db_paths(temp_db_dir, monkeypatch):
 
     JobQueue.clear()
     UserManager.clear()
-    try:
-        from audio_utils import NingAudio
-
-        NingAudio.clear()
-    except Exception:
-        pass  # GPU modules not available — fine for pure-unit tests
 
     yield
 
     JobQueue.clear()
     UserManager.clear()
-    try:
-        from audio_utils import NingAudio
-
-        NingAudio.clear()
-    except Exception:
-        pass
 
 
 @pytest.fixture
