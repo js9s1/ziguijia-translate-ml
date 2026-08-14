@@ -14,7 +14,11 @@ import sys
 
 sys.path.insert(0, os.path.expanduser("~/src/HY-MT"))
 
-import hy_mt
+from rocm_env import setup as _rocm_setup  # noqa: E402
+
+_rocm_setup()  # before hy_mt/torch load ROCm libs
+
+import hy_mt  # noqa: E402
 
 
 def read_srt_text(path):

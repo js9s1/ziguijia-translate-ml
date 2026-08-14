@@ -12,9 +12,10 @@
 # when it is not running.
 set -e
 
-export LD_LIBRARY_PATH="/opt/rocm/rocm/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/rocm_env.sh"
 export GEN_AUDIO_MAX_JOBS="${GEN_AUDIO_MAX_JOBS:-1}"
 
 GEN_AUDIO_PYTHON="${GEN_AUDIO_PYTHON:-$HOME/.pyenv/versions/3.11.14/bin/python3.11}"
 
-exec "$GEN_AUDIO_PYTHON" -u "$(dirname "$0")/gen_audio_daemon.py" "$@"
+exec "$GEN_AUDIO_PYTHON" -u "$SCRIPT_DIR/gen_audio_daemon.py" "$@"

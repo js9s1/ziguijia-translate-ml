@@ -48,13 +48,13 @@ if sys.stdout is not None:
 if sys.stderr is not None:
     sys.stderr.reconfigure(line_buffering=True)
 
-os.environ.setdefault(
-    "LD_LIBRARY_PATH",
-    f"/opt/rocm/rocm/lib{os.environ.get('LD_LIBRARY_PATH', '')}",
-)
-
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent))  # repo root — rocm_env.py
+
+from rocm_env import setup as _rocm_setup  # noqa: E402
+
+_rocm_setup()  # before rapid_videocr/torch load ROCm libs
 
 from rapid_videocr.export import OutputFormat  # noqa: E402
 from rapid_videocr.main import RapidVideOCR, RapidVideOCRInput  # noqa: E402

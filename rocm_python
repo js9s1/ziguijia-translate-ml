@@ -1,3 +1,4 @@
 #!/bin/bash
-export LD_LIBRARY_PATH="/opt/rocm/rocm/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/rocm_env.sh"
 exec ~/.pyenv/versions/3.11.14/bin/python3.11 "$@"

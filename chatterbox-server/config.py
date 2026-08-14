@@ -9,11 +9,14 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env
 
 # ── ROCm environment for AMD Strix Halo APU (gfx1151) ────────
 # ROCm 7.2+ has native support for gfx1151 — no GFX override needed.
-# Must be set before any PyTorch/ROCm import.
-if "LD_LIBRARY_PATH" in os.environ:
-    os.environ["LD_LIBRARY_PATH"] = "/opt/rocm/rocm/lib" + (":" + os.environ["LD_LIBRARY_PATH"] if os.environ["LD_LIBRARY_PATH"] else "")
-else:
-    os.environ["LD_LIBRARY_PATH"] = "/opt/rocm/rocm/lib"
+# Must be set before any PyTorch/ROCm import.  Shared config lives in
+# rocm.env (repo root), applied by rocm_env.setup().
+import sys as _sys
+
+_sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from rocm_env import setup as _rocm_setup  # noqa: E402
+
+_rocm_setup()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BASE_DIR)  # /home/js9s/子归家/code_ml

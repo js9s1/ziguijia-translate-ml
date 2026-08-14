@@ -8,6 +8,10 @@ import sys
 import time
 from datetime import timedelta
 
+from rocm_env import setup as _rocm_setup
+
+_rocm_setup()  # before any torch import
+
 import soundfile as sf
 import srt
 import torch
