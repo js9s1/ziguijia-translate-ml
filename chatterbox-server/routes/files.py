@@ -16,6 +16,23 @@ def _allowed_dirs():
     return ALLOWED_FILE_DIRS
 
 
+def _read_text_file(path: str) -> str:
+    """Read a text file, tolerating common non-UTF-8 encodings (GBK, Big5).
+
+    Users frequently upload SRTs saved with the Windows/legacy Chinese
+    encodings; decoding strictly as UTF-8 raised UnicodeDecodeError which
+    surfaced as a confusing 400 error in the SRT editor.
+    """
+    with open(path, "rb") as f:
+        raw = f.read()
+    for enc in ("utf-8", "gbk", "big5"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
 @files_bp.route("/files/list", methods=["GET"])
 @login_required
 @api_endpoint
@@ -60,8 +77,7 @@ def files_read():
     if not safe:
         return jsonify({"error": "File not allowed or not found"}), 404
 
-    with open(safe, encoding="utf-8") as f:
-        content = f.read()
+    content = _read_text_file(safe)
     return content, 200, {"Content-Type": "text/plain; charset=utf-8"}
 
 

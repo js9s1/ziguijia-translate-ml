@@ -173,6 +173,7 @@ function downloadFile(url, filename, fetchOptions) {
     fetchOptions = fetchOptions || {};
     var isGet = !fetchOptions.method || fetchOptions.method === 'GET';
     var isIos = /iPhone|iPad|iPod/.test(navigator.userAgent);
+    var isAndroid = /Android/i.test(navigator.userAgent);
 
     if (isGet && isIos) {
         _checkFileSize(url, function(contentLength) {
@@ -187,6 +188,16 @@ function downloadFile(url, filename, fetchOptions) {
                     });
                 });
             }
+        });
+    } else if (isGet && isAndroid) {
+        // Android browsers (Huawei/HarmonyOS etc.) frequently ignore the
+        // download attribute on direct links, so fetch + blob first.
+        _tryFetchDownload(url, filename, fetchOptions, function(succeeded) {
+            if (succeeded) return;
+            _tryDirectLink(url, filename, function(succeeded2) {
+                if (succeeded2) return;
+                window.location.href = url;
+            });
         });
     } else if (isGet) {
         _tryDirectLink(url, filename, function(succeeded) {
@@ -255,8 +266,6 @@ function _tryDirectLink(url, filename, callback) {
         var a = document.createElement('a');
         a.href = url;
         a.download = filename;
-        a.target = '_blank';
-        a.rel = 'noopener';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);

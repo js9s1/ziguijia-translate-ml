@@ -44,6 +44,30 @@ class TestFilesRead:
         resp = client.get("/files/read?path=/tmp/x.txt")
         assert resp.status_code == 401
 
+    def test_gbk_encoded_srt_reads_ok(self, auth_client):
+        """Users upload SRTs in GBK/legacy encodings; the reader must not
+        blow up with a UnicodeDecodeError (regression for access code
+        841A7C64)."""
+        import os
+
+        from config import VIDEO_DIR
+        from middleware import ALLOWED_FILE_DIRS
+
+        client, _ = auth_client
+        video_dir = str(VIDEO_DIR)
+        os.makedirs(video_dir, exist_ok=True)
+        real = os.path.realpath(video_dir)
+        if real not in ALLOWED_FILE_DIRS:
+            ALLOWED_FILE_DIRS.append(real)
+
+        path = os.path.join(video_dir, "gbk.srt")
+        with open(path, "wb") as fh:
+            fh.write("1\n00:00:01,000 --> 00:00:02,000\n你好，世界\n".encode("gbk"))
+
+        resp = client.get("/files/read?path=" + path)
+        assert resp.status_code == 200
+        assert "你好" in resp.get_data(as_text=True)
+
 
 class TestFilesDelete:
     def test_unauthorized(self, client):
