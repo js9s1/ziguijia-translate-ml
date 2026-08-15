@@ -111,6 +111,11 @@ def process_video(video_file, segments, output_file):
     Gaps between subtitles use the adjusted timing so that segment *i* is placed at
     :math:`adj\\_start[i]` in the output — this eliminates systematic drift over hundreds of
     segments without needing a post-hoc correction pass.
+
+    Returns the designed total duration of the output timeline (subtitle segments,
+    inter-segment gaps, plus any leading/trailing video content).  This is the length
+    the output video *should* have; the caller uses it to correct the small per-segment
+    frame-boundary rounding drift that ffmpeg accumulates.
     """
     temp_dir = tempfile.mkdtemp(prefix="gen_video_")
 
@@ -203,19 +208,24 @@ def process_video(video_file, segments, output_file):
                     {"start": last_orig_end, "end": video_duration, "stretch": 1.0, "is_subtitle": False}
                 )
 
-        # ── Validate total matches audio ────────────────────
+        # ── Validate total vs audio end ─────────────────────
+        # The designed timeline may legitimately extend past the last
+        # subtitle's adjusted end: trailing video content after the final
+        # cue is kept at its natural duration.  Only the frame-boundary
+        # drift of the actual encode (vs this designed total) needs the
+        # post-hoc setpts correction in main().
         total_duration = sum((s["end"] - s["start"]) * s["stretch"] for s in segment_data)
         if valid_segments:
             expected_end = valid_segments[-1]["adj_end"]
-            drift = total_duration - expected_end
-            if abs(drift) > 1.0:
+            tail = total_duration - expected_end
+            if abs(tail) > 1.0:
                 print(
-                    f"Warning: predicted video length {total_duration:.2f}s "
-                    f"differs from adjusted audio end {expected_end:.2f}s "
-                    f"by {drift:+.2f}s"
+                    f"Note: designed video length {total_duration:.2f}s extends "
+                    f"{tail:+.2f}s past adjusted audio end {expected_end:.2f}s "
+                    f"(trailing video content, trimmed at mux)"
                 )
-            if abs(drift) <= 1.0 and abs(drift) > 0.01:
-                print(f"Timing check: video={total_duration:.2f}s  audio-end={expected_end:.2f}s  drift={drift:+.3f}s")
+            elif abs(tail) > 0.01:
+                print(f"Timing check: video={total_duration:.2f}s  audio-end={expected_end:.2f}s  tail={tail:+.3f}s")
 
         # ── Build filter-graph batches ──────────────────────
         # Instead of one ffmpeg process per segment (1215× VAAPI init),
@@ -331,6 +341,8 @@ def process_video(video_file, segments, output_file):
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+    return total_duration
 
 
 def main():
@@ -462,58 +474,67 @@ def main():
             )
 
     # Process video
-    process_video(args.video_file, segments, output_file)
+    designed_total = process_video(args.video_file, segments, output_file)
 
-    # ── Correct accumulated frame-boundary drift ──────────────
-    # Each ffmpeg -ss/-to segment rounds up to the nearest frame
-    # boundary (~16-25 ms).  Over 100+ segments this adds up to
-    # a 1-3 s video-vs-audio mismatch.  Apply a one-shot setpts
-    # correction so the video duration matches the adjusted audio.
-    corrected = output_file.replace("_modified.mp4", "_corrected.mp4")
-    expected_end = segments[-1]["adj_end"]
-    actual_dur = get_video_info(output_file)["duration"]
-    if abs(actual_dur - expected_end) > 0.1:
-        ratio = expected_end / actual_dur
-        print(f"Correcting video duration: {actual_dur:.2f}s → {expected_end:.2f}s (ratio {ratio:.4f})")
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-v",
-                "quiet",
-                "-i",
-                output_file,
-                "-filter:v",
-                f"setpts={ratio}*PTS",
-                "-c:v",
-                "libx264",
-                "-crf",
-                "23",
-                "-preset",
-                "fast",
-                "-an",
-                corrected,
-            ],
-            check=True,
-        )
-        output_file = corrected
-    else:
-        print(f"Video timing accurate ({actual_dur:.2f}s vs expected {expected_end:.2f}s)")
-
-    # Final step: add audio and SRT subtitles to the modified video
+    # Get the TTS audio duration so the video can be trimmed to end
+    # exactly when the audio (and the last SRT cue) ends.  The designed
+    # video timeline includes trailing content past the last subtitle,
+    # which has no TTS audio.
     audio_wav = args.audio_wav or os.path.join(os.path.dirname(args.adjusted_srt), "output.wav")
-    final_output = output_file.replace("_corrected.mp4", "_final.mp4").replace("_modified.mp4", "_final.mp4")
-    temp_output = output_file.replace("_corrected.mp4", "_temp.mp4").replace("_modified.mp4", "_temp.mp4")
-
-    # Get exact audio duration so we can trim the video precisely.
-    # This is a safety net: the per-segment adjusted timing should already
-    # produce a video that matches the audio length, but ffmpeg frame
-    # rounding in the encoder can add up to ~1 frame per batch.
     try:
         audio_info = get_video_info(audio_wav)
         audio_duration = audio_info["duration"]
     except (subprocess.SubprocessError, ValueError, KeyError, OSError):
         audio_duration = None
+
+    # ── Correct accumulated frame-boundary drift ──────────────
+    # Each ffmpeg -ss/-to segment rounds up to the nearest frame
+    # boundary (~16-25 ms).  Over 100+ segments this adds up to
+    # a 1-3 s video-vs-audio mismatch.  Apply a one-shot setpts
+    # correction so the actual duration matches the *designed*
+    # timeline (subtitle segments placed at adjusted SRT times).
+    # Note: the designed total includes trailing video content past
+    # the last subtitle, which the mux step below trims to the audio
+    # length — so the correction ratio must use designed_total, not
+    # the adjusted audio end (that would compress the whole speech
+    # timeline and desync subtitles).
+    corrected = output_file.replace("_modified.mp4", "_corrected.mp4")
+    actual_dur = get_video_info(output_file)["duration"]
+    if abs(actual_dur - designed_total) > 0.1:
+        ratio = designed_total / actual_dur
+        trim_note = f", trimmed to audio {audio_duration:.2f}s" if audio_duration else ""
+        print(f"Correcting video duration: {actual_dur:.2f}s → {designed_total:.2f}s (ratio {ratio:.4f}{trim_note})")
+        correct_cmd = [
+            "ffmpeg",
+            "-y",
+            "-v",
+            "quiet",
+            "-i",
+            output_file,
+            "-filter:v",
+            f"setpts={ratio}*PTS",
+            "-c:v",
+            "libx264",
+            "-crf",
+            "23",
+            "-preset",
+            "fast",
+            "-an",
+        ]
+        # Trim the trailing content (which has no TTS audio) in the
+        # same re-encode pass — -t is frame-accurate here, unlike the
+        # packet-granular trim in the copy mux below.
+        if audio_duration:
+            correct_cmd.extend(["-t", str(audio_duration)])
+        correct_cmd.append(corrected)
+        subprocess.run(correct_cmd, check=True)
+        output_file = corrected
+    else:
+        print(f"Video timing accurate ({actual_dur:.2f}s vs designed {designed_total:.2f}s)")
+
+    # Final step: add audio and SRT subtitles to the modified video
+    final_output = output_file.replace("_corrected.mp4", "_final.mp4").replace("_modified.mp4", "_final.mp4")
+    temp_output = output_file.replace("_corrected.mp4", "_temp.mp4").replace("_modified.mp4", "_temp.mp4")
 
     try:
         if args.blur:
@@ -543,8 +564,12 @@ def main():
                 "aac",
                 "-b:a",
                 "192k",
-                temp_output,
             ]
+            if audio_duration:
+                blur_cmd.extend(["-t", str(audio_duration)])
+            else:
+                blur_cmd.append("-shortest")
+            blur_cmd.append(temp_output)
             subprocess.run(blur_cmd, check=True)
         else:
             mux_cmd = [
@@ -564,8 +589,16 @@ def main():
                 "0:v",
                 "-map",
                 "1:a",
-                temp_output,
             ]
+            # Trim the video to the audio length: the designed video
+            # timeline includes trailing content past the last subtitle,
+            # which has no TTS audio — cut it off so the final video
+            # ends exactly when the audio (and the last SRT cue) ends.
+            if audio_duration:
+                mux_cmd.extend(["-t", str(audio_duration)])
+            else:
+                mux_cmd.append("-shortest")
+            mux_cmd.append(temp_output)
             subprocess.run(mux_cmd, check=True)
 
         subprocess.run(

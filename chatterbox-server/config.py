@@ -161,6 +161,14 @@ VALKEY_PORT = int(os.environ.get("VALKEY_PORT", "6379"))
 VALKEY_DB = int(os.environ.get("VALKEY_DB", "0"))
 VALKEY_PASSWORD = os.environ.get("VALKEY_PASSWORD", "")
 
+# ── gen_audio step timeouts ────────────────────────────────
+# run_gen_audio_step (pipeline.py) guards the TTS subprocess with two
+# timeouts: a stall limit (no new log output while the process is
+# alive → hung) and a total cap scaled by SRT segment count.
+GEN_AUDIO_STALL_TIMEOUT = float(os.environ.get("GEN_AUDIO_STALL_TIMEOUT", "900"))
+GEN_AUDIO_SEGMENT_BUDGET = float(os.environ.get("GEN_AUDIO_SEGMENT_BUDGET", "180"))
+GEN_AUDIO_MIN_TOTAL_TIMEOUT = float(os.environ.get("GEN_AUDIO_MIN_TOTAL_TIMEOUT", "7200"))
+
 # ── SRT filename → checkpoint step mapping ─────────────────
 # Shared between jobqueue.py (clear_checkpoint_for_file) and
 # chatterbox_server.py (SRT save/edit endpoint).

@@ -17,7 +17,10 @@ import time
 
 from config import (
     AUDIO_PROMPT_PATH,
+    GEN_AUDIO_MIN_TOTAL_TIMEOUT,
     GEN_AUDIO_PYTHON,
+    GEN_AUDIO_SEGMENT_BUDGET,
+    GEN_AUDIO_STALL_TIMEOUT,
     GEN_VIDEO_SCRIPT,
     LANG_MAP,
     PROJECT_ROOT,
@@ -47,11 +50,29 @@ def run_gen_audio_step(
     output_srt: str = "output_adjusted.srt",
     output_wav: str = "output.wav",
     changed_json: str = "changed_segments.json",
+    stall_timeout: float = GEN_AUDIO_STALL_TIMEOUT,
+    per_segment_budget: float = GEN_AUDIO_SEGMENT_BUDGET,
+    min_total_timeout: float = GEN_AUDIO_MIN_TOTAL_TIMEOUT,
 ) -> dict[str, str]:
     """Generate audio from SRT (subprocess — dedicated GPU context).
 
     Runs gen_audio.py as a subprocess on its own Python interpreter so
     TTS keeps its GPU context separate from the server worker.
+
+    A fixed wall-clock timeout does not fit a process whose runtime
+    scales with job size (a 46-segment SRT takes ~7 min; a 1215-segment
+    one takes hours).  Instead:
+
+    - *stall_timeout*: gen_audio.py prints per-segment progress lines
+      continuously (unbuffered).  If the log file stops growing for this
+      long while the process is still alive, it is hung → terminate.
+    - Total safety cap: ``max(min_total_timeout, per_segment_budget ×
+      number of SRT segments)`` — only reached by a job that keeps
+      producing output but never finishes.
+
+    On timeout the subprocess gets SIGTERM first (gen_audio.py stops
+    after the current segment and persists its per-segment WAV cache,
+    so a resubmit resumes cheaply), then SIGKILL after a grace period.
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -82,20 +103,83 @@ def run_gen_audio_step(
         "--changed_json", changed_json,
     ]
 
+    # ── Size-based total timeout, scaled by job size ──────────
+    n_segments = 0
+    try:
+        import srt
+
+        from video_util import read_srt_text
+
+        n_segments = len(list(srt.parse(read_srt_text(srt_path))))
+    except Exception:
+        n_segments = 0
+    total_timeout = max(min_total_timeout, per_segment_budget * n_segments)
+
+    def _stop(process: subprocess.Popen, reason: str) -> RuntimeError:
+        process.terminate()
+        try:
+            process.wait(timeout=90)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
+        return RuntimeError(reason)
+
     with open(log_path, "a") as proc_log:
         proc_log.write(f"+ {' '.join(cmd)}\n")
         proc_log.flush()
+        proc_pos = proc_log.tell()
 
-    with open(log_path, "a") as proc_log:
-        result = subprocess.run(
+        process = subprocess.Popen(
             cmd,
             stdout=proc_log,
             stderr=subprocess.STDOUT,
-            check=False,
+            text=True,
         )
 
-    if result.returncode != 0:
-        raise RuntimeError(f"gen_audio exited with code {result.returncode}")
+        start = time.monotonic()
+        last_size = proc_pos
+        last_growth = start
+        while True:
+            try:
+                process.wait(timeout=30)
+                break
+            except subprocess.TimeoutExpired:
+                elapsed = time.monotonic() - start
+                cur_size = os.path.getsize(log_path)
+                if cur_size > last_size:
+                    last_size = cur_size
+                    last_growth = time.monotonic()
+                stalled_for = time.monotonic() - last_growth
+                if stalled_for > stall_timeout:
+                    raise _stop(
+                        process,
+                        f"gen_audio stalled: no output for {stalled_for / 60:.1f}min "
+                        f"(elapsed {elapsed / 60:.1f}min)",
+                    ) from None
+                if elapsed > total_timeout:
+                    raise _stop(
+                        process,
+                        f"gen_audio timed out after {elapsed / 60:.1f}min "
+                        f"({n_segments} segments)",
+                    ) from None
+                get_job_queue().update_job_progress(
+                    access_code, f"正在生成音频... ({int(elapsed) // 60}分{int(elapsed) % 60}秒)"
+                )
+
+    # Read back only the output written by this subprocess invocation
+    with open(log_path) as f:
+        f.seek(proc_pos)
+        sub_out = f.read()
+
+    output_lines = sub_out.strip().splitlines()
+    if output_lines:
+        job_log_lines(access_code, output_dir, output_lines)
+
+    if process.returncode != 0:
+        raise RuntimeError(sub_out[:500] if sub_out else f"gen_audio exited with code {process.returncode}")
 
     job_log(access_code, output_dir, "gen_audio subprocess completed")
 
@@ -721,6 +805,43 @@ def adjust_original_audio(
             check=True,
             capture_output=True,
         )
+
+        # ── Correct accumulated atempo rounding error ─────────
+        # Per-segment atempo (especially on short 1-3 s segments)
+        # drifts a few percent, and over ~70 segments the drift
+        # compounds to a 1-2 s mismatch.  Apply a one-shot atempo
+        # on the concatenated track so its duration matches the
+        # designed timeline (sum of stretched segment durations).
+        expected_total = sum((s["end"] - s["start"]) * s["stretch"] for s in seg_defs)
+        actual_total = _get_video_duration(out_path)
+        if expected_total > 0 and abs(actual_total - expected_total) > 0.05:
+            factor = actual_total / expected_total
+            job_log(
+                access_code,
+                output_dir,
+                f"  Correcting zh audio duration: {actual_total:.2f}s → {expected_total:.2f}s (atempo={factor:.4f})",
+            )
+            fix_path = os.path.join(tmp_dir, "orig_zh_fixed.wav")
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    out_path,
+                    "-af",
+                    _build_atempo_filter(factor),
+                    "-acodec",
+                    "pcm_s16le",
+                    "-ar",
+                    "16000",
+                    "-ac",
+                    "1",
+                    fix_path,
+                ],
+                check=True,
+                capture_output=True,
+            )
+            shutil.move(fix_path, out_path)
 
         job_log(access_code, output_dir, f"  ✓ orig_zh_adjusted.wav saved ({len(seg_files)} segments)")
 
