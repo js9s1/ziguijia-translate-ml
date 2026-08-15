@@ -136,29 +136,42 @@ def _check_cache(cache, seg_idx, clean_content, output_dir):
 
     If a WAV exists but no cache entry (e.g. crash recovery), the WAV is
     reused and a cache entry is created on the fly.
+
+    Silent WAVs are never reused — the TTS model sometimes "succeeds"
+    while producing near-silence, and reusing that would leave audible
+    holes in the final audio on every resubmit.
     """
     wav_path = _combined_seg_path(output_dir, seg_idx)
     if not os.path.exists(wav_path):
         return False, 0.0
     seg_cache = cache.get(str(seg_idx))
     if seg_cache:
-        if seg_cache.get("content") == clean_content:
-            return True, seg_cache.get("duration", 0.0)
-        return False, 0.0
+        # Fallback silence (TTS failed) is never reused — retry generation.
+        if seg_cache.get("fallback"):
+            return False, 0.0
+        if seg_cache.get("content") != clean_content:
+            return False, 0.0
+        if _cached_wav_is_silent(wav_path):
+            print(f"  ↪ cache: seg {seg_idx} wav is silent — regenerating")
+            return False, 0.0
+        return True, seg_cache.get("duration", 0.0)
     # WAV exists but no cache entry — recover orphaned WAV from crash
     try:
         info = sf.info(wav_path)
-        _set_cache(cache, seg_idx, clean_content, info.duration)
-        _save_cache(output_dir, cache)
-        return True, info.duration
     except OSError:
         return False, 0.0
+    if _cached_wav_is_silent(wav_path):
+        return False, 0.0
+    _set_cache(cache, seg_idx, clean_content, info.duration)
+    _save_cache(output_dir, cache)
+    return True, info.duration
 
 
-def _set_cache(cache, seg_idx, clean_content, wav_duration):
+def _set_cache(cache, seg_idx, clean_content, wav_duration, fallback=False):
     cache[str(seg_idx)] = {
         "content": clean_content,
         "duration": wav_duration,
+        "fallback": fallback,
     }
 
 
@@ -198,6 +211,7 @@ def _migrate_cache(cache, new_subs, output_dir):
             old_idx, dur = entries.pop(0)  # FIFO match
             if not entries:
                 del old_map[clean_content]
+            old_entry = cache.get(str(old_idx), {})
             if old_idx != i:
                 old_wav = _combined_seg_path(output_dir, old_idx)
                 new_wav = _combined_seg_path(output_dir, i)
@@ -206,7 +220,11 @@ def _migrate_cache(cache, new_subs, output_dir):
                     print(f"  ↪ cache: moved seg {old_idx} → seg {i} (same content)")
                 elif os.path.exists(new_wav):
                     os.remove(old_wav)
-            cache[str(i)] = {"content": clean_content, "duration": dur}
+            cache[str(i)] = {
+                "content": clean_content,
+                "duration": dur,
+                "fallback": old_entry.get("fallback", False),
+            }
         else:
             # No match — delete stale WAV so _check_cache won't orphan-recover it
             cache.pop(str(i), None)
@@ -345,6 +363,30 @@ def load_subs(srt_path):
 def generate_silence(duration_sec, sample_rate):
     num_frames = round(duration_sec * sample_rate)
     return torch.zeros(1, num_frames)
+
+
+def _is_silent_audio(wav_data, threshold_db: float = -45.0, min_voiced_frac: float = 0.05):
+    """Return True if *wav_data* is essentially silent.
+
+    A clip counts as voiced only if at least *min_voiced_frac* of its
+    samples exceed *threshold_db*.  The fraction test is robust against a
+    single loud click inside an otherwise silent clip (unlike RMS), which
+    is how the TTS model occasionally "succeeds" while producing silence
+    (regression: job 1E606E46 segments 29/37).
+    """
+    if wav_data.numel() == 0:
+        return True
+    voiced = (wav_data.abs() > 10 ** (threshold_db / 20)).float().mean().item()
+    return voiced < min_voiced_frac
+
+
+def _cached_wav_is_silent(wav_path: str) -> bool:
+    """Return True if the cached WAV on disk is essentially silent."""
+    try:
+        data, _ = sf.read(wav_path, dtype="float32")
+    except OSError:
+        return False
+    return _is_silent_audio(torch.from_numpy(data))
 
 
 _SILENCE_MARKER_RE = re.compile(r"<(\d+(?:\.\d+)?)>\s*")
@@ -731,9 +773,13 @@ def process_with_direct(
             )
             continue
 
-        # Non-verbal / sound-effect text → silence
+        # Non-verbal / sound-effect text → silence.  Only text with NO
+        # letters at all (pure symbols/punctuation, e.g. "♪♪", "……")
+        # is treated as non-verbal.  Any letter-based text — however
+        # short ("So,", "Right?", "分かりますか。") — is real speech and
+        # must be generated (regressions: jobs 1E606E46, 9BAB19F2).
         _alpha_count = sum(1 for c in clean_content if c.isalpha())
-        if _alpha_count < 8:
+        if _alpha_count == 0:
             print(f"  ↪ segment {i}: non-verbal ('{clean_content.strip()}') → silence ({orig_duration:.1f}s)")
             silence_wav = generate_silence(orig_duration, sample_rate)
             save_audio(seg_wav_path, silence_wav, sample_rate)
@@ -774,30 +820,70 @@ def process_with_direct(
 
             chunk_wavs = []
             total_wav_duration = 0.0
+            seg_failed = False
             for ci, chunk in enumerate(chunks):
                 wav_path = os.path.join(output_dir, "tmp", f"segment_{seg_counter}.wav")
-                try:
-                    wav_data, wav_duration = _generate_chunk_with_markers(
-                        backend,
-                        chunk,
-                        wav_path,
-                        temperature,
-                        prompt_file=prompt,
-                        target_language=target_language,
-                        cfg_weight=cfg_weight,
-                        exaggeration=exaggeration,
-                        sample_rate=sample_rate,
+                has_speech = any(p.strip() for p in _SILENCE_MARKER_RE.split(chunk))
+                wav_data = None
+                wav_duration = 0.0
+                recoveries = 0
+                for attempt in range(3):
+                    try:
+                        wav_data, wav_duration = _generate_chunk_with_markers(
+                            backend,
+                            chunk,
+                            wav_path,
+                            temperature + attempt * 0.02,
+                            prompt_file=prompt,
+                            target_language=target_language,
+                            cfg_weight=cfg_weight,
+                            exaggeration=exaggeration,
+                            sample_rate=sample_rate,
+                        )
+                    except _DaemonUnavailable as e:
+                        # The daemon process died mid-request (e.g. a ROCm
+                        # GPU fault on an out-of-range flow token, as in
+                        # job 9BAB19F2).  Restart it and retry the chunk
+                        # instead of aborting the whole job — segments
+                        # completed so far stay cached for a resubmit.
+                        if recoveries >= 2:
+                            raise
+                        recoveries += 1
+                        print(
+                            f"  ⚠ TTS daemon died ({e}) — restarting it and "
+                            f"retrying (recovery {recoveries}/2)"
+                        )
+                        if _STOP_REQUESTED:
+                            raise SystemExit(1)
+                        try:
+                            if not backend.ensure_daemon():
+                                raise _DaemonUnavailable("failed to restart TTS daemon")
+                            backend.ensure_model(target_language)
+                        except _DaemonUnavailable as e2:
+                            print(f"  ⚠ daemon recovery failed: {e2}")
+                            raise
+                        continue
+                    except (RuntimeError, SystemExit) as e:
+                        # Stuck-loop or other generation error — log and use silence.
+                        # Don't fail the whole job for one bad segment.
+                        print(f"  ⚠ segment {i} TTS failed: {e}")
+                        wav_data = None
+                        break
+                    if not has_speech or not _is_silent_audio(wav_data):
+                        break
+                    print(
+                        f"  ⚠ segment {i} chunk produced silent audio "
+                        f"(attempt {attempt + 1}/3) — retrying"
                     )
-                except _DaemonUnavailable:
-                    raise
-                except (RuntimeError, SystemExit) as e:
-                    # Stuck-loop or other generation error — log and use silence.
-                    # Don't fail the whole job for one bad segment.
-                    print(f"  ⚠ segment {i} TTS failed: {e}")
+                    wav_data = None
+                if wav_data is None:
+                    # All attempts failed or produced silence — use silence
+                    # for this segment rather than failing the whole job.
                     print(f"     Using silence for this segment ({orig_duration:.1f}s)")
                     chunk_wavs = [generate_silence(orig_duration, sample_rate)]
                     total_wav_duration = orig_duration
                     seg_counter += len(chunks)
+                    seg_failed = True
                     break  # exit chunk loop, use silence combined_wav below
                 if wav_data.dim() == 1:
                     wav_data = wav_data.unsqueeze(0)
@@ -816,8 +902,12 @@ def process_with_direct(
 
             save_audio(seg_wav_path, combined_wav, sample_rate)
 
-            # Update in-memory cache and persist immediately
-            _set_cache(cache, i, clean_content, total_wav_duration)
+            # Update in-memory cache and persist immediately.
+            # Fallback silence is recorded but flagged so the next run
+            # retries TTS instead of reusing the silent WAV.
+            _set_cache(cache, i, clean_content, total_wav_duration, fallback=seg_failed)
+            if seg_failed:
+                print("     (fallback silence not reused — TTS will be retried on the next run)")
             _save_cache(output_dir, cache)
 
         new_start = orig_start + accumulated_offset

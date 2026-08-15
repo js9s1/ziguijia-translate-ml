@@ -95,6 +95,34 @@ _WORKER_TL = threading.local()  # one TTS model per worker thread
 TTS_POOL = None  # ThreadPoolExecutor, max_workers == MAX_JOBS
 JOB_SLOTS = None  # BoundedSemaphore(MAX_JOBS) — admits one job per worker
 
+# ── Generation / load coordination ─────────────────────────
+# Loading a second model instance while another thread is running GPU
+# inference has produced permanently NaN ("non-finite audio") instances
+# on ROCm (job 06D55E25: one worker always failed).  Generations may run
+# concurrently with each other, but a model load waits for all in-flight
+# generations to finish and blocks new ones from starting.
+_GEN_COND = threading.Condition()
+_GENS_ACTIVE = 0
+_LOAD_ACTIVE = False
+_LOAD_MUTEX = threading.Lock()  # serialize loads against each other
+
+
+class _GenerationGuard:
+    """Context manager marking a generation as in-flight (see above)."""
+
+    def __enter__(self):
+        global _GENS_ACTIVE
+        with _GEN_COND:
+            while _LOAD_ACTIVE:
+                _GEN_COND.wait()
+            _GENS_ACTIVE += 1
+
+    def __exit__(self, *_exc):
+        global _GENS_ACTIVE
+        with _GEN_COND:
+            _GENS_ACTIVE -= 1
+            _GEN_COND.notify_all()
+
 
 # ── Per-thread model management ─────────────────────────────
 
@@ -181,25 +209,46 @@ def _load_indonesian():
     return model
 
 
-def _ensure_thread_model(lang: str):
-    """Load (or keep) the model for *lang* on this worker thread."""
+def _ensure_thread_model(lang: str, force: bool = False):
+    """Load (or keep) the model for *lang* on this worker thread.
+
+    Loads are coordinated against in-flight generations: ``_LOAD_ACTIVE``
+    blocks new generations, the loader waits for active ones to finish,
+    and ``_LOAD_MUTEX`` serializes loads against each other.
+    """
+    global _LOAD_ACTIVE
     kind = getattr(_WORKER_TL, "kind", None)
     model = getattr(_WORKER_TL, "model", None)
-    if kind == lang and model is not None:
+    if not force and kind == lang and model is not None:
         return model
 
-    import torch
+    with _GEN_COND:
+        _LOAD_ACTIVE = True
+        _GEN_COND.notify_all()
+    try:
+        while True:
+            with _GEN_COND:
+                if _GENS_ACTIVE == 0:
+                    break
+                _GEN_COND.wait()
 
-    if model is not None:
-        del model
-        _WORKER_TL.model = None
-        _WORKER_TL.kind = None
-        gc.collect()
-        torch.cuda.empty_cache()
+        with _LOAD_MUTEX:
+            import torch
 
-    _WORKER_TL.model = _load_indonesian() if lang == "id" else _load_multilingual()
-    _WORKER_TL.kind = lang
-    return _WORKER_TL.model
+            if model is not None:
+                del model
+                _WORKER_TL.model = None
+                _WORKER_TL.kind = None
+                gc.collect()
+                torch.cuda.empty_cache()
+
+            _WORKER_TL.model = _load_indonesian() if lang == "id" else _load_multilingual()
+            _WORKER_TL.kind = lang
+            return _WORKER_TL.model
+    finally:
+        with _GEN_COND:
+            _LOAD_ACTIVE = False
+            _GEN_COND.notify_all()
 
 
 # ── Generation helpers ──────────────────────────────────────
@@ -211,28 +260,32 @@ def _generate_indonesian(model, text, prompt_file, temperature):
     if audio_prompt and os.path.exists(audio_prompt):
         kwargs["audio_prompt_path"] = audio_prompt
     try:
-        return model.generate(text, temperature=temperature, **kwargs)
+        with _GenerationGuard():
+            return model.generate(text, temperature=temperature, **kwargs)
     except TypeError:
-        return model.generate(text, **kwargs)
+        with _GenerationGuard():
+            return model.generate(text, **kwargs)
 
 
 def _generate_with_retry(model, text, target_language, temperature, cfg_weight, exaggeration, attempts=3):
     for attempt in range(attempts):
         try:
-            return model.generate(
-                text,
-                language_id=target_language,
-                temperature=temperature + attempt * 0.02,
-                cfg_weight=cfg_weight,
-                exaggeration=exaggeration,
-            )
+            with _GenerationGuard():
+                return model.generate(
+                    text,
+                    language_id=target_language,
+                    temperature=temperature + attempt * 0.02,
+                    cfg_weight=cfg_weight,
+                    exaggeration=exaggeration,
+                )
         except Exception as e:
             if "not finite" not in str(e):
                 raise
             print(
-                f"[daemon] non-finite audio (attempt {attempt + 1}/{attempts}), "
-                f"retrying with temperature={temperature + (attempt + 1) * 0.02}"
+                f"[daemon] non-finite audio (attempt {attempt + 1}/{attempts}) — "
+                f"reloading this worker's model and retrying"
             )
+            model = _ensure_thread_model(target_language, force=True)
     raise RuntimeError(f"model produced non-finite audio {attempts} times")
 
 
@@ -363,7 +416,8 @@ def _submit_tts(conn, req):
                 wav = _generate_indonesian(model, text, prompt_file, temperature)
             else:
                 if prompt_file:
-                    model.prepare_conditionals(prompt_file)
+                    with _GenerationGuard():
+                        model.prepare_conditionals(prompt_file)
                 wav = _generate_with_retry(model, text, lang, temperature, cfg_weight, exaggeration)
 
             sr = int(model.sr)
