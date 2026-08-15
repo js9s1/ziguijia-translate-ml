@@ -13,11 +13,16 @@ A global thermal gate pauses all workers while the GPU is above
 GEN_AUDIO_TEMP_LIMIT and resumes them once it cools to
 GEN_AUDIO_COOLDOWN_TARGET.
 
-The daemon exits after GEN_AUDIO_IDLE_TIMEOUT seconds without jobs
-(default 300; 0 disables).  This avoids burning a core while idle:
-ROCm's HSA exception-monitor thread busy-polls once any GPU work has
-happened, which keeps the box warm.  Clients restart the daemon on
-demand (gen_audio.py auto mode does this).
+While idle (no jobs running), the daemon releases the GPU once the card
+reaches GEN_AUDIO_IDLE_TEMPERATURE (default 76°C): an idle resident model
+still keeps the box warm (ROCm's HSA exception-monitor thread busy-polls
+once any GPU work has happened).  This only applies after a model has
+been loaded — a fresh daemon holds no GPU state.  A prewarm grace
+(GEN_AUDIO_IDLE_GRACE_SECS, default 600 s) starts when the model is
+prewarmed (ensure_model) and shields the release so an enqueued job has
+time to start; above GEN_AUDIO_IDLE_CRITICAL_TEMP (default 98°C) the
+grace is ignored and the GPU is released immediately.  Clients restart
+the daemon on demand (gen_audio.py auto mode does this).
 
 Runtime files: socket + pid live in $XDG_RUNTIME_DIR/gen_audio_daemon/
 (tmpfs, 0700, auto-cleaned on reboot).
@@ -66,7 +71,7 @@ sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE.parent / "chatterbox-server"))
 
 from config import AUDIO_PROMPT_PATH, GEN_AUDIO_DAEMON_PID, GEN_AUDIO_DAEMON_SOCK  # noqa: E402
-from gpu_thermal import get_gpu_temp  # noqa: E402
+from gpu_thermal import ThermalGate  # noqa: E402
 
 DAEMON_SOCK = Path(GEN_AUDIO_DAEMON_SOCK).resolve()
 DAEMON_PID = Path(GEN_AUDIO_DAEMON_PID).resolve()
@@ -74,22 +79,23 @@ DAEMON_PID = Path(GEN_AUDIO_DAEMON_PID).resolve()
 MAX_REQ_BYTES = 1 << 20  # 1 MB cap per request
 MAX_JOBS = max(1, int(os.environ.get("GEN_AUDIO_MAX_JOBS", "2")))
 
-# Idle shutdown: the ROCm HSA exception-monitor thread busy-polls (~1 core,
-# heat) once any GPU work has happened, so the daemon exits after this many
-# seconds without jobs.  0 = never exit.  The client restarts it on demand.
-IDLE_TIMEOUT = float(os.environ.get("GEN_AUDIO_IDLE_TIMEOUT", "300"))
-
-# Thermal gate (global — all workers pause together)
-GPU_TEMP_LIMIT = float(os.environ.get("GEN_AUDIO_TEMP_LIMIT", "90"))  # °C
-GPU_COOLDOWN_TARGET = float(os.environ.get("GEN_AUDIO_COOLDOWN_TARGET", "70"))  # °C
-GPU_POLL_SECS = float(os.environ.get("GEN_AUDIO_POLL_SECS", "10"))
+# Thermal gate + idle release (global — all workers pause together).
+# Shared logic lives in gpu_thermal.ThermalGate; see module docstring.
+GATE = ThermalGate(
+    temp_limit=float(os.environ.get("GEN_AUDIO_TEMP_LIMIT", "90")),
+    cooldown_target=float(os.environ.get("GEN_AUDIO_COOLDOWN_TARGET", "70")),
+    poll_secs=float(os.environ.get("GEN_AUDIO_POLL_SECS", "10")),
+    idle_temperature=float(os.environ.get("GEN_AUDIO_IDLE_TEMPERATURE", "76")),
+    idle_critical_temp=float(os.environ.get("GEN_AUDIO_IDLE_CRITICAL_TEMP", "98")),
+    idle_grace_secs=float(os.environ.get("GEN_AUDIO_IDLE_GRACE_SECS", "600")),
+)
+_THERMAL_BLOCKED = GATE.blocked  # workers wait on this while the gate is closed
 
 _QUIT = False
-_THERMAL_BLOCKED = threading.Event()
 _ACTIVE = 0
 _ACTIVE_LOCK = threading.Lock()
 _LAST_FUTURES = []  # debugging: recently submitted tts futures
-_LAST_ACTIVE_TS = time.monotonic()  # last job completion — for idle shutdown
+_MODEL_LOADED = threading.Event()  # set once any worker has loaded a model
 
 _WORKER_TL = threading.local()  # one TTS model per worker thread
 TTS_POOL = None  # ThreadPoolExecutor, max_workers == MAX_JOBS
@@ -244,6 +250,7 @@ def _ensure_thread_model(lang: str, force: bool = False):
 
             _WORKER_TL.model = _load_indonesian() if lang == "id" else _load_multilingual()
             _WORKER_TL.kind = lang
+            _MODEL_LOADED.set()
             return _WORKER_TL.model
     finally:
         with _GEN_COND:
@@ -293,23 +300,11 @@ def _generate_with_retry(model, text, target_language, temperature, cfg_weight, 
 
 
 def _thermal_monitor():
-    global _QUIT, _LAST_ACTIVE_TS
+    global _QUIT
     while not _QUIT:
-        temp = get_gpu_temp()
-        if temp is not None:
-            if temp >= GPU_TEMP_LIMIT and not _THERMAL_BLOCKED.is_set():
-                print(f"[daemon] GPU temp {temp:.0f}°C ≥ limit {GPU_TEMP_LIMIT:.0f}°C — pausing all workers")
-                _THERMAL_BLOCKED.set()
-            elif temp <= GPU_COOLDOWN_TARGET and _THERMAL_BLOCKED.is_set():
-                print(f"[daemon] GPU cooled to {temp:.0f}°C — resuming workers")
-                _THERMAL_BLOCKED.clear()
-        if IDLE_TIMEOUT > 0:
-            idle = time.monotonic() - _LAST_ACTIVE_TS
-            if idle >= IDLE_TIMEOUT and _ACTIVE == 0:
-                print(f"[daemon] idle for {idle:.0f}s ≥ {IDLE_TIMEOUT:.0f}s — shutting down")
-                _QUIT = True
-                return
-        time.sleep(GPU_POLL_SECS)
+        if GATE.poll(lambda: _ACTIVE, _MODEL_LOADED.is_set):
+            _QUIT = True
+            return
 
 
 # ── Socket protocol ─────────────────────────────────────────
@@ -370,15 +365,14 @@ def _submit_ensure_model(conn, req):
     """Load the requested model on a worker thread (slot-protected)."""
 
     def run_job():
-        global _LAST_ACTIVE_TS
         try:
             lang = str(req.get("language", "en"))
             model = _ensure_thread_model(lang)
+            GATE.arm_grace()
             _send_response(conn, {"ok": True, "sr": int(model.sr), "device": _get_device(model)})
         except Exception as e:  # noqa: BLE001
             _send_response(conn, {"ok": False, "error": f"{type(e).__name__}: {e}"})
         finally:
-            _LAST_ACTIVE_TS = time.monotonic()
             JOB_SLOTS.release()
 
     try:
@@ -390,7 +384,7 @@ def _submit_ensure_model(conn, req):
 
 def _submit_tts(conn, req):
     def run_job():
-        global _ACTIVE, _LAST_ACTIVE_TS
+        global _ACTIVE
         try:
             with _ACTIVE_LOCK:
                 _ACTIVE += 1
@@ -432,7 +426,6 @@ def _submit_tts(conn, req):
         finally:
             with _ACTIVE_LOCK:
                 _ACTIVE -= 1
-            _LAST_ACTIVE_TS = time.monotonic()
             JOB_SLOTS.release()
 
     try:
@@ -597,7 +590,8 @@ def main():
     print(
         f"[daemon] TTS daemon ready on {DAEMON_SOCK} "
         f"(device: {device_name}, max concurrent jobs: {MAX_JOBS}, "
-        f"temp limit: {GPU_TEMP_LIMIT:.0f}°C, idle timeout: {IDLE_TIMEOUT:.0f}s)"
+        f"temp limit: {GATE.temp_limit:.0f}°C, idle temp: {GATE.idle_temperature:.0f}°C, "
+        f"idle grace: {GATE.idle_grace_secs:.0f}s, critical: {GATE.idle_critical_temp:.0f}°C)"
     )
 
     while not _QUIT:

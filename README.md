@@ -26,7 +26,7 @@ encoding.
        │                   VAAPI ffmpeg)               │                        ▲
        ▼                                                ▼                        │
  TTS daemon (unix sock)                        translate daemon               │
- gen_audio_daemon.py     ── max 2 concurrent jobs, idle-exit 100 s ──        │
+ gen_audio_daemon.py     ── max 2 concurrent jobs, idle-exit when GPU hot ──        │
 ```
 
 ### Long-lived processes
@@ -35,7 +35,7 @@ encoding.
 |---|---|---|
 | `gunicorn` | Web UI + job queue | `start_server.sh` / `stop_server.sh` |
 | `valkey-server` | Shared job queue + pub/sub | started/stopped by the scripts |
-| TTS daemon (`gen_audio_daemon.py`) | Chatterbox voice-clone TTS | detached; auto-started by `gen_audio.py` clients or prewarmed on job enqueue; auto-exits after `GEN_AUDIO_IDLE_TIMEOUT` s idle |
+| TTS daemon (`gen_audio_daemon.py`) | Chatterbox voice-clone TTS | detached; auto-started by `gen_audio.py` clients or prewarmed on job enqueue; auto-exits when the GPU is hot while idle (`GEN_AUDIO_IDLE_TEMPERATURE`) |
 | translate daemon (`translate_daemon.py`) | HY-MT machine translation | same pattern as TTS daemon |
 | OCR daemon (`rapid_videocr_daemon.py`) | RapidOCR (burned-in zh subtitles) | started/stopped by the scripts; also shared with the batch pipeline |
 | `jobs_tui.py` | Terminal job monitor | manual |
@@ -121,7 +121,8 @@ redoing work.
 ## Configuration
 
 - `.env` (gitignored, sourced by `start_server.sh`) — secrets and tunables:
-  `GEN_AUDIO_MAX_JOBS`, `TRANSLATE_MAX_JOBS`, `GEN_AUDIO_IDLE_TIMEOUT`, the three
+  `GEN_AUDIO_MAX_JOBS`, `TRANSLATE_MAX_JOBS`, `GEN_AUDIO_IDLE_TEMPERATURE`,
+  `TRANSLATE_IDLE_TEMPERATURE`, the three
   `GEN_AUDIO_*_TIMEOUT` values, Valkey password, SMTP credentials.
 - `chatterbox-server/config.py` — paths, interpreters, sockets; everything overridable
   via environment variables.

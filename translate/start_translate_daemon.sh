@@ -9,7 +9,7 @@
 # The daemon keeps the HY-MT model resident on GPU and translates SRT files
 # over a Unix socket ($XDG_RUNTIME_DIR/translate_daemon/).  translate_srt.py
 # jobs auto-detect the daemon and start it on demand when it is not running
-# (it also exits after TRANSLATE_IDLE_TIMEOUT seconds idle).
+# (it also exits once the GPU is hot while idle — TRANSLATE_IDLE_TEMPERATURE).
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
