@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>使用手册 - 宁师的视频翻译工具</title>
+    <link rel="stylesheet" href="/ning.css">
+    <style>
+        .manual { max-width: 860px; margin: 0 auto; padding: 24px 20px 64px; }
+        .manual h1 { text-align: center; margin-bottom: 8px; }
+        .manual .subtitle { text-align: center; color: #888; margin-bottom: 32px; }
+        .manual h2 { margin-top: 40px; border-bottom: 2px solid #eee; padding-bottom: 8px; }
+        .manual h3 { margin-top: 24px; }
+        .manual table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 0.95em; }
+        .manual th, .manual td { border: 1px solid #e2e8f0; padding: 8px 12px; text-align: left; vertical-align: top; }
+        .manual th { background: #f8fafc; }
+        .manual code { background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-size: 0.9em; }
+        .manual .tip { background: #eff6ff; border-left: 4px solid #3b82f6; padding: 10px 14px; margin: 12px 0; border-radius: 4px; }
+        .manual .warn { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 10px 14px; margin: 12px 0; border-radius: 4px; }
+        .manual ol, .manual ul { line-height: 1.9; }
+        .manual .back { display: block; text-align: center; margin-top: 32px; }
+    </style>
+</head>
+<body>
+<div class="manual">
+    <h1>📖 使用手册</h1>
+    <p class="subtitle">宁师的视频翻译工具 · 视频翻译与语音克隆</p>
+
+    <h2>一、工具简介</h2>
+    <p>本工具使用 AI 技术，将宁师的视频<strong>翻译成其他语言</strong>，并用<strong>克隆的宁师声音</strong>重新配音：
+        翻译好的音频会按照原视频的时间节奏进行拉伸对齐，视频画面也会相应调整，最终生成带有双语字幕的完整视频。</p>
+    <div class="tip"><strong>支持的翻译语言：</strong>英语、日语、韩语、印尼语、泰语、越南语、中文、德语、法语、西班牙语、葡萄牙语、俄语、阿拉伯语、希伯来语、印地语、马来语、荷兰语、挪威语、波兰语、瑞典语、斯瓦希里语、土耳其语、丹麦语、希腊语、芬兰语、意大利语等。</div>
+
+    <h2>二、登录与账户</h2>
+    <ul>
+        <li>首次使用请先<strong>注册</strong>账户，注册后登录即可使用全部功能。</li>
+        <li>登录后右上角可以看到自己的头像和昵称，并可以进入「<strong>我的任务</strong>」页面查看自己提交的所有任务。</li>
+        <li>忘记密码可以通过注册邮箱<strong>重置密码</strong>。</li>
+    </ul>
+
+    <h2>三、功能说明</h2>
+
+    <h3>1. 翻译自定义视频（推荐）</h3>
+    <p>上传你自己的视频文件（如宁师开示的下载视频），系统生成翻译音轨并合成新视频。</p>
+    <p><strong>翻译模式</strong>有四种：</p>
+    <table>
+        <tr><th>模式</th><th>说明</th></tr>
+        <tr><td>上传SRT字幕</td><td>自己准备英文字幕文件（.srt），系统按字幕生成配音并调整视频。字幕内容越准确，效果越好。</td></tr>
+        <tr><td>语音识别翻译（Whisper + HY-MT）</td><td>系统自动识别视频中的中文语音，生成中文字幕并翻译成目标语言，无需上传字幕。</td></tr>
+        <tr><td>OCR识别翻译（RapidVideOCR + HY-MT）</td><td>系统通过画面文字识别（OCR）提取视频中烧录的中文字幕，翻译后再配音。适合视频中没有清晰人声、但画面有字幕的情况。</td></tr>
+        <tr><td>OCR识别并生成翻译字幕</td><td>只做OCR和翻译，生成翻译好的字幕文件，<strong>不生成</strong>音频和视频。</td></tr>
+    </table>
+    <div class="warn">选择「上传SRT字幕」模式时，字幕时间必须与上传的视频片段对应，否则系统会拒绝处理。请不要上传带BOM的SRT文件。</div>
+
+    <h3>2. 翻译官方宁视频</h3>
+    <p>输入子归家网站上的<strong>视频号</strong>（例如 25339），系统自动下载视频。翻译模式与「自定义视频」相同：可以上传SRT，也可以让系统自动识别翻译。</p>
+
+    <h3>3. 从SRT生成音轨</h3>
+    <p>只上传字幕文件（.srt），系统批量生成整条翻译语音轨道（不处理视频）。适合只需要音频、或自己用其他软件合成视频的情况。</p>
+
+    <h3>4. 生成翻译语音（克隆宁师语音）</h3>
+    <p>输入一段文字（或上传文本文件），直接生成一段用宁师声音朗读的语音。适合试听语音效果、制作单段语音。</p>
+    <div class="tip">单次输入文字最多 <strong>500 字</strong>。</div>
+
+    <h3>5. 从视频提取字幕（OCR）</h3>
+    <p>上传视频，仅提取画面中的中文字幕生成SRT文件，不做翻译和配音。</p>
+
+    <h2>四、参数说明</h2>
+    <table>
+        <tr><th>参数</th><th>说明</th><th>建议</th></tr>
+        <tr><td>目标语言</td><td>翻译成的语言。</td><td>按需选择，一般保持默认（英语）。</td></tr>
+        <tr><td>温度（temperature）</td><td>语音生成的随机性。越高语音变化越大，越低越稳定。</td><td>一般保持默认 0.5。</td></tr>
+        <tr><td>CFG权重</td><td>语音对文本的忠实度控制。</td><td>一般保持默认。</td></tr>
+        <tr><td>夸张度（exaggeration）</td><td>声音表现力/情绪幅度。</td><td>一般保持默认。</td></tr>
+        <tr><td>模糊处理</td><td>生成视频时对画面下方的原中文字幕区域做模糊处理。</td><td>视频自带中文字幕时建议开启「是」。</td></tr>
+    </table>
+
+    <h2>五、任务状态与结果</h2>
+    <ul>
+        <li>提交后任务进入<strong>队列排队</strong>。任务按顺序执行，同一时间只处理一个任务；长任务可能因为 GPU 过热保护而短暂暂停，属正常现象。</li>
+        <li>可以在「我的任务」页面或提交后跳转的页面查看任务状态：<strong>排队中 → 处理中 → 完成 / 失败</strong>。处理中会显示当前步骤（如「正在生成音频…」）。</li>
+        <li>任务<strong>完成后</strong>进入「处理结果」页面，可以查看和下载生成的文件。</li>
+    </ul>
+
+    <h3>生成的文件说明</h3>
+    <table>
+        <tr><th>文件名</th><th>说明</th></tr>
+        <tr><td><code>output_final.mp4</code></td><td><strong>最终视频</strong>：翻译配音 + 英文字幕，可直接下载观看。</td></tr>
+        <tr><td><code>output_modified.mp4</code></td><td>中间文件：视频画面已按新音频调整节奏（无字幕）。</td></tr>
+        <tr><td><code>output.wav</code></td><td>翻译语音轨道（克隆声音）。</td></tr>
+        <tr><td><code>output_adjusted.srt</code></td><td>调整时间后的英文字幕（与最终视频同步）。</td></tr>
+        <tr><td><code>orig_zh_adjusted.wav</code></td><td>调整时间后的<strong>原中文</strong>音轨，可用于自行剪辑对照。</td></tr>
+        <tr><td><code>changed_segments.json</code></td><td>各字幕段落的时间调整记录（供工具内部使用）。</td></tr>
+    </table>
+
+    <h2>六、字幕编辑与重新合成</h2>
+    <ul>
+        <li>在结果页可以直接<strong>在线编辑</strong>字幕文件（除 output_adjusted.srt 外的 .srt 文件），保存后再提交任务，系统会从编辑后的字幕重新生成音轨和视频。</li>
+        <li>任务失败或效果不满意时，可以点击<strong>重新提交</strong>；已完成的段落会<strong>自动复用缓存</strong>，只重新生成有变化的部分，速度很快。</li>
+    </ul>
+
+    <h2>七、字幕书写技巧</h2>
+    <ul>
+        <li>每条字幕建议控制在 <strong>120 个字符以内</strong>，过长会自动分段。</li>
+        <li>在字幕文字中加入 <code>&lt;秒数&gt;</code>（例如 <code>……就是这样。&lt;1.5&gt;接下来……</code>）可以在配音中插入指定时长的<strong>停顿</strong>。</li>
+        <li>纯符号、无文字的字幕（如「♪♪」）会生成静音；只要含文字，即使很短（如「好。」「So,」）也会正常配音。</li>
+        <li>短句、短词会被正常朗读，不会因为字数少而变成静音。</li>
+    </ul>
+
+    <h2>八、常见问题</h2>
+    <table>
+        <tr><th>问题</th><th>解答</th></tr>
+        <tr><td>上传视频有什么要求？</td><td>支持常见格式（mp4 / mov 等），建议单文件不要过大；上传SRT模式要求字幕与视频片段时长基本一致（±5%以内）。</td></tr>
+        <tr><td>SRT 上传失败或乱码？</td><td>请使用 UTF-8 编码的 .srt 文件（系统兼容 GBK/Big5，但建议 UTF-8）；不要上传以「output」开头的文件。</td></tr>
+        <tr><td>任务要处理多久？</td><td>音频生成约 5–15 分钟，视频合成约 1–3 分钟；排队时间取决于队列中前面的任务数量。</td></tr>
+        <tr><td>为什么个别段落是静音？</td><td>个别段落可能因语音模型偶发故障而静音。重新提交任务即可自动重试这些段落。</td></tr>
+        <tr><td>视频和字幕不同步？</td><td>重新提交任务；系统会重新对齐音画。如仍不同步，请检查上传的SRT是否与视频片段匹配。</td></tr>
+        <tr><td>可以下载中间文件吗？</td><td>可以。结果页文件列表中所有文件均可单独下载。</td></tr>
+    </table>
+
+    <p class="back"><a href="/">← 返回首页</a></p>
+</div>
+</body>
+</html>
