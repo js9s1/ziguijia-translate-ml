@@ -55,7 +55,6 @@ from job_orphan import (
 )
 from job_types import _JOB_TYPE_LABELS, _SKIP_QUEUE_INIT, JobStatus, _get_job_type_label
 from job_worker import (
-    _WORKER_HEARTBEAT_STALE,
     _now_str,
     _run_job,
     _safe_close_proc,
@@ -74,7 +73,6 @@ class JobQueue:
         self._cancel_lock = threading.Lock()
         self._current_access_code: str | None = None
         self._running = False
-        self._heartbeat_ts = 0.0
         self._graceful_shutdown = False
         self._shutdown_timeout = 60
         self._shutdown_done = threading.Event()
@@ -236,19 +234,15 @@ class JobQueue:
         """
         self._conn.close()
 
-    def _is_worker_healthy(self) -> bool:
-        """Return True if the worker thread is alive and has checked in recently."""
-        if self._worker_thread is None or not self._worker_thread.is_alive():
-            return False
-        elapsed = time.monotonic() - self._heartbeat_ts
-        if elapsed > _WORKER_HEARTBEAT_STALE:
-            logger.warning("Worker thread heartbeat stale (%.1fs since last pulse)", elapsed)
-            return False
-        return True
-
     def _ensure_worker(self):
-        if self._worker_thread is not None and not self._is_worker_healthy():
-            logger.warning("Worker thread dead or stale — restarting")
+        # Restart only when the worker thread actually died (crashed).
+        # No heartbeat/liveness timeout: a busy thread blocked in a long
+        # subprocess step (e.g. a ~10-minute gen_audio run) must not be
+        # mistaken for a dead one — that spawned a replacement thread that
+        # coexisted with the old one forever (two jobs "processing"
+        # simultaneously, e.g. 06D55E25 + 841A7C64 on 2026-08-14).
+        if self._worker_thread is not None and not self._worker_thread.is_alive():
+            logger.warning("Worker thread dead — restarting")
             self._running = False
             old_thread = self._worker_thread
             self._worker_thread = None
@@ -258,7 +252,6 @@ class JobQueue:
                 pass
         if not self._running:
             self._running = True
-            self._heartbeat_ts = time.monotonic()
             self._worker_thread = threading.Thread(
                 target=self._process_queue,
                 daemon=True,
@@ -274,9 +267,10 @@ class JobQueue:
 
         _last_orphan_check = time.monotonic()
         _ORPHAN_CHECK_INTERVAL = 120
-        while self._running:
-            self._heartbeat_ts = time.monotonic()
-
+        # Exit if this thread was replaced by a newer worker thread
+        # (self._worker_thread no longer points at us), so a restarted
+        # worker can never leave two queue-consumer threads running.
+        while self._running and self._worker_thread is threading.current_thread():
             if time.monotonic() - _last_orphan_check > _ORPHAN_CHECK_INTERVAL:
                 _last_orphan_check = time.monotonic()
                 self._cleanup_orphan_processes()

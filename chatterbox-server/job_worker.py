@@ -1,4 +1,4 @@
-"""Worker process management — subprocess launch, heartbeat monitoring, GPU reset.
+"""Worker process management — subprocess launch, GPU reset.
 
 Extracted from ``jobqueue.py`` to reduce that module's size (~1324 → ~1000 lines).
 Functions that were previously methods on ``JobQueue`` take the instance as their
@@ -17,9 +17,6 @@ from job_types import JobStatus, _get_run_func
 from valkey_util import publish_job_status
 
 logger = logging.getLogger(__name__)
-
-_WORKER_HEARTBEAT_STALE = 30
-"""Seconds after which a worker thread is considered dead."""
 
 
 # ── Helpers ──────────────────────────────────────────────────
