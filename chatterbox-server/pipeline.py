@@ -465,10 +465,14 @@ def run_translate_ckpt(
     translated_name: str = "translated.srt",
     intro_marker: str | None = None,
     outro_marker: str | None = None,
+    prewarm_audio: bool = False,
 ) -> str:
     """Translate an SRT file via HY-MT (subprocess on ROCm Python 3.11).
 
     Checkpoint-aware: skips if ``"translate"`` is already marked.
+
+    When *prewarm_audio* is set (audio step follows), the TTS daemon is
+    prewarmed in the background so its model load overlaps translation.
     """
     translated_srt = os.path.join(output_dir, translated_name)
     if ckpt and ckpt.done("translate"):
@@ -481,6 +485,11 @@ def run_translate_ckpt(
         "Translating subtitles (GPU)..." + (" (intro/outro markers)" if intro_marker or outro_marker else ""),
     )
     target_language_name = LANG_MAP.get(target_language, target_language)
+
+    if prewarm_audio:
+        from daemon_prewarm import prewarm_tts_async
+
+        prewarm_tts_async(target_language)
 
     translate_script = os.path.join(PROJECT_ROOT, "translate", "translate_srt.py")
     cmd = [
@@ -862,6 +871,7 @@ def run_ocr_translate_step(
     target_language: str,
     intro_marker: str = "",
     outro_marker: str = "",
+    prewarm_audio: bool = False,
 ) -> str:
     """Run OCR → translate on a video, return path to translated SRT."""
     return run_translate_ckpt(
@@ -874,6 +884,7 @@ def run_ocr_translate_step(
         target_language,
         intro_marker=intro_marker,
         outro_marker=outro_marker,
+        prewarm_audio=prewarm_audio,
     )
 
 
@@ -906,6 +917,7 @@ def run_ocr_full_pipeline(
     translated_srt = run_ocr_translate_step(
         video_path, output_dir, access_code, ckpt, proc_log, log_file,
         ap["target_language"], intro_marker=intro_marker, outro_marker=outro_marker,
+        prewarm_audio=True,
     )
     audio_out = run_audio_ckpt(
         translated_srt,

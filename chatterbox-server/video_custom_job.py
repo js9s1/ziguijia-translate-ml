@@ -119,6 +119,7 @@ def _run_video_auto_job(job_data: dict):
             ap["target_language"],
             intro_marker=MARKER_INTRO,
             outro_marker=MARKER_OUTRO,
+            prewarm_audio=True,
         )
         audio_out = run_audio_ckpt(
             translated_srt,
