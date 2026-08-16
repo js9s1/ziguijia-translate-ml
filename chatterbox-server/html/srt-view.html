@@ -6,7 +6,7 @@
     <title>SRT 查看</title>
     <link rel="stylesheet" href="/ning.css">
     <style>
-        pre { background: #1a1a2e; padding: 16px; border-radius: 4px; overflow-x: auto; font-size: 0.95em; line-height: 1.6; color: #ccc; white-space: pre-wrap; word-break: break-all; }
+        pre { background: var(--color-bg-white); padding: 16px; border: 1px solid var(--color-border); border-radius: 4px; overflow-x: auto; font-size: 0.95em; line-height: 1.6; color: var(--color-text-dark); white-space: pre-wrap; word-break: break-all; }
     </style>
 </head>
 <body>
@@ -17,7 +17,7 @@
     <div class="container">
         <h1 id="filename"></h1>
         <div id="query"><a id="backToList" href="#">← 返回列表</a></div>
-        <div id="loading" style="padding:40px;text-align:center;color:#aaa;">加载中...</div>
+        <div id="loading" style="padding:40px;text-align:center;color:var(--color-text-hint);">加载中...</div>
         <pre id="content" style="display:none;"></pre>
     </div>
     <script>
