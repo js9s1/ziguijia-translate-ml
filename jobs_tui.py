@@ -507,19 +507,24 @@ def get_checkpoint(code: str) -> str:
     return ",".join(steps)
 
 
-def _post_with_csrf(path: str, timeout: float = 5.0) -> tuple[int, dict]:
+def _post_with_csrf(path: str, timeout: float = 5.0, payload: dict | None = None) -> tuple[int, dict]:
     """POST to the local server with a fresh session + CSRF token.
 
     The server uses server-side sessions (flask-session) and requires an
     X-CSRF-Token header on state-changing routes, so we fetch a token with a
-    cookie jar and send the cookie + token on the POST.
+    cookie jar and send the cookie + token on the POST.  *payload* is sent
+    as a JSON body.
     """
     jar = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
     base = f"http://localhost:{RESUBMIT_PORT}"
     with opener.open(base + "/auth/csrf-token", timeout=timeout) as resp:
         token = json.loads(resp.read().decode("utf-8")).get("csrf_token", "")
-    req = urllib.request.Request(base + path, method="POST", headers={"X-CSRF-Token": token})
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    headers = {"X-CSRF-Token": token}
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(base + path, method="POST", headers=headers, data=data)
     with opener.open(req, timeout=timeout) as resp:
         return resp.status, json.loads(resp.read().decode("utf-8"))
 
@@ -527,14 +532,16 @@ def _post_with_csrf(path: str, timeout: float = 5.0) -> tuple[int, dict]:
 def resubmit_job(code: str, keep_steps: list[str] | None = None) -> str:
     """Resubmit a failed/completed job.
 
-    If *keep_steps* is given, the checkpoint column is overwritten with only
-    those steps (all others are invalidated).  Pass an empty list to clear
-    all checkpoints (restart from scratch).
+    If *keep_steps* is given, the chosen checkpoint is passed to the server
+    and applied only when the resubmit succeeds (all other steps are
+    invalidated and their output purged).  The local DB is never touched
+    directly — a rejected resubmit has no side effects (no queue, no
+    daemon pre-warm).
     """
     code = code.upper()
     conn = get_conn()
     job = conn.execute(
-        "SELECT status, checkpoint_edited, output_dir FROM jobs WHERE access_code = ?",
+        "SELECT status, output_dir FROM jobs WHERE access_code = ?",
         (code,),
     ).fetchone()
     if not job:
@@ -548,33 +555,27 @@ def resubmit_job(code: str, keep_steps: list[str] | None = None) -> str:
         conn.close()
         return f"任务 {code} 状态为 {status}，只能重新提交失败、已完成或已取消的任务"
     output_dir = job["output_dir"]
-    if keep_steps is not None:
-        purge_invalidated_output(output_dir, keep_steps)
-    if keep_steps is not None:
-        new_checkpoint = ",".join(s for s in keep_steps if s in VALID_CHECKPOINT_STEPS)
-        conn.execute(
-            "UPDATE jobs SET checkpoint = ?, checkpoint_edited = 1 WHERE access_code = ?",
-            (new_checkpoint, code),
-        )
-    else:
-        conn.execute(
-            "UPDATE jobs SET checkpoint_edited = 1 WHERE access_code = ?",
-            (code,),
-        )
-    conn.commit()
     conn.close()
+
+    payload = None
+    if keep_steps is not None:
+        checkpoint = ",".join(s for s in keep_steps if s in VALID_CHECKPOINT_STEPS)
+        payload = {"checkpoint": checkpoint}
+
     try:
-        status, data = _post_with_csrf(f"/srt/resubmit/{code}")
+        status, data = _post_with_csrf(f"/srt/resubmit/{code}", payload=payload)
         if status == 200 and data.get("success"):
+            if keep_steps is not None:
+                purge_invalidated_output(output_dir, keep_steps)
             return f"✅ 任务 {code} 已重新提交"
         else:
             error_msg = data.get("error", "未知错误")
-            return f"⚠️ 检查点已更新，但服务器拒绝: {error_msg}"
+            return f"⚠️ 服务器拒绝: {error_msg}"
     except urllib.error.HTTPError as e:
         error_data = e.read().decode("utf-8") if e.fp else ""
-        return f"⚠️ 检查点已更新，但服务器返回错误 ({e.code}): {error_data}"
+        return f"⚠️ 服务器返回错误 ({e.code}): {error_data}"
     except Exception as e:
-        return f"⚠️ 检查点已更新，但无法通知服务器: {e}"
+        return f"⚠️ 无法通知服务器: {e}"
 
 
 # ── Output file helpers ───────────────────────────────

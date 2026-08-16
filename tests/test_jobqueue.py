@@ -136,6 +136,45 @@ class TestJobQueueResubmit:
         result = jq.resubmit_job(code)
         assert result["success"] is False
 
+    def test_resubmit_completed_with_checkpoint(self, jq, user_id):
+        code = jq.add_job({}, _run_gen_audio_stub, user_id)
+        conn = jq._get_conn()
+        conn.execute(
+            "UPDATE jobs SET status = ? WHERE access_code = ?",
+            (JobStatus.COMPLETED.value, code),
+        )
+        conn.commit()
+        result = jq.resubmit_job(code, checkpoint="ocr,translate")
+        assert result["success"] is True
+        status = jq.get_status(code)
+        assert status["status"] == JobStatus.PENDING.value
+        assert "ocr" in jq.get_checkpoint(code)
+        assert jq.get_checkpoint_edited(code) is False
+
+    def test_resubmit_completed_with_edit_flag(self, jq, user_id):
+        code = jq.add_job({}, _run_gen_audio_stub, user_id)
+        conn = jq._get_conn()
+        conn.execute(
+            "UPDATE jobs SET status = ?, checkpoint_edited = 1 WHERE access_code = ?",
+            (JobStatus.COMPLETED.value, code),
+        )
+        conn.commit()
+        result = jq.resubmit_job(code)
+        assert result["success"] is True
+        assert jq.get_checkpoint_edited(code) is False
+
+    def test_resubmit_failed_with_checkpoint(self, jq, user_id):
+        code = jq.add_job({}, _run_gen_audio_stub, user_id)
+        conn = jq._get_conn()
+        conn.execute(
+            "UPDATE jobs SET status = ? WHERE access_code = ?",
+            (JobStatus.FAILED.value, code),
+        )
+        conn.commit()
+        result = jq.resubmit_job(code, checkpoint="ocr")
+        assert result["success"] is True
+        assert "ocr" in jq.get_checkpoint(code)
+
     def test_resubmit_nonexistent(self, jq):
         result = jq.resubmit_job("DEADBEEF")
         assert result["success"] is False

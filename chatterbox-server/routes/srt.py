@@ -44,7 +44,11 @@ def srt_status(access_code):
 @csrf_required
 @api_endpoint
 def srt_resubmit(access_code):
-    result = get_job_queue().resubmit_job(access_code)
+    checkpoint = None
+    body = request.get_json(silent=True)
+    if isinstance(body, dict) and isinstance(body.get("checkpoint"), str):
+        checkpoint = body["checkpoint"]
+    result = get_job_queue().resubmit_job(access_code, checkpoint=checkpoint)
     if result["success"]:
         return jsonify(result)
     return jsonify(result), 400

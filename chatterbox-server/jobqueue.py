@@ -483,7 +483,16 @@ class JobQueue:
 
         return {"success": True, "message": "Job cancelled"}
 
-    def resubmit_job(self, access_code: str) -> dict:
+    def resubmit_job(self, access_code: str, checkpoint: str | None = None) -> dict:
+        """Resubmit a failed/cancelled/completed job.
+
+        *checkpoint* is an optional new checkpoint string applied atomically
+        with the resubmit (used by jobs_tui's checkpoint picker).  Passing
+        it counts as a checkpoint edit, so completed jobs may be resubmitted
+        when the caller explicitly provides a restart point.  Nothing is
+        mutated — and no daemon is pre-warmed — unless the resubmit passes
+        validation and the status update commits.
+        """
         conn = self._get_conn()
         row = conn.execute(
             "SELECT status, run_func_name, target_language, ocr_only FROM jobs WHERE access_code = ?",
@@ -496,13 +505,15 @@ class JobQueue:
         if row[0] == JobStatus.DELETED.value:
             return {"success": False, "error": "Job has been deleted"}
 
-        # Allow resubmit for failed, cancelled, or completed jobs (with checkpoint_edited flag)
+        # Allow resubmit for failed, cancelled, or completed jobs.  Completed
+        # jobs additionally require a checkpoint edit: the checkpoint_edited
+        # flag (web editor) or an explicit checkpoint passed with the request
+        # (jobs_tui checkpoint picker).
         if row[0] == JobStatus.COMPLETED.value:
-            # Must have checkpoint_edited flag set
             ckpt_row = conn.execute(
                 "SELECT checkpoint_edited FROM jobs WHERE access_code = ?", (access_code,)
             ).fetchone()
-            if not ckpt_row or not ckpt_row[0]:
+            if checkpoint is None and not (ckpt_row and ckpt_row[0]):
                 return {
                     "success": False,
                     "error": "Job is completed, only failed, cancelled or checkpoint-edited jobs can be resubmitted",
@@ -514,10 +525,18 @@ class JobQueue:
             }
 
         now = _now_str()
-        conn.execute(
-            "UPDATE jobs SET status = ?, error = NULL, status_changed_at = ? WHERE access_code = ?",
-            (JobStatus.PENDING.value, now, access_code),
-        )
+        if checkpoint is not None:
+            conn.execute(
+                "UPDATE jobs SET status = ?, error = NULL, status_changed_at = ?, "
+                "checkpoint = ?, checkpoint_edited = 0 WHERE access_code = ?",
+                (JobStatus.PENDING.value, now, checkpoint, access_code),
+            )
+        else:
+            conn.execute(
+                "UPDATE jobs SET status = ?, error = NULL, status_changed_at = ?, "
+                "checkpoint_edited = 0 WHERE access_code = ?",
+                (JobStatus.PENDING.value, now, access_code),
+            )
         conn.commit()
 
         self._queue.put(access_code)
