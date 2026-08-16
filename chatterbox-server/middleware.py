@@ -330,19 +330,15 @@ def _validate_srt_language(text: str):
                     script_counts[name] = script_counts.get(name, 0) + 1
                     break
 
-    # Only reject if there's substantial mixing (>15% minority script).
-    # Chinese OCR SRTs commonly contain occasional Latin letters
-    # (URLs, abbreviations, brand names) which should not block saving.
-    if len(script_counts) > 1:
-        total = sum(script_counts.values())
-        for name, count in script_counts.items():
-            if total > 0 and count / total < 0.15:
-                continue  # minority script, ignore
-            # All remaining scripts must be compatible
-            if name in ("CJK", "Latin"):
-                continue  # CJK + occasional Latin is expected in OCR
-            # Any other script found above threshold — that's genuinely mixed
-            script_names = [n for n in script_counts if script_counts.get(n, 0) / total > 0.15]
+    # Only reject if there's substantial mixing (each script ≥15% of scripted
+    # text).  A truly bilingual SRT (e.g. Chinese + German translation lines,
+    # job C68639E3) must be rejected — it makes TTS generate 3-4x slow audio
+    # and fails the whole job.  The threshold still tolerates the occasional
+    # Latin letters in Chinese OCR SRTs (URLs, abbreviations, brand names).
+    total = sum(script_counts.values())
+    if total > 0:
+        above_threshold = [name for name, count in script_counts.items() if count / total >= 0.15]
+        if len(above_threshold) > 1:
             script_labels = {
                 "CJK": "中文/日文/韩文",
                 "Latin": "英文/拉丁字母",
@@ -353,11 +349,10 @@ def _validate_srt_language(text: str):
                 "Greek": "希腊文",
                 "Hebrew": "希伯来文",
             }
-            detected = ", ".join(script_labels.get(s, s) for s in script_names)
+            detected = ", ".join(script_labels.get(s, s) for s in above_threshold)
             raise ValueError(
                 f"SRT 文件包含多种语言，检测到: {detected}。请上传单一语言的 SRT 文件。"
             )
-        # Only Latin + CJK found — that's acceptable
 
 
 # ── Video/SRT duration validation ─────────────────────────

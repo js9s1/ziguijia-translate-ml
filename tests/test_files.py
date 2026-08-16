@@ -150,6 +150,51 @@ class TestSRTSave:
         assert resp.status_code in (400, 404)  # path not allowed, or content invalid
 
 
+class TestSRTProcess:
+    """/srt/process must reject multi-language SRTs before a job is queued.
+
+    Regression for job C68639E3: a bilingual Chinese+German SRT passed
+    validation, TTS generated 3-4x slow audio, and the job failed at the
+    duration-inflation guard.
+    """
+
+    def _post_srt(self, client, csrf_headers, content):
+        import io
+
+        data = {
+            "temperature": "0.7",
+            "target_language": "en",
+            "cfg_weight": "0.5",
+            "exaggeration": "0.5",
+        }
+        return client.post(
+            "/srt/process",
+            data={**data, "srt_file": (io.BytesIO(content.encode("utf-8")), "test.srt")},
+            headers=csrf_headers,
+            content_type="multipart/form-data",
+        )
+
+    def test_bilingual_srt_rejected(self, auth_client, csrf_headers):
+        client, _ = auth_client
+        bilingual = (
+            "1\n00:00:01,000 --> 00:00:03,000\n你就是如来\nDu bist der Tathagata\n\n"
+            "2\n00:00:03,000 --> 00:00:05,000\n记住这一点\nMerk dir das\n"
+        )
+        resp = self._post_srt(client, csrf_headers, bilingual)
+        assert resp.status_code == 400
+        assert "多种语言" in resp.get_json()["error"]
+
+    def test_single_language_accepted(self, auth_client, csrf_headers):
+        client, _ = auth_client
+        zh = (
+            "1\n00:00:01,000 --> 00:00:03,000\n你就是如来\n\n"
+            "2\n00:00:03,000 --> 00:00:05,000\n这就是释迦牟尼证到的最高境界\n"
+        )
+        resp = self._post_srt(client, csrf_headers, zh)
+        assert resp.status_code == 302
+        assert "/result?code=" in resp.headers["Location"]
+
+
 class TestSRTResubmit:
     def test_unauthorized(self, client):
         resp = client.post(

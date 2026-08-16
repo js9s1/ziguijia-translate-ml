@@ -11,6 +11,7 @@ from middleware import (
     parse_float_param,
     parse_job_params,
     safe_file_path,
+    validate_srt_content,
     validate_video_srt_duration,
 )
 
@@ -115,6 +116,42 @@ def _write_srt(path, end_seconds):
     minutes, secs = divmod(rem, 60)
     stamp = f"{hours:02d}:{minutes:02d}:{secs:02d},{int(end.microseconds / 1000):03d}"
     path.write_text(f"1\n00:00:00,000 --> {stamp}\nhello\n", encoding="utf-8")
+
+
+class TestValidateSrtLanguage:
+    def _srt(self, lines):
+        return "1\n00:00:01,000 --> 00:00:03,000\n" + lines + "\n"
+
+    def _multi_srt(self, cues):
+        parts = []
+        for i, (content, start) in enumerate(cues, 1):
+            parts.append(f"{i}\n{start} --> 00:00:05,000\n{content}\n")
+        return "\n".join(parts)
+
+    def test_single_language_passes(self):
+        validate_srt_content(self._srt("这是一段中文字幕"), "SRT")
+        validate_srt_content(self._srt("Dies ist ein deutscher Untertitel"), "SRT")
+
+    def test_occasional_latin_in_cjk_passes(self):
+        text = self._multi_srt(
+            [
+                ("释迦牟尼证到最高境界就是众生本来都是佛", "00:00:01,000"),
+                ("这世界真的是没有任何一个人知道这一点", "00:00:03,000"),
+                ("你一直以为你是个众生", "00:00:05,000"),
+                ("一直认为你流浪在其他道", "00:00:07,000"),
+                ("比如 www.a.com OK 就是这样", "00:00:09,000"),
+                ("所以未来的日子你不断地了解佛是什么", "00:00:11,000"),
+            ]
+        )
+        validate_srt_content(text, "SRT")
+
+    def test_bilingual_cjk_latin_rejected(self):
+        with pytest.raises(ValueError, match="多种语言"):
+            validate_srt_content(self._srt("你就是如来\nDu bist der Tathagata"), "SRT")
+
+    def test_bilingual_other_scripts_rejected(self):
+        with pytest.raises(ValueError, match="多种语言"):
+            validate_srt_content(self._srt("你好 мир"), "SRT")
 
 
 class TestValidateVideoSrtDuration:
