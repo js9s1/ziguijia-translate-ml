@@ -36,7 +36,7 @@ encoding.
 | `gunicorn` | Web UI + job queue | `start_server.sh` / `stop_server.sh` |
 | `valkey-server` | Shared job queue + pub/sub | started/stopped by the scripts |
 | TTS daemon (`gen_audio_daemon.py`) | Chatterbox voice-clone TTS | detached; auto-started by `gen_audio.py` clients or prewarmed on job enqueue; auto-exits when the GPU is hot while idle (`GEN_AUDIO_IDLE_TEMPERATURE`) |
-| translate daemon (`translate_daemon.py`) | HY-MT machine translation | same pattern as TTS daemon |
+| translate daemon (`translate_daemon.py`) | HY-MT machine translation | detached; auto-started by `translate_srt.py` clients or prewarmed on job enqueue; auto-exits when the GPU is hot while idle (`TRANSLATE_IDLE_TEMPERATURE`) |
 | OCR daemon (`rapid_videocr_daemon.py`) | RapidOCR (burned-in zh subtitles) | started/stopped by the scripts; also shared with the batch pipeline |
 | `jobs_tui.py` | Terminal job monitor | manual |
 

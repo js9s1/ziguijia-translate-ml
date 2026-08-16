@@ -11,16 +11,17 @@ A global thermal gate pauses all workers while the GPU is above
 TRANSLATE_TEMP_LIMIT and resumes them once it cools to
 TRANSLATE_COOLDOWN_TARGET.
 
-While idle (no jobs running), the daemon releases the GPU once the card
+While idle (no jobs running), the daemon shuts down once the card
 reaches TRANSLATE_IDLE_TEMPERATURE (default 76°C): an idle resident model
 still keeps the box warm (ROCm's HSA exception-monitor thread busy-polls
-once any GPU work has happened).  This only applies after a model has
-been loaded — a fresh daemon holds no GPU state.  A prewarm grace
-(TRANSLATE_IDLE_GRACE_SECS, default 600 s) starts when the model is
-prewarmed (ensure_model) and shields the release so an enqueued job has
-time to start; above TRANSLATE_IDLE_CRITICAL_TEMP (default 98°C) the
-grace is ignored and the GPU is released immediately.  Clients restart
-the daemon on demand (translate_srt.py auto mode does this).
+once any GPU work has happened) and exiting the process is the only way
+to stop it.  This only applies after a model has been loaded — a fresh
+daemon holds no GPU state.  A prewarm grace (TRANSLATE_IDLE_GRACE_SECS,
+default 600 s) starts when the model is prewarmed (ensure_model) and
+shields the shutdown so an enqueued job has time to start; above
+TRANSLATE_IDLE_CRITICAL_TEMP (default 98°C) the grace is ignored and
+the daemon shuts down immediately.  Clients restart the daemon on
+demand (translate_srt.py auto mode does this).
 
 Runtime files: socket + pid live in $XDG_RUNTIME_DIR/translate_daemon/
 (tmpfs, 0700, auto-cleaned on reboot).
@@ -47,7 +48,6 @@ Protocol (newline-delimited JSON per request, connection-per-request):
 SIGTERM or SIGINT stops the daemon cleanly after in-flight jobs finish.
 """
 import contextlib
-import gc
 import json
 import os
 import signal
@@ -103,6 +103,11 @@ _QUIT = False
 _ACTIVE = 0
 _ACTIVE_LOCK = threading.Lock()
 _MODEL_LOADED = threading.Event()  # set once any worker has loaded the model
+
+
+def _request_quit():
+    global _QUIT
+    _QUIT = True
 
 _WORKER_TL = threading.local()  # one HY-MT model per worker thread
 TTS_POOL = None  # ThreadPoolExecutor, max_workers == MAX_JOBS
@@ -181,7 +186,7 @@ def _monitor():
     global _QUIT
     while not _QUIT:
         if GATE.poll(lambda: _ACTIVE, _MODEL_LOADED.is_set):
-            _QUIT = True
+            _request_quit()
             return
 
 
@@ -243,6 +248,9 @@ def _submit_ensure_model(conn, req):
     """Load the HY-MT model on a worker thread (slot-protected)."""
 
     def run_job():
+        global _ACTIVE
+        with _ACTIVE_LOCK:
+            _ACTIVE += 1
         try:
             model, _ = _thread_model()
             GATE.arm_grace()
@@ -253,6 +261,8 @@ def _submit_ensure_model(conn, req):
         except Exception as e:  # noqa: BLE001
             _send_response(conn, {"ok": False, "error": f"{type(e).__name__}: {e}"})
         finally:
+            with _ACTIVE_LOCK:
+                _ACTIVE -= 1
             JOB_SLOTS.release()
 
     try:
@@ -271,6 +281,7 @@ def _submit_translate(conn, req):
         try:
             with _ACTIVE_LOCK:
                 _ACTIVE += 1
+            GATE.disarm_grace()  # prewarm is consumed — idle-hot shutdown may fire once idle again
             input_path = Path(str(req["input_path"])).resolve()
             output_path = Path(str(req["output_path"])).resolve()
             lang = str(req.get("language", "English"))
@@ -365,8 +376,7 @@ def _handle(conn, device_name):
 
 
 def _set_quit(_signum, _frame):
-    global _QUIT
-    _QUIT = True
+    _request_quit()
 
 
 def main():

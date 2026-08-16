@@ -1,7 +1,7 @@
 """Shared GPU thermal logic — used by gen_audio.py (client) and the warm daemons.
 
 ``get_gpu_temp`` reads the GPU temperature; ``ThermalGate`` implements the
-thermal gate + idle-temperature release shared by translate_daemon.py and
+thermal gate + idle-temperature shutdown shared by translate_daemon.py and
 gen_audio_daemon.py.
 """
 
@@ -44,24 +44,25 @@ def get_cpu_temp() -> float | None:
 
 
 class ThermalGate:
-    """Shared thermal gate + idle release for the warm daemons.
+    """Shared thermal gate + idle shutdown for the warm daemons.
 
     The daemon's monitor thread calls ``poll()`` in a loop; each call
     sleeps ``poll_secs`` and reads the GPU temperature:
 
     * at or above ``temp_limit`` the ``blocked`` event is set (workers
       pause); at or below ``cooldown_target`` it is cleared (resume).
-    * returns True when the daemon should release the GPU and shut down:
-      no active jobs (``active() == 0``), a model loaded
-      (``model_loaded()``), and the GPU or CPU at or above
-      ``idle_temperature`` for ``idle_hot_polls`` consecutive polls — or
-      at or above ``idle_critical_temp``, which bypasses the prewarm
-      grace armed with ``arm_grace()``.
+    * returns True when the daemon should shut down: no active jobs
+      (``active() == 0``), a model loaded (``model_loaded()``), and the
+      GPU or CPU at or above ``idle_temperature`` for ``idle_hot_polls``
+      consecutive polls — or at or above ``idle_critical_temp``, which
+      bypasses the prewarm grace armed with ``arm_grace()``.  Exiting
+      the process frees the GPU and stops ROCm's HSA exception-monitor
+      busy-poll; clients restart the daemon on demand.
 
     The CPU sensor is included because an idle resident model keeps the
     box warm mainly through ROCm's HSA busy-poll (CPU load): on APUs the
     GPU edge sensor can read well below ``idle_temperature`` while the
-    CPU package is still hot, so the release would never fire.
+    CPU package is still hot, so the shutdown would never fire.
     """
 
     def __init__(
@@ -90,8 +91,13 @@ class ThermalGate:
         """Start the prewarm grace — call after a successful ensure_model."""
         self._prewarm_until = time.monotonic() + self.idle_grace_secs
 
+    def disarm_grace(self) -> None:
+        """End the prewarm grace — call once a job starts using the model,
+        so the idle-hot shutdown can fire right after the job finishes."""
+        self._prewarm_until = 0.0
+
     def poll(self, active, model_loaded) -> bool:
-        """One monitoring cycle.  Returns True when the GPU should be released."""
+        """One monitoring cycle.  Returns True when the daemon should shut down."""
         temp = get_gpu_temp()
         cpu_temp = get_cpu_temp()
         hot = temp
@@ -118,7 +124,7 @@ class ThermalGate:
                             parts.append(f"CPU {cpu_temp:.0f}°C")
                         print(
                             f"[daemon] idle and {'/'.join(parts) or '?'} ≥ {self.idle_temperature:.0f}°C "
-                            f"— releasing GPU, shutting down"
+                            f"— shutting down"
                         )
                         return True
                 else:
