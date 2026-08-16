@@ -10,46 +10,46 @@
             display: grid;
             grid-template-columns: repeat(5, 1fr);
             gap: 1px;
-            background: #222;
-            border: 1px solid #333;
+            background: var(--color-border);
+            border: 1px solid var(--color-border);
             border-radius: 4px;
             overflow: hidden;
         }
         .srt-cell {
             padding: 6px 8px;
-            background: #1a1a2e;
+            background: var(--color-bg-white);
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
         }
         .srt-cell a {
-            color: #ccc;
+            color: var(--color-text-dark);
             text-decoration: none;
             font-family: monospace;
             font-size: 0.95em;
         }
-        .srt-cell:hover { background: #2a2a4a; }
-        .srt-cell:hover a { color: #fff; }
-        #searchBox:focus { border-color: #2196F3; }
-        #pageInfo { color: #888; font-size: 0.98em; }
+        .srt-cell:hover { background: var(--color-bg); }
+        .srt-cell:hover a { color: var(--color-secondary); }
+        #searchBox:focus { border-color: var(--color-secondary); }
+        #pageInfo { color: var(--color-text-hint); font-size: 0.98em; }
         .pager-btn {
             display: inline-block;
             padding: 4px 10px;
             margin: 0 2px;
-            color: #2196F3;
+            color: var(--color-secondary);
             text-decoration: none;
-            border: 1px solid #333;
+            border: 1px solid var(--color-border);
             border-radius: 3px;
             font-size: 0.98em;
-            background: #1a1a2e;
+            background: var(--color-bg-white);
             cursor: pointer;
         }
-        .pager-btn:hover { background: #2a2a4a; }
+        .pager-btn:hover { background: var(--color-bg); }
         .pager-btn.active { background: #2196F3; color: #fff; border-color: #2196F3; }
-        .pager-btn.disabled { color: #555; cursor: default; pointer-events: none; }
+        .pager-btn.disabled { color: var(--color-text-hint); cursor: default; pointer-events: none; }
         .srt-lang-dropdown:hover .srt-lang-menu { display: block !important; }
-        .srt-lang-menu .srt-item { display:block;padding:6px 12px;color:#ccc;text-decoration:none;font-size:0.98em;white-space:nowrap; }
-        .srt-lang-menu .srt-item:hover { background:#333;color:#fff; }
+        .srt-lang-menu .srt-item { display:block;padding:6px 12px;color:var(--color-text-dark);text-decoration:none;font-size:0.98em;white-space:nowrap; }
+        .srt-lang-menu .srt-item:hover { background:var(--color-bg);color:var(--color-secondary); }
     </style>
 </head>
 <body>
@@ -58,7 +58,7 @@
             <a href="/" class="back-link">&larr; 返回首页</a>
             <div class="srt-lang-dropdown" style="position:relative;">
                 <a href="#" class="srt-lang-toggle" style="color:#2196F3;text-decoration:none;font-size:0.98em;cursor:pointer;">{{ flag }} {{ lang }} ▾</a>
-                <div class="srt-lang-menu" style="display:none;position:absolute;top:100%;left:0;background:#1e1e2e;border:1px solid #444;border-radius:4px;min-width:90px;z-index:1000;box-shadow:0 2px 8px rgba(0,0,0,0.4);">
+                <div class="srt-lang-menu" style="display:none;position:absolute;top:100%;left:0;background:var(--color-bg-white);border:1px solid var(--color-border);border-radius:4px;min-width:90px;z-index:1000;box-shadow:var(--shadow-card);">
 {% for opt in lang_options %}
                     <a href="{{ opt.url }}" class="srt-item">{{ opt.flag }} {{ opt.label }}</a>
 {% endfor %}
@@ -70,10 +70,10 @@
     <div class="container">
         <h1>{{ title }}</h1>
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
-            <div id="pageInfo" style="color:#888;font-size:0.85em;"></div>
+            <div id="pageInfo" style="color:var(--color-text-hint);font-size:0.85em;"></div>
             <div style="display:flex;align-items:stretch;gap:0;flex-shrink:0;">
-                <input type="text" id="searchBox" placeholder="输入编号过滤..." style="width:200px;height:32px;padding:0 10px;border:1px solid #555;border-right:none;border-radius:4px 0 0 4px;background:#1a1a2e;color:#ccc;font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;">
-                <button id="downloadBtn" style="height:32px;padding:0 12px;border:1px solid #555;border-left:none;border-radius:0 4px 4px 0;background:#2196F3;color:#fff;cursor:pointer;font-size:13px;font-family:inherit;box-sizing:border-box;white-space:nowrap;">下载全部</button>
+                <input type="text" id="searchBox" placeholder="输入编号过滤..." style="width:200px;height:32px;padding:0 10px;border:1px solid var(--color-border);border-right:none;border-radius:4px 0 0 4px;background:var(--color-bg-white);color:var(--color-text-dark);font-size:13px;font-family:inherit;outline:none;box-sizing:border-box;">
+                <button id="downloadBtn" style="height:32px;padding:0 12px;border:1px solid var(--color-border);border-left:none;border-radius:0 4px 4px 0;background:#2196F3;color:#fff;cursor:pointer;font-size:13px;font-family:inherit;box-sizing:border-box;white-space:nowrap;">下载全部</button>
             </div>
         </div>
         <div id="srtGrid"></div>
