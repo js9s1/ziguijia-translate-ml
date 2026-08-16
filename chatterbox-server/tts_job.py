@@ -18,16 +18,13 @@ def _run_tts_job(job_data: dict):
     access_code = job_data["access_code"]
     os.makedirs(output_dir, exist_ok=True)
 
-    srt_path = os.path.join(output_dir, "input.srt")
-    with open(srt_path, "w") as f:
-        f.write(f"1\n00:00:00,000 --> 00:01:00,000\n{text}\n\n")
-
     gen_audio_script = os.path.join(PROJECT_ROOT, "gen_audio", "gen_audio.py")
     assets_dir = os.path.join(PROJECT_ROOT, "..", "assets")
 
     job_log(access_code, output_dir, "--- gen_audio (TTS) ---")
     cmd = [
-        GEN_AUDIO_PYTHON, "-u", gen_audio_script, srt_path,
+        GEN_AUDIO_PYTHON, "-u", gen_audio_script,
+        "--text", text,
         "--audio_prompt", AUDIO_PROMPT_PATH,
         "--temperature", str(ap["temperature"]),
         "--output_dir", output_dir,
@@ -36,8 +33,6 @@ def _run_tts_job(job_data: dict):
         "--cfg_weight", str(ap["cfg_weight"]),
         "--exaggeration", str(ap["exaggeration"]),
         "--output_wav", filename,
-        "--output_srt", "output_adjusted.srt",
-        "--changed_json", "changed_segments.json",
     ]
 
     log_path = os.path.join(output_dir, "job.log")

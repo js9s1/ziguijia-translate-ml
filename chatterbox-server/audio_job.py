@@ -1,7 +1,6 @@
 """Audio-from-SRT and audio-segmentation jobs."""
 
 import os
-import re
 import uuid
 
 from config import AUDIO_TRACKS_DIR
@@ -100,16 +99,12 @@ def _run_audio_segmentation_job(job_data: dict):
 
     from config import AUDIO_PROMPT_PATH, GEN_AUDIO_PYTHON, PROJECT_ROOT
 
-    text = re.sub(r"<\d+(?:\.\d+)?>\s*", " ", content).strip()
-    srt_path = os.path.join(output_dir, "input.srt")
-    with open(srt_path, "w") as f:
-        f.write(f"1\n00:00:00,000 --> 00:01:00,000\n{text}\n\n")
-
     gen_audio_script = os.path.join(PROJECT_ROOT, "gen_audio", "gen_audio.py")
     assets_dir = os.path.join(PROJECT_ROOT, "..", "assets")
 
     cmd = [
-        GEN_AUDIO_PYTHON, "-u", gen_audio_script, srt_path,
+        GEN_AUDIO_PYTHON, "-u", gen_audio_script,
+        "--text", content,
         "--audio_prompt", AUDIO_PROMPT_PATH,
         "--temperature", str(ap["temperature"]),
         "--output_dir", output_dir,
@@ -118,8 +113,6 @@ def _run_audio_segmentation_job(job_data: dict):
         "--cfg_weight", str(ap["cfg_weight"]),
         "--exaggeration", str(ap["exaggeration"]),
         "--output_wav", filename,
-        "--output_srt", "output_adjusted.srt",
-        "--changed_json", "changed_segments.json",
     ]
 
     log_path = os.path.join(output_dir, "job.log")

@@ -963,9 +963,97 @@ def process_with_direct(
     return combined_tensor, adjusted_subs, changed_segments, sample_rate, total_duration
 
 
+def process_text(
+    text,
+    audio_prompt,
+    temperature,
+    output_dir,
+    assets_dir=CFG_ASSETS_DIR,
+    target_language="en",
+    cfg_weight=0.5,
+    exaggeration=0.5,
+    backend=None,
+):
+    """Generate audio from plain text — no SRT input, no SRT output.
+
+    Returns (wav_tensor[1, n], sample_rate, total_duration), or None on
+    total failure of every chunk.  Inline ``<seconds>`` silence markers
+    are honoured the same way as in SRT mode.
+    """
+    sample_rate = backend.ensure_model(target_language)
+
+    os.makedirs(os.path.join(output_dir, "tmp"), exist_ok=True)
+    chunks = split_text(text, 120)
+    prompt = get_speaker_prompt(None, audio_prompt, assets_dir)
+    print(f"Text mode: {len(chunks)} chunk(s)")
+
+    chunk_wavs = []
+    total_duration = 0.0
+    for ci, chunk in enumerate(chunks):
+        if not _thermal_check():
+            print("  → Stopped by signal")
+            raise SystemExit(1)
+
+        wav_path = os.path.join(output_dir, "tmp", f"text_chunk_{ci}.wav")
+        has_speech = any(p.strip() for p in _SILENCE_MARKER_RE.split(chunk))
+        wav_data = None
+        wav_duration = 0.0
+        for attempt in range(3):
+            try:
+                wav_data, wav_duration = _generate_chunk_with_markers(
+                    backend,
+                    chunk,
+                    wav_path,
+                    temperature + attempt * 0.02,
+                    prompt_file=prompt,
+                    target_language=target_language,
+                    cfg_weight=cfg_weight,
+                    exaggeration=exaggeration,
+                    sample_rate=sample_rate,
+                )
+            except _DaemonUnavailable:
+                raise
+            except (RuntimeError, SystemExit) as e:
+                print(f"  ⚠ chunk {ci} TTS failed: {e}")
+                wav_data = None
+                break
+            if not has_speech or not _is_silent_audio(wav_data):
+                break
+            print(
+                f"  ⚠ chunk {ci} produced silent audio "
+                f"(attempt {attempt + 1}/3) — retrying"
+            )
+            wav_data = None
+
+        if wav_data is None:
+            # All attempts failed — skip this chunk instead of failing the job.
+            print(f"     Skipping chunk {ci} (TTS failed)")
+            continue
+        if wav_data.dim() == 1:
+            wav_data = wav_data.unsqueeze(0)
+        chunk_wavs.append(wav_data)
+        total_duration += wav_duration
+
+    if not chunk_wavs:
+        print("ERROR: no audio generated for text")
+        return None
+
+    wav = torch.cat(chunk_wavs, dim=1) if len(chunk_wavs) > 1 else chunk_wavs[0]
+    return wav, sample_rate, total_duration
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate audio from SRT segments and output adjusted SRT")
-    parser.add_argument("srt", help="Input SRT file")
+    parser.add_argument(
+        "srt",
+        nargs="?",
+        help="Input SRT file (omit when using --text)",
+    )
+    parser.add_argument(
+        "--text",
+        default=None,
+        help="Plain text to synthesize directly to WAV (no SRT input/output)",
+    )
     parser.add_argument(
         "--audio_prompt",
         default=CFG_AUDIO_PROMPT_PATH,
@@ -1027,6 +1115,29 @@ def main():
         backend = client
     else:
         print(f"ERROR: gen_audio daemon not reachable at {GEN_AUDIO_DAEMON_SOCK}", file=sys.stderr)
+        return 1
+
+    if args.text is not None:
+        result = process_text(
+            args.text,
+            args.audio_prompt,
+            args.temperature,
+            args.output_dir,
+            args.assets_dir,
+            target_language=args.target_language,
+            cfg_weight=args.cfg_weight,
+            exaggeration=args.exaggeration,
+            backend=backend,
+        )
+        if result is None:
+            return 1
+        wav_tensor, sample_rate, total_duration = result
+        save_audio(os.path.join(args.output_dir, args.output_wav), wav_tensor, sample_rate)
+        print(f"Combined WAV: {args.output_wav} (duration: {total_duration:.2f}s)")
+        return 0
+
+    if not args.srt:
+        print("ERROR: either an SRT file or --text must be provided", file=sys.stderr)
         return 1
 
     result = process_with_direct(
