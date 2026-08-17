@@ -111,6 +111,10 @@ redoing work.
   and retries the chunk instead of failing the whole job.
 - **Model-load coordination** — daemon serializes model loads against in-flight
   generations (concurrent load+generate produced permanently NaN audio on ROCm).
+- **Overrun protection** — on short/loosely-CFG'd text the model sometimes misses
+  its stop token and keeps talking past the text (up to the ~60 s token cap); the
+  daemon detects audio far longer than the text implies and retries with stronger
+  CFG anchoring (+ temperature bump), keeping the attempt closest to expected.
 - **Timeouts** (env-configurable, see `.env.example`):
   - `GEN_AUDIO_STALL_TIMEOUT` — no new log output while alive → kill (default 900 s).
   - `GEN_AUDIO_SEGMENT_BUDGET` × segment count (floor `GEN_AUDIO_MIN_TOTAL_TIMEOUT`)

@@ -303,6 +303,64 @@ def _generate_with_retry(model, text, target_language, temperature, cfg_weight, 
     raise RuntimeError(f"model produced non-finite audio {attempts} times")
 
 
+# ── Overrun protection ───────────────────────────────────────
+# The T3 model sometimes fails to emit the stop token on short text —
+# especially with low cfg_weight — and keeps "talking" past the text
+# (up to the 1000-token cap, ~60 s of audio).  Retrying with stronger
+# CFG anchoring and a small temperature bump usually lands the EOS.
+_SPEECH_RATE = {
+    "en": 13.0, "de": 12.0, "fr": 12.0, "es": 12.0, "pt": 12.0, "it": 12.0,
+    "id": 12.0, "ru": 12.0, "nl": 12.0, "tr": 12.0, "uk": 12.0, "vi": 11.0,
+    "zh": 5.0, "ja": 6.0, "ko": 7.0,
+}
+
+
+def _expected_duration(text: str, lang: str) -> float:
+    """Rough expected speaking time for *text* in *lang* (chars/sec + 1 s padding)."""
+    rate = _SPEECH_RATE.get(str(lang).lower(), 10.0)
+    return len(text) / rate + 1.0
+
+
+def _is_overrun(duration: float, expected: float) -> bool:
+    return duration > max(4.0, expected * 2.2)
+
+
+def _generate_anchored(model, text, lang, temperature, cfg_weight, exaggeration):
+    """Generate with overrun protection (multilingual model).
+
+    If an attempt runs far longer than the text implies, retry with
+    stronger CFG anchoring (0.6, then 0.8) and +0.05 °C temperature per
+    attempt, then return the attempt closest to the expected duration.
+    """
+    expected = _expected_duration(text, lang)
+    attempts = []
+    for attempt in range(3):
+        wav = _generate_with_retry(
+            model,
+            text,
+            lang,
+            temperature + attempt * 0.05,
+            cfg_weight if attempt == 0 else max(cfg_weight, 0.5 + attempt * 0.15),
+            exaggeration,
+        )
+        dur = float(wav.shape[1] / model.sr)
+        attempts.append((abs(dur - expected), wav, dur))
+        if not _is_overrun(dur, expected):
+            return wav
+        print(
+            f"[daemon] tts overrun: {dur:.1f}s for {text[:40]!r} "
+            f"(expected ~{expected:.1f}s) — retrying with stronger CFG"
+        )
+    attempts.sort(key=lambda t: t[0])
+    best = attempts[0]
+    print(
+        f"[daemon] tts overrun: all attempts ran long "
+        f"({[f'{d:.1f}s' for _, _, d in attempts]} for {text[:40]!r}, "
+        f"expected ~{expected:.1f}s) — using closest"
+    )
+    return best[1]
+
+
 # ── Thermal gate ────────────────────────────────────────────
 
 
@@ -425,7 +483,7 @@ def _submit_tts(conn, req):
                 if prompt_file:
                     with _GenerationGuard():
                         model.prepare_conditionals(prompt_file)
-                wav = _generate_with_retry(model, text, lang, temperature, cfg_weight, exaggeration)
+                wav = _generate_anchored(model, text, lang, temperature, cfg_weight, exaggeration)
 
             sr = int(model.sr)
             import soundfile as sf
