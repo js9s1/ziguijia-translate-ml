@@ -1,7 +1,7 @@
 """Background model pre-warming for the warm daemons, keyed by job type.
 
-When a job is queued, only the daemon(s) that job will actually use are
-pre-warmed:
+When the queue worker picks a job up (not at enqueue), only the
+daemon(s) that job will actually use are pre-warmed:
 
 - TTS (gen_audio) daemon      → audio jobs (gen_audio / tts / segmentation)
                                  and video pipelines with an audio step.
@@ -11,11 +11,11 @@ pre-warmed:
 
 Jobs that need neither (OCR-only, SRT-only) pre-warm nothing.
 
-For video pipelines the audio step runs long after enqueue (download →
-OCR/whisper → translate), so the enqueue prewarm's grace would expire
-before audio starts.  Those handlers therefore call prewarm_tts_async()
-when the step *before* audio begins (the translate step, or download for
-SRT-driven audio jobs) so the TTS model load overlaps it.
+Pre-warming at pickup instead of enqueue means a queued job no longer
+holds the GPU warm while it waits behind other jobs; the model load
+overlaps the job's early steps (download/OCR/translate) instead, and
+the gen_audio daemon's post-job idle grace keeps the model resident
+for back-to-back jobs.
 
 Everything here is best-effort and runs in a detached daemon thread:
 failures never affect the job queue — the per-job subprocesses
@@ -135,25 +135,6 @@ def prewarm_tts(language: str):
         logger.warning("prewarm: TTS ensure_model unreachable: %s", e)
 
 
-def prewarm_tts_async(language: str):
-    """Detached, serialized TTS prewarm — call when the step *before* audio
-    starts (e.g. the translate step, or download for SRT-driven audio jobs)
-    so the model load overlaps it instead of blocking the audio step.
-
-    Best-effort: failures never affect the job — gen_audio.py clients
-    start the daemon on demand themselves.
-    """
-
-    def _worker():
-        with _PREWARM_LOCK:
-            try:
-                prewarm_tts(language)
-            except Exception:
-                logger.exception("prewarm tts (async) failed")
-
-    threading.Thread(target=_worker, daemon=True, name="daemon-prewarm-tts").start()
-
-
 def prewarm_translate():
     """Start the translate daemon if needed and load the HY-MT model."""
     from config import (
@@ -222,7 +203,7 @@ def _run_prewarm(run_func_name: str, job_data: dict):
 
 
 def prewarm_for_job(run_func_name: str, job_data: dict):
-    """Non-blocking pre-warm of the daemon(s) a queued job will use."""
+    """Non-blocking pre-warm of the daemon(s) a job about to run will use."""
     if run_func_name not in _TTS_JOB_TYPES and run_func_name not in _TRANSLATE_JOB_TYPES:
         return
 

@@ -56,12 +56,6 @@ def _run_video_job(job_data: dict):
         valid_steps = ["download", "audio", "video"]
         ckpt = CheckpointHelper(access_code, output_dir, valid_steps)
 
-        # Audio runs right after download — prewarm the TTS daemon now so
-        # the model load overlaps the download instead of blocking audio.
-        from daemon_prewarm import prewarm_tts_async
-
-        prewarm_tts_async(ap["target_language"])
-
         video_path = run_download_ckpt(video_number, output_dir, access_code, ckpt, proc_log, job_data)
         validate_video_srt_duration(video_path, srt_path)
         audio_out = run_audio_ckpt(
@@ -286,7 +280,6 @@ def _run_video_ning_auto_job(job_data: dict):
             output_dir, access_code, ckpt, proc_log, log_file,
             ap["target_language"],
             intro_marker=MARKER_INTRO, outro_marker=MARKER_OUTRO,
-            prewarm_audio=True,
         )
         audio_out = run_audio_ckpt(
             translated_srt, output_dir, ap["temperature"], access_code,

@@ -55,7 +55,7 @@ class ThermalGate:
       (``active() == 0``), a model loaded (``model_loaded()``), and the
       GPU or CPU at or above ``idle_temperature`` for ``idle_hot_polls``
       consecutive polls — or at or above ``idle_critical_temp``, which
-      bypasses the prewarm grace armed with ``arm_grace()``.  Exiting
+      bypasses the idle grace armed with ``arm_grace()``.  Exiting
       the process frees the GPU and stops ROCm's HSA exception-monitor
       busy-poll; clients restart the daemon on demand.
 
@@ -84,16 +84,18 @@ class ThermalGate:
         self.idle_grace_secs = idle_grace_secs
         self.idle_hot_polls = idle_hot_polls
         self.blocked = threading.Event()
-        self._prewarm_until = 0.0  # monotonic deadline — idle release suppressed until then
+        self._prewarm_until = 0.0  # monotonic deadline — idle-hot shutdown suppressed until then
         self._hot_polls = 0
 
     def arm_grace(self) -> None:
-        """Start the prewarm grace — call after a successful ensure_model."""
+        """Start the idle grace — call after a successful ensure_model and
+        again whenever a job finishes, so back-to-back jobs can reuse the
+        warm model before the idle-hot shutdown fires."""
         self._prewarm_until = time.monotonic() + self.idle_grace_secs
 
     def disarm_grace(self) -> None:
-        """End the prewarm grace — call once a job starts using the model,
-        so the idle-hot shutdown can fire right after the job finishes."""
+        """End the idle grace — call once a job starts using the model, so
+        the idle-hot shutdown can fire once the post-job grace expires."""
         self._prewarm_until = 0.0
 
     def poll(self, active, model_loaded) -> bool:

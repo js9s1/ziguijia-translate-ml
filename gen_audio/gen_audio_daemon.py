@@ -18,9 +18,10 @@ reaches GEN_AUDIO_IDLE_TEMPERATURE (default 76°C): an idle resident model
 still keeps the box warm (ROCm's HSA exception-monitor thread busy-polls
 once any GPU work has happened) and exiting the process is the only way
 to stop it.  This only applies after a model has been loaded — a fresh
-daemon holds no GPU state.  A prewarm grace (GEN_AUDIO_IDLE_GRACE_SECS,
-default 600 s) starts when the model is prewarmed (ensure_model) and
-shields the shutdown so an enqueued job has time to start; above
+daemon holds no GPU state.  An idle grace (GEN_AUDIO_IDLE_GRACE_SECS,
+default 100 s) shields the shutdown after the model is prewarmed
+(ensure_model) and again after every job finishes, so back-to-back jobs
+reuse the warm model instead of forcing a kill + reload; above
 GEN_AUDIO_IDLE_CRITICAL_TEMP (default 98°C) the grace is ignored and
 the daemon shuts down immediately.  Clients restart the daemon on
 demand (gen_audio.py auto mode does this).
@@ -88,7 +89,7 @@ GATE = ThermalGate(
     poll_secs=float(os.environ.get("GEN_AUDIO_POLL_SECS", "10")),
     idle_temperature=float(os.environ.get("GEN_AUDIO_IDLE_TEMPERATURE", "76")),
     idle_critical_temp=float(os.environ.get("GEN_AUDIO_IDLE_CRITICAL_TEMP", "98")),
-    idle_grace_secs=float(os.environ.get("GEN_AUDIO_IDLE_GRACE_SECS", "600")),
+    idle_grace_secs=float(os.environ.get("GEN_AUDIO_IDLE_GRACE_SECS", "100")),
 )
 _THERMAL_BLOCKED = GATE.blocked  # workers wait on this while the gate is closed
 
@@ -399,7 +400,7 @@ def _submit_tts(conn, req):
         try:
             with _ACTIVE_LOCK:
                 _ACTIVE += 1
-            GATE.disarm_grace()  # prewarm is consumed — idle-hot shutdown may fire once idle again
+            GATE.disarm_grace()  # a job is using the model — grace re-arms when it finishes
             print(f"[daemon] tts: run_job started (thread={threading.get_ident()})")
             text = str(req.get("text", ""))
             lang = str(req.get("language", "en"))
@@ -438,6 +439,7 @@ def _submit_tts(conn, req):
         finally:
             with _ACTIVE_LOCK:
                 _ACTIVE -= 1
+            GATE.arm_grace()  # idle again — back-to-back jobs may reuse this model before idle-hot shutdown
             JOB_SLOTS.release()
 
     try:

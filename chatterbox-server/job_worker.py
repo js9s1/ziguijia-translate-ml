@@ -214,6 +214,15 @@ def _run_job(jq, access_code: str):
 
     publish_job_status(access_code, JobStatus.PROCESSING.value)
 
+    # Pre-warm only the daemon(s) this job type will use (TTS for audio
+    # jobs, HY-MT for jobs with a translate step).  Runs at pickup, not at
+    # enqueue: the model load overlaps the job's early steps instead of
+    # holding the GPU warm while the job waits behind others in the queue.
+    # Best-effort, detached thread — never blocks or fails the job.
+    from daemon_prewarm import prewarm_for_job
+
+    prewarm_for_job(run_func_name, job)
+
     job.pop("run_func_name", None)
     job.pop("created_at", None)
 
