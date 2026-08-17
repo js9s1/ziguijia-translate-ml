@@ -80,13 +80,16 @@ def _start_daemon(sock_path: str, python: str, script: str, log_name: str) -> bo
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     try:
         with open(log_path, "a") as logf:
-            subprocess.Popen(
+            proc = subprocess.Popen(
                 [python, "-u", script],
                 stdout=logf,
                 stderr=logf,
                 start_new_session=True,
                 stdin=subprocess.DEVNULL,
             )
+            threading.Thread(
+                target=proc.wait, daemon=True, name=f"daemon-reap-{log_name}"
+            ).start()
     except Exception:
         logger.exception("prewarm: failed to start %s", log_name)
         return False
