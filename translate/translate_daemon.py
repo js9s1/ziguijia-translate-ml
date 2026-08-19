@@ -20,8 +20,12 @@ daemon holds no GPU state.  A prewarm grace (TRANSLATE_IDLE_GRACE_SECS,
 default 600 s) starts when the model is prewarmed (ensure_model) and
 shields the shutdown so an enqueued job has time to start; above
 TRANSLATE_IDLE_CRITICAL_TEMP (default 98°C) the grace is ignored and
-the daemon shuts down immediately.  Clients restart the daemon on
-demand (translate_srt.py auto mode does this).
+the daemon shuts down immediately.  Independently of temperature, an
+idle timeout (TRANSLATE_IDLE_TIMEOUT_SECS, default 300 s) starts when a
+translate job finishes — if the daemon is still idle when it expires it
+exits anyway, so a cool-but-unused daemon does not hold the GPU forever
+(set to 0 to disable).  Clients restart the daemon on demand
+(translate_srt.py auto mode does this).
 
 Runtime files: socket + pid live in $XDG_RUNTIME_DIR/translate_daemon/
 (tmpfs, 0700, auto-cleaned on reboot).
@@ -96,6 +100,7 @@ GATE = ThermalGate(
     idle_temperature=float(os.environ.get("TRANSLATE_IDLE_TEMPERATURE", "76")),
     idle_critical_temp=float(os.environ.get("TRANSLATE_IDLE_CRITICAL_TEMP", "98")),
     idle_grace_secs=float(os.environ.get("TRANSLATE_IDLE_GRACE_SECS", "600")),
+    idle_timeout_secs=float(os.environ.get("TRANSLATE_IDLE_TIMEOUT_SECS", "300")),
 )
 _THERMAL_BLOCKED = GATE.blocked  # workers wait on this while the gate is closed
 
@@ -282,6 +287,7 @@ def _submit_translate(conn, req):
             with _ACTIVE_LOCK:
                 _ACTIVE += 1
             GATE.disarm_grace()  # prewarm is consumed — idle-hot shutdown may fire once idle again
+            GATE.disarm_idle_timeout()  # a job is here — idle countdown re-arms when it finishes
             input_path = Path(str(req["input_path"])).resolve()
             output_path = Path(str(req["output_path"])).resolve()
             lang = str(req.get("language", "English"))
@@ -307,6 +313,7 @@ def _submit_translate(conn, req):
         except Exception as e:  # noqa: BLE001 - report any failure to the client
             _send_response(conn, {"ok": False, "error": f"{type(e).__name__}: {e}"})
         finally:
+            GATE.arm_idle_timeout()  # idle again — exit after the idle countdown even while cool
             with _ACTIVE_LOCK:
                 _ACTIVE -= 1
             JOB_SLOTS.release()
@@ -435,7 +442,8 @@ def main():
         f"[daemon] translate daemon ready on {DAEMON_SOCK} "
         f"(device: {device_name}, max concurrent jobs: {MAX_JOBS}, "
         f"temp limit: {GATE.temp_limit:.0f}°C, idle temp: {GATE.idle_temperature:.0f}°C, "
-        f"idle grace: {GATE.idle_grace_secs:.0f}s, critical: {GATE.idle_critical_temp:.0f}°C)"
+        f"idle grace: {GATE.idle_grace_secs:.0f}s, critical: {GATE.idle_critical_temp:.0f}°C, "
+        f"idle timeout: {GATE.idle_timeout_secs:.0f}s)"
     )
     log_system_temp("startup")
 

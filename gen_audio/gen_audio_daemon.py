@@ -23,8 +23,12 @@ default 100 s) shields the shutdown after the model is prewarmed
 (ensure_model) and again after every job finishes, so back-to-back jobs
 reuse the warm model instead of forcing a kill + reload; above
 GEN_AUDIO_IDLE_CRITICAL_TEMP (default 98°C) the grace is ignored and
-the daemon shuts down immediately.  Clients restart the daemon on
-demand (gen_audio.py auto mode does this).
+the daemon shuts down immediately.  Independently of temperature, an
+idle timeout (GEN_AUDIO_IDLE_TIMEOUT_SECS, default 300 s) starts when a
+job finishes — if the daemon is still idle when it expires it exits
+anyway, so a cool-but-unused daemon does not hold the GPU forever (set
+to 0 to disable).  Clients restart the daemon on demand (gen_audio.py
+auto mode does this).
 
 Runtime files: socket + pid live in $XDG_RUNTIME_DIR/gen_audio_daemon/
 (tmpfs, 0700, auto-cleaned on reboot).
@@ -90,6 +94,7 @@ GATE = ThermalGate(
     idle_temperature=float(os.environ.get("GEN_AUDIO_IDLE_TEMPERATURE", "76")),
     idle_critical_temp=float(os.environ.get("GEN_AUDIO_IDLE_CRITICAL_TEMP", "98")),
     idle_grace_secs=float(os.environ.get("GEN_AUDIO_IDLE_GRACE_SECS", "100")),
+    idle_timeout_secs=float(os.environ.get("GEN_AUDIO_IDLE_TIMEOUT_SECS", "300")),
 )
 _THERMAL_BLOCKED = GATE.blocked  # workers wait on this while the gate is closed
 
@@ -459,6 +464,7 @@ def _submit_tts(conn, req):
             with _ACTIVE_LOCK:
                 _ACTIVE += 1
             GATE.disarm_grace()  # a job is using the model — grace re-arms when it finishes
+            GATE.disarm_idle_timeout()  # a job is here — idle countdown re-arms when it finishes
             print(f"[daemon] tts: run_job started (thread={threading.get_ident()})")
             text = str(req.get("text", ""))
             lang = str(req.get("language", "en"))
@@ -498,6 +504,7 @@ def _submit_tts(conn, req):
             with _ACTIVE_LOCK:
                 _ACTIVE -= 1
             GATE.arm_grace()  # idle again — back-to-back jobs may reuse this model before idle-hot shutdown
+            GATE.arm_idle_timeout()  # idle again — exit after the idle countdown even while cool
             JOB_SLOTS.release()
 
     try:
@@ -662,7 +669,8 @@ def main():
         f"[daemon] TTS daemon ready on {DAEMON_SOCK} "
         f"(device: {device_name}, max concurrent jobs: {MAX_JOBS}, "
         f"temp limit: {GATE.temp_limit:.0f}°C, idle temp: {GATE.idle_temperature:.0f}°C, "
-        f"idle grace: {GATE.idle_grace_secs:.0f}s, critical: {GATE.idle_critical_temp:.0f}°C)"
+        f"idle grace: {GATE.idle_grace_secs:.0f}s, critical: {GATE.idle_critical_temp:.0f}°C, "
+        f"idle timeout: {GATE.idle_timeout_secs:.0f}s)"
     )
     log_system_temp("startup")
 

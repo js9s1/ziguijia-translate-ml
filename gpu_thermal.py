@@ -75,6 +75,13 @@ class ThermalGate:
     box warm mainly through ROCm's HSA busy-poll (CPU load): on APUs the
     GPU edge sensor can read well below ``idle_temperature`` while the
     CPU package is still hot, so the shutdown would never fire.
+
+    Besides the thermal shutdown, an idle timeout can be armed with
+    ``arm_idle_timeout()`` (call when a job finishes) — once the daemon
+    has been idle with a loaded model for ``idle_timeout_secs`` it shuts
+    down regardless of temperature, so a cool-but-forgotten daemon does
+    not hold the GPU forever.  ``disarm_idle_timeout()`` (call when a
+    job starts) cancels it.  Set ``idle_timeout_secs`` to 0 to disable.
     """
 
     def __init__(
@@ -86,6 +93,7 @@ class ThermalGate:
         idle_temperature: float,
         idle_critical_temp: float,
         idle_grace_secs: float,
+        idle_timeout_secs: float = 300.0,
         idle_hot_polls: int = 2,
     ):
         self.temp_limit = temp_limit
@@ -94,10 +102,12 @@ class ThermalGate:
         self.idle_temperature = idle_temperature
         self.idle_critical_temp = idle_critical_temp
         self.idle_grace_secs = idle_grace_secs
+        self.idle_timeout_secs = idle_timeout_secs
         self.idle_hot_polls = idle_hot_polls
         self.blocked = threading.Event()
         self._prewarm_until = 0.0  # monotonic deadline — idle-hot shutdown suppressed until then
         self._hot_polls = 0
+        self._idle_kill_at = float("inf")  # monotonic deadline for the idle-timeout shutdown
 
     def arm_grace(self) -> None:
         """Start the idle grace — call after a successful ensure_model and
@@ -109,6 +119,15 @@ class ThermalGate:
         """End the idle grace — call once a job starts using the model, so
         the idle-hot shutdown can fire once the post-job grace expires."""
         self._prewarm_until = 0.0
+
+    def arm_idle_timeout(self) -> None:
+        """Start the idle countdown — call when a job finishes, so a daemon
+        that stays idle (even while cool) exits after ``idle_timeout_secs``."""
+        self._idle_kill_at = time.monotonic() + self.idle_timeout_secs
+
+    def disarm_idle_timeout(self) -> None:
+        """Cancel the idle countdown — call once a job starts."""
+        self._idle_kill_at = float("inf")
 
     def poll(self, active, model_loaded) -> bool:
         """One monitoring cycle.  Returns True when the daemon should shut down."""
@@ -143,5 +162,13 @@ class ThermalGate:
                         return True
                 else:
                     self._hot_polls = 0
+        if (
+            self.idle_timeout_secs > 0
+            and active() == 0
+            and model_loaded()
+            and time.monotonic() >= self._idle_kill_at
+        ):
+            print(f"[daemon] idle for ≥ {self.idle_timeout_secs:.0f}s — shutting down")
+            return True
         time.sleep(self.poll_secs)
         return False
