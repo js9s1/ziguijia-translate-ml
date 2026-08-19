@@ -60,6 +60,7 @@ from rapid_videocr.export import OutputFormat  # noqa: E402
 from rapid_videocr.main import RapidVideOCR, RapidVideOCRInput  # noqa: E402
 
 from rapid_videocr_rocm import build_ocr_params  # noqa: E402
+from gpu_thermal import log_system_temp  # noqa: E402
 
 def _runtime_dir():
     """Per-user tmpfs dir (0700) for the socket + pid. Auto-cleaned on boot."""
@@ -284,6 +285,7 @@ def main():
         f"[daemon] ROCm OCR daemon ready on {DAEMON_SOCK} "
         f"(device: {device_name}, max concurrent jobs: {MAX_JOBS})"
     )
+    log_system_temp("startup")
 
     while not _QUIT:
         try:
@@ -309,6 +311,7 @@ def main():
         DAEMON_SOCK.unlink()
     except OSError:
         pass
+    log_system_temp("shutdown")
     print("[daemon] stopped")
     return 0
 

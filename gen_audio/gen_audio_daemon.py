@@ -73,7 +73,7 @@ sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE.parent / "chatterbox-server"))
 
 from config import AUDIO_PROMPT_PATH, GEN_AUDIO_DAEMON_PID, GEN_AUDIO_DAEMON_SOCK  # noqa: E402
-from gpu_thermal import ThermalGate  # noqa: E402
+from gpu_thermal import ThermalGate, log_system_temp  # noqa: E402
 
 DAEMON_SOCK = Path(GEN_AUDIO_DAEMON_SOCK).resolve()
 DAEMON_PID = Path(GEN_AUDIO_DAEMON_PID).resolve()
@@ -664,6 +664,7 @@ def main():
         f"temp limit: {GATE.temp_limit:.0f}°C, idle temp: {GATE.idle_temperature:.0f}°C, "
         f"idle grace: {GATE.idle_grace_secs:.0f}s, critical: {GATE.idle_critical_temp:.0f}°C)"
     )
+    log_system_temp("startup")
 
     while not _QUIT:
         try:
@@ -693,6 +694,7 @@ def main():
         DAEMON_PID.unlink()
     except OSError:
         pass
+    log_system_temp("shutdown")
     print("[daemon] stopped")
     return 0
 

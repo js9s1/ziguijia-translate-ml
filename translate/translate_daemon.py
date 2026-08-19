@@ -75,7 +75,7 @@ from rocm_env import setup as _rocm_setup  # noqa: E402
 _rocm_setup()  # before transformers/torch load ROCm libs
 
 from config import TRANSLATE_DAEMON_PID, TRANSLATE_DAEMON_SOCK  # noqa: E402
-from gpu_thermal import ThermalGate  # noqa: E402
+from gpu_thermal import ThermalGate, log_system_temp  # noqa: E402
 
 # Import at module level (main thread) — translate_srt registers signal
 # handlers and imports hy_mt/transformers at import time.
@@ -437,6 +437,7 @@ def main():
         f"temp limit: {GATE.temp_limit:.0f}°C, idle temp: {GATE.idle_temperature:.0f}°C, "
         f"idle grace: {GATE.idle_grace_secs:.0f}s, critical: {GATE.idle_critical_temp:.0f}°C)"
     )
+    log_system_temp("startup")
 
     while not _QUIT:
         try:
@@ -466,6 +467,7 @@ def main():
         DAEMON_PID.unlink()
     except OSError:
         pass
+    log_system_temp("shutdown")
     print("[daemon] stopped")
     return 0
 

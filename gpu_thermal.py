@@ -43,6 +43,18 @@ def get_cpu_temp() -> float | None:
     return None
 
 
+def log_system_temp(tag: str) -> None:
+    """Log the current GPU/CPU temperature with *tag* (e.g. 'startup', 'shutdown')."""
+    parts = []
+    gpu = get_gpu_temp()
+    cpu = get_cpu_temp()
+    if gpu is not None:
+        parts.append(f"GPU {gpu:.0f}°C")
+    if cpu is not None:
+        parts.append(f"CPU {cpu:.0f}°C")
+    print(f"[daemon] {tag} — system temp: {'/'.join(parts) or 'unknown'}")
+
+
 class ThermalGate:
     """Shared thermal gate + idle shutdown for the warm daemons.
 
