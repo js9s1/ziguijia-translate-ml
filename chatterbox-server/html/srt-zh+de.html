@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ title }}</title>
+    <title>字幕列表 - 🇨🇳🇩🇪 zh+de</title>
     <link rel="stylesheet" href="/ning.css">
     <style>
         .srt-grid {
@@ -57,18 +57,34 @@
         <div style="display:flex;align-items:center;gap:12px;">
             <a href="/" class="back-link">&larr; 返回首页</a>
             <div class="srt-lang-dropdown" style="position:relative;">
-                <a href="#" class="srt-lang-toggle" style="color:#2196F3;text-decoration:none;font-size:0.98em;cursor:pointer;">{{ flag }} {{ lang }} ▾</a>
+                <a href="#" class="srt-lang-toggle" style="color:#2196F3;text-decoration:none;font-size:0.98em;cursor:pointer;">🇨🇳🇩🇪 zh+de ▾</a>
                 <div class="srt-lang-menu" style="display:none;position:absolute;top:100%;left:0;background:var(--color-bg-white);border:1px solid var(--color-border);border-radius:4px;min-width:90px;z-index:1000;box-shadow:var(--shadow-card);">
-{% for opt in lang_options %}
-                    <a href="{{ opt.url }}" class="srt-item">{{ opt.flag }} {{ opt.label }}</a>
-{% endfor %}
+
+                    <a href="/srt-zh.html" class="srt-item">🇨🇳 zh</a>
+
+                    <a href="/srt-en.html" class="srt-item">🇬🇧 en</a>
+
+                    <a href="/srt-zh+en.html" class="srt-item">🇨🇳🇬🇧 zh+en</a>
+
+                    <a href="/srt-zh+de.html" class="srt-item">🇨🇳🇩🇪 zh+de</a>
+
+                    <a href="/srt-zh+es.html" class="srt-item">🇨🇳🇪🇸 zh+es</a>
+
+                    <a href="/srt-zh+fr.html" class="srt-item">🇨🇳🇫🇷 zh+fr</a>
+
+                    <a href="/srt-zh+it.html" class="srt-item">🇨🇳🇮🇹 zh+it</a>
+
+                    <a href="/srt-zh+ja.html" class="srt-item">🇨🇳🇯🇵 zh+ja</a>
+
+                    <a href="/srt-zh+ko.html" class="srt-item">🇨🇳🇰🇷 zh+ko</a>
+
                 </div>
             </div>
         </div>
         <div id="userArea" style="font-size:0.9em;"></div>
     </div>
     <div class="container">
-        <h1>{{ title }}</h1>
+        <h1>字幕列表 - 🇨🇳🇩🇪 zh+de</h1>
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
             <div id="pageInfo" style="color:var(--color-text-hint);font-size:0.85em;"></div>
             <div style="display:flex;align-items:stretch;gap:0;flex-shrink:0;">
@@ -83,12 +99,12 @@
     (async function() {
         var DATA = [];
         var PER_PAGE = 150;
-        var listUrl = '{{ list_url or "" }}';
+        var listUrl = '/srt-zh+de.html';
         var filtered = DATA;
         var page = 1;
 
         try {
-            var resp = await fetch('/srt-{{ lang }}.json.gz');
+            var resp = await fetch('/srt-zh+de.json.gz');
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             DATA = await resp.json();
             filtered = DATA;
@@ -155,7 +171,7 @@
             if (!files.length) return;
             this.disabled = true;
             this.textContent = '压缩中...';
-            downloadFile('{{ download_url|default("/api/oldrun-srt/download") }}', 'srts.zip', {
+            downloadFile('/api/oldrun-srt/download', 'srts.zip', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({files: files})

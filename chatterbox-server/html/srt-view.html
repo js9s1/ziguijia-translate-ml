@@ -25,11 +25,13 @@
         var params = new URLSearchParams(window.location.search);
         var path = params.get('path');
         var fname = path ? path.split('/').pop() : 'Unknown';
-        var listUrl = '/srt-zh.html';
-        if (fname.toLowerCase().endsWith('.zh+en.srt')) {
-            listUrl = '/srt-zh+en.html';
-        } else if (fname.toLowerCase().endsWith('.en.srt')) {
-            listUrl = '/srt-en.html';
+        var listUrl = params.get('list') || '/srt-zh.html';
+        if (!params.get('list')) {
+            if (fname.toLowerCase().endsWith('.zh+en.srt')) {
+                listUrl = '/srt-zh+en.html';
+            } else if (fname.toLowerCase().endsWith('.en.srt')) {
+                listUrl = '/srt-en.html';
+            }
         }
         document.getElementById('filename').textContent = fname;
         document.getElementById('backToList').href = listUrl;

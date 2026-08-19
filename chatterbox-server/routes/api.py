@@ -63,13 +63,13 @@ def api_job_status(access_code):
 def api_oldrun_srt():
     lang = request.args.get("lang", "zh")
     try:
-        from oldrun import _collect_incremental
+        from oldrun import _collect_incremental, _collect_official_trans, _merge_unique
 
         zh, en, zh_en, _changed = _collect_incremental()
         if lang == "en":
             files = en
         elif lang == "zh+en":
-            files = zh_en
+            files = _merge_unique(zh_en, _collect_official_trans().get("en", []))
         else:
             files = zh
         return jsonify({"files": files})
