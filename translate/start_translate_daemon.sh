@@ -12,10 +12,12 @@
 # (it also exits once the GPU is hot while idle — TRANSLATE_IDLE_TEMPERATURE).
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/../rocm_env.sh"
+DAEMON_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$DAEMON_DIR/../rocm_env.sh"
 export TRANSLATE_MAX_JOBS="${TRANSLATE_MAX_JOBS:-2}"
+# Slot 0 runs on the NPU (npu-engine.service), remaining slots on the GPU.
+export TRANSLATE_NPU_SLOT="${TRANSLATE_NPU_SLOT:-1}"
 
 TRANSLATE_PYTHON="${TRANSLATE_PYTHON:-$HOME/.pyenv/versions/3.11.14/bin/python3.11}"
 
-exec "$TRANSLATE_PYTHON" -u "$SCRIPT_DIR/translate_daemon.py" "$@"
+exec "$TRANSLATE_PYTHON" -u "$DAEMON_DIR/translate_daemon.py" "$@"
