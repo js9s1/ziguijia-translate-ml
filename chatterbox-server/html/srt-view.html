@@ -7,6 +7,77 @@
     <link rel="stylesheet" href="/ning.css">
     <style>
         pre { background: var(--color-bg-white); padding: 16px; border: 1px solid var(--color-border); border-radius: 4px; overflow-x: auto; font-size: 0.95em; line-height: 1.6; color: var(--color-text-dark); white-space: pre-wrap; word-break: break-all; }
+        #query { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+        #query .query-actions { display: flex; align-items: center; gap: 8px; }
+        #query .query-actions button {
+            padding: 6px 14px;
+            font-size: 0.9em;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            color: #fff;
+            line-height: 1.5;
+        }
+        #query .query-actions #downloadBtn { background: var(--color-primary); }
+        #query .query-actions #downloadBtn:hover { background: var(--color-primary-hover); }
+        #query .query-actions #correctBtn { background: var(--color-secondary); }
+        #query .query-actions #correctBtn:hover { background: var(--color-secondary-hover); }
+        #query .query-actions #correctBtn:disabled { opacity: 0.6; cursor: not-allowed; }
+        #correctOverlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.55);
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
+        }
+        #correctOverlay.active { display: flex; }
+        #correctOverlay .correct-box {
+            background: var(--color-bg-white);
+            border-radius: 8px;
+            padding: 24px;
+            width: 480px;
+            max-width: 92%;
+            box-shadow: var(--shadow-card-hover);
+        }
+        #correctOverlay h3 { margin-top: 0; color: var(--color-text-dark); }
+        #correctOverlay p { font-size: 0.92em; color: var(--color-text-medium); line-height: 1.6; }
+        #correctOverlay .form-row input[type="file"] { padding: 6px 0; }
+        #correctOverlay .correct-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+        #correctOverlay .correct-actions button {
+            padding: 8px 18px;
+            font-size: 0.92em;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            color: #fff;
+        }
+        #correctOverlay .correct-actions #correctSubmit { background: var(--color-secondary); }
+        #correctOverlay .correct-actions #correctSubmit:hover { background: var(--color-secondary-hover); }
+        #correctOverlay .correct-actions #correctSubmit:disabled { opacity: 0.6; cursor: not-allowed; }
+        #correctOverlay .correct-actions #correctDownload { background: var(--color-primary); }
+        #correctOverlay .correct-actions #correctDownload:hover { background: var(--color-primary-hover); }
+        #correctOverlay .correct-actions #correctSave { background: var(--color-secondary); }
+        #correctOverlay .correct-actions #correctSave:hover { background: var(--color-secondary-hover); }
+        #correctOverlay .correct-actions #correctCancel { background: #999; }
+        #correctOverlay .correct-actions #correctCancel:hover { background: #777; }
+        #correctOverlay .correct-actions button:disabled { opacity: 0.6; cursor: not-allowed; }
+        #correctStatus { font-size: 0.88em; margin-top: 10px; }
+        #correctPreview {
+            max-height: 320px;
+            overflow: auto;
+            background: var(--color-bg);
+            border: 1px solid var(--color-border);
+            border-radius: 4px;
+            padding: 10px;
+            font-size: 0.85em;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-all;
+            margin-top: 8px;
+            color: var(--color-text-dark);
+        }
     </style>
 </head>
 <body>
@@ -16,9 +87,44 @@
     </div>
     <div class="container">
         <h1 id="filename"></h1>
-        <div id="query"><a id="backToList" href="#">← 返回列表</a></div>
+        <div id="query">
+            <a id="backToList" href="#">← 返回列表</a>
+            <div class="query-actions">
+                <button id="downloadBtn" type="button">下载</button>
+                <button id="correctBtn" type="button">校准</button>
+            </div>
+        </div>
         <div id="loading" style="padding:40px;text-align:center;color:var(--color-text-hint);">加载中...</div>
         <pre id="content" style="display:none;"></pre>
+    </div>
+
+    <div id="correctOverlay">
+        <div class="correct-box">
+            <h3>校准 SRT</h3>
+            <div id="correctUploadStep">
+                <p>上传一个标准 SRT 或文本文件。系统将按每条字幕的中文内容建立对应关系，生成新的 SRT：时间轴沿用当前字幕，内容使用上传文件中的文字；当前字幕中在上传文件中找不到的片段将被清空（静音）。</p>
+                <div class="form-row">
+                    <label for="correctFile">选择标准文件</label>
+                    <input type="file" id="correctFile" name="correctFile" accept=".srt,.txt,.doc,.docx">
+                </div>
+                <div id="correctStatus" style="color:var(--color-text-hint);"></div>
+                <div class="correct-actions">
+                    <button id="correctSubmit" type="button">开始校准</button>
+                    <button id="correctCancel" type="button">取消</button>
+                </div>
+            </div>
+            <div id="correctResultStep" style="display:none;">
+                <p>校准完成，请预览生成的字幕。</p>
+                <p id="correctStats" style="font-size:0.9em;"></p>
+                <pre id="correctPreview"></pre>
+                <div id="correctStatus" style="color:var(--color-text-hint);"></div>
+                <div class="correct-actions">
+                    <button id="correctDownload" type="button">下载</button>
+                    <button id="correctSave" type="button">保存</button>
+                    <button id="correctCancel2" type="button">关闭</button>
+                </div>
+            </div>
+        </div>
     </div>
     <script>
     (function() {
@@ -35,16 +141,238 @@
         }
         document.getElementById('filename').textContent = fname;
         document.getElementById('backToList').href = listUrl;
-        fetch('/files/read?path=' + encodeURIComponent(path))
-            .then(function(r) { return r.text(); })
-            .then(function(text) {
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('content').style.display = 'block';
-                document.getElementById('content').textContent = text;
-            })
-            .catch(function() {
-                document.getElementById('loading').textContent = '加载失败';
+
+        function currentUrl() {
+            return window.location.pathname + window.location.search;
+        }
+
+        function gotoLogin() {
+            window.location.href = '/auth/login?next=' + encodeURIComponent(currentUrl());
+        }
+
+        function requireLogin() {
+            return fetch('/auth/me')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.authenticated) return true;
+                    alert('请先登录');
+                    gotoLogin();
+                    return false;
+                })
+                .catch(function() {
+                    alert('请先登录');
+                    gotoLogin();
+                    return false;
+                });
+        }
+
+        function loadFile(p) {
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('loading').textContent = '加载中...';
+            document.getElementById('content').style.display = 'none';
+            fetch('/files/read?path=' + encodeURIComponent(p))
+                .then(function(r) {
+                    if (r.status === 401) { alert('请先登录'); gotoLogin(); return null; }
+                    return r.text();
+                })
+                .then(function(text) {
+                    if (text === null) return;
+                    document.getElementById('loading').style.display = 'none';
+                    document.getElementById('content').style.display = 'block';
+                    document.getElementById('content').textContent = text;
+                })
+                .catch(function() {
+                    document.getElementById('loading').textContent = '加载失败';
+                });
+        }
+
+        requireLogin().then(function(ok) {
+            if (!ok) return;
+            loadFile(path);
+        });
+
+        document.getElementById('downloadBtn').addEventListener('click', function() {
+            requireLogin().then(function(ok) {
+                if (!ok) return;
+                downloadFile('/files/download?path=' + encodeURIComponent(path), fname);
             });
+        });
+
+        var overlay = document.getElementById('correctOverlay');
+        var uploadStep = document.getElementById('correctUploadStep');
+        var resultStep = document.getElementById('correctResultStep');
+        var correctedContent = '';
+        var correctedName = '';
+
+        function parseJsonResponse(response) {
+            var ct = response.headers.get('Content-Type') || '';
+            if (ct.indexOf('application/json') === -1) {
+                return response.text().then(function(text) {
+                    var trimmed = text.trim();
+                    if (trimmed && trimmed[0] === '{') {
+                        try { return { ok: response.ok, data: JSON.parse(trimmed) }; } catch (e) {}
+                    }
+                    return { ok: false, data: { error: '服务器返回异常，请重新登录后重试' } };
+                });
+            }
+            return response.json().then(function(data) {
+                return { ok: response.ok, data: data };
+            });
+        }
+
+        function closeCorrect() {
+            overlay.classList.remove('active');
+            uploadStep.style.display = 'block';
+            resultStep.style.display = 'none';
+        }
+
+        function showCorrectResult(filename, content, matched, total, unmatched) {
+            correctedName = filename;
+            correctedContent = content;
+            document.getElementById('correctPreview').textContent = content;
+            var statsEl = document.getElementById('correctStats');
+            if (typeof matched === 'number' && typeof total === 'number') {
+                if (matched === 0) {
+                    statsEl.textContent = '警告：按中文内容未匹配到任何片段，请检查上传的标准文件是否包含与当前字幕相同的中文内容。';
+                    statsEl.style.color = '#f44336';
+                } else {
+                    statsEl.textContent = '已匹配 ' + matched + ' / ' + total + ' 条字幕（其余片段已静音）。';
+                    statsEl.style.color = '#4CAF50';
+                    if (unmatched && unmatched.length) {
+                        statsEl.textContent += '\n未匹配的标准片段：' + unmatched.length + ' 条';
+                        var details = unmatched.map(function(u) {
+                            return '标准: ' + u.content + ' ｜ 最接近(相似度 ' + u.best_sim + '): ' + (u.best_displayed || '无');
+                        }).join('\n');
+                        statsEl.textContent += '\n' + details;
+                    }
+                }
+            } else {
+                statsEl.textContent = '';
+            }
+            uploadStep.style.display = 'none';
+            resultStep.style.display = 'block';
+        }
+
+        document.getElementById('correctBtn').addEventListener('click', function() {
+            requireLogin().then(function(ok) {
+                if (!ok) return;
+                document.getElementById('correctFile').value = '';
+                uploadStep.style.display = 'block';
+                resultStep.style.display = 'none';
+                var s = document.getElementById('correctUploadStep').querySelector('#correctStatus');
+                s.textContent = '';
+                var rs = document.getElementById('correctResultStep').querySelector('#correctStatus');
+                rs.textContent = '';
+                overlay.classList.add('active');
+            });
+        });
+        document.getElementById('correctCancel').addEventListener('click', closeCorrect);
+        document.getElementById('correctCancel2').addEventListener('click', closeCorrect);
+        overlay.addEventListener('click', function(e) {
+            if (e.target === overlay) closeCorrect();
+        });
+        document.getElementById('correctSubmit').addEventListener('click', function() {
+            var fileInput = document.getElementById('correctFile');
+            var status = document.getElementById('correctUploadStep').querySelector('#correctStatus');
+            if (!fileInput.files || !fileInput.files.length) {
+                status.textContent = '请先选择标准文件';
+                status.style.color = '#f44336';
+                return;
+            }
+            var btn = this;
+            btn.disabled = true;
+            status.textContent = '正在校准...';
+            status.style.color = 'var(--color-text-hint)';
+
+            var formData = new FormData();
+            formData.append('path', path);
+            formData.append('standard_file', fileInput.files[0]);
+
+            fetchWithCsrf('/files/correct-srt', {
+                method: 'POST',
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                body: formData
+            })
+            .then(parseJsonResponse)
+            .then(function(res) {
+                btn.disabled = false;
+                if (!res.ok) {
+                    if (res.data.error && res.data.error === '请先登录') {
+                        status.textContent = '请先登录';
+                        status.style.color = '#f44336';
+                        alert('请先登录');
+                        gotoLogin();
+                        return;
+                    }
+                    status.textContent = res.data.error || '校准失败';
+                    status.style.color = '#f44336';
+                    return;
+                }
+                showCorrectResult(res.data.filename, res.data.content, res.data.matched, res.data.total, res.data.unmatched);
+            })
+            .catch(function(err) {
+                btn.disabled = false;
+                status.textContent = '错误: ' + err.message;
+                status.style.color = '#f44336';
+            });
+        });
+
+        document.getElementById('correctDownload').addEventListener('click', function() {
+            var blob = new Blob([correctedContent], { type: 'text/plain;charset=utf-8' });
+            var a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = correctedName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(function() { URL.revokeObjectURL(a.href); }, 100);
+        });
+
+        document.getElementById('correctSave').addEventListener('click', function() {
+            var btn = this;
+            var status = document.getElementById('correctResultStep').querySelector('#correctStatus');
+            btn.disabled = true;
+            status.textContent = '正在保存...';
+            status.style.color = 'var(--color-text-hint)';
+
+            fetchWithCsrf('/files/save-corrected-srt', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                body: JSON.stringify({ path: path, content: correctedContent })
+            })
+            .then(parseJsonResponse)
+            .then(function(res) {
+                btn.disabled = false;
+                if (!res.ok) {
+                    if (res.data.error && res.data.error === '请先登录') {
+                        status.textContent = '请先登录';
+                        status.style.color = '#f44336';
+                        alert('请先登录');
+                        gotoLogin();
+                        return;
+                    }
+                    status.textContent = res.data.error || '保存失败';
+                    status.style.color = '#f44336';
+                    return;
+                }
+                // Switch the displayed SRT to the corrected file.
+                path = res.data.path;
+                fname = res.data.filename;
+                document.getElementById('filename').textContent = fname;
+                if (window.history && window.history.replaceState) {
+                    var newParams = new URLSearchParams(window.location.search);
+                    newParams.set('path', path);
+                    window.history.replaceState(null, '', window.location.pathname + '?' + newParams.toString());
+                }
+                closeCorrect();
+                loadFile(path);
+            })
+            .catch(function(err) {
+                btn.disabled = false;
+                status.textContent = '错误: ' + err.message;
+                status.style.color = '#f44336';
+            });
+        });
     })();
     </script>
     <script src="/utils.js"></script>
