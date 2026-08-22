@@ -1033,6 +1033,10 @@ def process_text(
             wav_data = wav_data.unsqueeze(0)
         chunk_wavs.append(wav_data)
         total_duration += wav_duration
+        print(
+            f"  chunk {ci + 1}/{len(chunks)} done "
+            f"({wav_duration:.1f}s, total {total_duration:.1f}s)"
+        )
 
     if not chunk_wavs:
         print("ERROR: no audio generated for text")

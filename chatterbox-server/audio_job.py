@@ -96,8 +96,16 @@ def _run_audio_segmentation_job(job_data: dict):
     job_log(access_code, output_dir, f"Starting audio segmentation: {len(content)} chars, language={ap['target_language']}")
 
     import subprocess as _sp
+    import time
 
-    from config import AUDIO_PROMPT_PATH, GEN_AUDIO_PYTHON, PROJECT_ROOT
+    from config import (
+        AUDIO_PROMPT_PATH,
+        GEN_AUDIO_MIN_TOTAL_TIMEOUT,
+        GEN_AUDIO_PYTHON,
+        GEN_AUDIO_SEGMENT_BUDGET,
+        GEN_AUDIO_STALL_TIMEOUT,
+        PROJECT_ROOT,
+    )
 
     gen_audio_script = os.path.join(PROJECT_ROOT, "gen_audio", "gen_audio.py")
     assets_dir = os.path.join(PROJECT_ROOT, "..", "assets")
@@ -115,15 +123,63 @@ def _run_audio_segmentation_job(job_data: dict):
         "--output_wav", filename,
     ]
 
+    # Size-based total timeout, scaled to the number of 120-char chunks
+    # gen_audio.py will split the text into (mirrors run_gen_audio_step).
+    n_chunks = max(1, -(-len(content) // 120))
+    total_timeout = max(GEN_AUDIO_MIN_TOTAL_TIMEOUT, GEN_AUDIO_SEGMENT_BUDGET * n_chunks)
+
+    def _stop(process: _sp.Popen, reason: str) -> RuntimeError:
+        process.terminate()
+        try:
+            process.wait(timeout=90)
+        except _sp.TimeoutExpired:
+            process.kill()
+            try:
+                process.wait(timeout=10)
+            except _sp.TimeoutExpired:
+                pass
+        return RuntimeError(reason)
+
     log_path = os.path.join(output_dir, "job.log")
     with open(log_path, "a") as proc_log:
         proc_log.write(f"+ {' '.join(cmd)}\n")
         proc_log.flush()
+        proc_pos = proc_log.tell()
 
-    with open(log_path, "a") as proc_log:
-        result = _sp.run(cmd, stdout=proc_log, stderr=_sp.STDOUT, check=False)
-    if result.returncode != 0:
-        raise RuntimeError(f"gen_audio exited with code {result.returncode}")
+        process = _sp.Popen(cmd, stdout=proc_log, stderr=_sp.STDOUT, text=True)
+
+        start = time.monotonic()
+        last_size = proc_pos
+        last_growth = start
+        while True:
+            try:
+                process.wait(timeout=30)
+                break
+            except _sp.TimeoutExpired:
+                elapsed = time.monotonic() - start
+                cur_size = os.path.getsize(log_path)
+                if cur_size > last_size:
+                    last_size = cur_size
+                    last_growth = time.monotonic()
+                stalled_for = time.monotonic() - last_growth
+                if stalled_for > GEN_AUDIO_STALL_TIMEOUT:
+                    raise _stop(
+                        process,
+                        f"gen_audio stalled: no output for {stalled_for / 60:.1f}min "
+                        f"(elapsed {elapsed / 60:.1f}min)",
+                    ) from None
+                if elapsed > total_timeout:
+                    raise _stop(
+                        process,
+                        f"gen_audio timed out after {elapsed / 60:.1f}min "
+                        f"({n_chunks} chunks)",
+                    ) from None
+                get_job_queue().update_job_progress(
+                    access_code, f"正在生成音频... ({int(elapsed) // 60}分{int(elapsed) % 60}秒)"
+                )
+
+    if process.returncode != 0:
+        raise RuntimeError(f"gen_audio exited with code {process.returncode}")
 
     job_log(access_code, output_dir, "gen_audio subprocess completed")
 
