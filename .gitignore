@@ -24,6 +24,7 @@ chatterbox-server/html/srt-zh+en.html
 chatterbox-server/html/srt-zh.json.gz
 chatterbox-server/html/srt-en.json.gz
 chatterbox-server/html/srt-zh+en.json.gz
+chatterbox-server/html/srt-zh+*.json.gz
 graphify-out/
 
 # ── Generated / temporary files ────────────────────────────
