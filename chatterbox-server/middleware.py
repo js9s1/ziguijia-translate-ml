@@ -285,6 +285,82 @@ def validate_srt_content(text: str, label: str = "SRT"):
         raise ValueError(f"Uploaded {label} file has formatting errors: {e}") from e
 
 
+# Language codes whose script is Latin-based.  Latin-script languages can't
+# be told apart by script detection alone (en/fr/de/... all look like "Latin"),
+# so any Latin-script SRT is accepted for any Latin-script target.
+_LATIN_SCRIPT_LANGUAGES = frozenset(
+    {
+        "en", "fr", "de", "es", "pt", "it", "nl", "da", "sv", "no",
+        "fi", "pl", "tr", "vi", "id", "ms", "sw",
+    }
+)
+
+
+def validate_text_matches_target_language(
+    text: str,
+    target_language: str,
+    source_kind: str = "input text",
+) -> None:
+    """Reject *text* whose language doesn't match *target_language*.
+
+    Distinctive-script targets (zh/ja/ko/ar/ru/el/he/hi/th) require the text's
+    dominant script to match exactly; Latin-script targets accept any
+    Latin-script text.  Text with no letters at all (numbers, symbols) is not
+    classified.  *source_kind* is a noun phrase naming the input (e.g.
+    "uploaded SRT") used in the error message.  Mismatches (e.g. job EDE29BB4:
+    French SRT + ja target) make TTS speak far slower than expected and trip
+    the duration-inflation guard mid-job — reject them up front instead.
+    """
+    from language_utils import LANG_MAP, detect_dominant_script
+
+    target = str(target_language or "").strip().lower()
+    if target not in LANG_MAP:
+        return
+
+    text = text.lstrip("\ufeff")
+    if not any(ch.isalpha() for ch in text):
+        return
+
+    detected = detect_dominant_script(text)
+    if detected == target:
+        return
+    if target in _LATIN_SCRIPT_LANGUAGES and detected in _LATIN_SCRIPT_LANGUAGES:
+        return
+
+    detected_label = (
+        "a Latin-script language (English/French/German/…)"
+        if detected == "en"
+        else LANG_MAP.get(detected, detected)
+    )
+    target_label = LANG_MAP.get(target, target)
+    raise ValueError(
+        f"Target language is {target_label}, while the {source_kind} is in "
+        f"{detected_label}. Please make them consistent."
+    )
+
+
+def validate_srt_target_language(text: str, target_language: str) -> None:
+    """Reject SRTs whose language doesn't match *target_language*.
+
+    Strips SRT index/timing lines, then delegates to
+    :func:`validate_text_matches_target_language`.
+    """
+    from language_utils import is_srt_index_line, is_srt_timing_line
+
+    content_lines = []
+    for line in text.lstrip("\ufeff").splitlines():
+        line = line.strip()
+        if not line or is_srt_index_line(line) or is_srt_timing_line(line):
+            continue
+        content_lines.append(line)
+    if not content_lines:
+        return
+
+    validate_text_matches_target_language(
+        "\n".join(content_lines), target_language, source_kind="uploaded SRT"
+    )
+
+
 def _validate_video_codec(content: bytes):
     import json
 

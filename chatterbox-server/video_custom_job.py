@@ -11,7 +11,11 @@ from config import (
 )
 from jobqueue import get_job_queue
 from log_utils import job_log
-from middleware import get_audio_params, validate_video_srt_duration
+from middleware import (
+    get_audio_params,
+    validate_srt_target_language,
+    validate_video_srt_duration,
+)
 from pipeline import (
     _adjust_original_audio_nonfatal,
     run_audio_ckpt,
@@ -62,6 +66,10 @@ def process_video_custom(
     cfg_weight: float = 0.5,
     exaggeration: float = 0.5,
 ) -> dict:
+    srt_text = srt_file.read()
+    srt_file.seek(0)
+    validate_srt_target_language(srt_text.decode("utf-8", errors="replace"), target_language)
+
     access_code = str(uuid.uuid4())[:8].upper()
     output_dir = os.path.join(VIDEO_DIR, access_code)
     os.makedirs(output_dir, exist_ok=True)

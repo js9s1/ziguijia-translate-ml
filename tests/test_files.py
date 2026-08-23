@@ -158,12 +158,12 @@ class TestSRTProcess:
     duration-inflation guard.
     """
 
-    def _post_srt(self, client, csrf_headers, content):
+    def _post_srt(self, client, csrf_headers, content, target_language="en"):
         import io
 
         data = {
             "temperature": "0.7",
-            "target_language": "en",
+            "target_language": target_language,
             "cfg_weight": "0.5",
             "exaggeration": "0.5",
         }
@@ -184,13 +184,23 @@ class TestSRTProcess:
         assert resp.status_code == 400
         assert "多种语言" in resp.get_json()["error"]
 
+    def test_target_language_mismatch_rejected(self, auth_client, csrf_headers):
+        client, _ = auth_client
+        zh = (
+            "1\n00:00:01,000 --> 00:00:03,000\n你就是如来\n\n"
+            "2\n00:00:03,000 --> 00:00:05,000\n这就是释迦牟尼证到的最高境界\n"
+        )
+        resp = self._post_srt(client, csrf_headers, zh, target_language="en")
+        assert resp.status_code == 400
+        assert "make them consistent" in resp.get_json()["error"]
+
     def test_single_language_accepted(self, auth_client, csrf_headers):
         client, _ = auth_client
         zh = (
             "1\n00:00:01,000 --> 00:00:03,000\n你就是如来\n\n"
             "2\n00:00:03,000 --> 00:00:05,000\n这就是释迦牟尼证到的最高境界\n"
         )
-        resp = self._post_srt(client, csrf_headers, zh)
+        resp = self._post_srt(client, csrf_headers, zh, target_language="zh")
         assert resp.status_code == 302
         assert "/result?code=" in resp.headers["Location"]
 

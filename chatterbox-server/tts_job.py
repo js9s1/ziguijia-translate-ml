@@ -7,7 +7,7 @@ import uuid
 from config import AUDIO_TRACKS_DIR, AUDIO_PROMPT_PATH, GEN_AUDIO_PYTHON, PROJECT_ROOT
 from jobqueue import get_job_queue
 from log_utils import job_log
-from middleware import get_audio_params
+from middleware import get_audio_params, validate_text_matches_target_language
 
 
 def _run_tts_job(job_data: dict):
@@ -56,6 +56,8 @@ def process_tts(
     cfg_weight: float = 0.5,
     exaggeration: float = 0.5,
 ) -> dict:
+    validate_text_matches_target_language(text, target_language)
+
     access_code = str(uuid.uuid4())[:8].upper()
     output_dir = os.path.join(AUDIO_TRACKS_DIR, access_code)
     os.makedirs(output_dir, exist_ok=True)

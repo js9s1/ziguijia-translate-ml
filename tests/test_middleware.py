@@ -12,6 +12,8 @@ from middleware import (
     parse_job_params,
     safe_file_path,
     validate_srt_content,
+    validate_srt_target_language,
+    validate_text_matches_target_language,
     validate_video_srt_duration,
 )
 
@@ -152,6 +154,52 @@ class TestValidateSrtLanguage:
     def test_bilingual_other_scripts_rejected(self):
         with pytest.raises(ValueError, match="多种语言"):
             validate_srt_content(self._srt("你好 мир"), "SRT")
+
+
+class TestValidateSrtTargetLanguage:
+    def _srt(self, lines):
+        return "1\n00:00:01,000 --> 00:00:03,000\n" + lines + "\n"
+
+    def test_latin_srt_with_ja_target_rejected(self):
+        with pytest.raises(ValueError, match="make them consistent"):
+            validate_srt_target_language(
+                self._srt("Tu ne peux pas trouver la vacuité."), "ja"
+            )
+
+    def test_latin_srt_with_latin_target_passes(self):
+        validate_srt_target_language(
+            self._srt("Tu ne peux pas trouver la vacuité."), "fr"
+        )
+
+    def test_japanese_srt_with_ja_target_passes(self):
+        validate_srt_target_language(self._srt("今日はいい天気ですね。"), "ja")
+
+    def test_chinese_srt_with_ja_target_rejected(self):
+        with pytest.raises(ValueError, match="make them consistent"):
+            validate_srt_target_language(self._srt("这是一段中文字幕。"), "ja")
+
+    def test_empty_srt_skips(self):
+        validate_srt_target_language("", "ja")
+
+
+class TestValidateTextTargetLanguage:
+    def test_chinese_text_with_en_target_rejected(self):
+        with pytest.raises(ValueError, match="make them consistent"):
+            validate_text_matches_target_language("这是一段中文字幕", "en")
+
+    def test_french_text_with_ja_target_rejected(self):
+        with pytest.raises(ValueError, match="make them consistent"):
+            validate_text_matches_target_language("Bonjour tout le monde", "ja")
+
+    def test_matching_text_passes(self):
+        validate_text_matches_target_language("这是一段中文字幕", "zh")
+        validate_text_matches_target_language("Bonjour tout le monde", "fr")
+
+    def test_no_letters_skips(self):
+        validate_text_matches_target_language("123 !!! 456", "zh")
+
+    def test_unknown_target_skips(self):
+        validate_text_matches_target_language("任意文本", "xx")
 
 
 class TestValidateVideoSrtDuration:

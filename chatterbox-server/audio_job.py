@@ -6,7 +6,11 @@ import uuid
 from config import AUDIO_TRACKS_DIR
 from jobqueue import get_job_queue
 from log_utils import job_log
-from middleware import get_audio_params
+from middleware import (
+    get_audio_params,
+    validate_srt_target_language,
+    validate_text_matches_target_language,
+)
 from pipeline import run_gen_audio_step
 
 
@@ -31,6 +35,10 @@ def process_srt_file(
     cfg_weight: float = 0.5,
     exaggeration: float = 0.5,
 ) -> dict:
+    srt_text = srt_file.read()
+    srt_file.seek(0)
+    validate_srt_target_language(srt_text.decode("utf-8", errors="replace"), target_language)
+
     access_code = str(uuid.uuid4())[:8].upper()
     output_dir = os.path.join(AUDIO_TRACKS_DIR, access_code)
     os.makedirs(output_dir, exist_ok=True)
@@ -193,6 +201,8 @@ def process_audio_file(
     cfg_weight: float = 0.5,
     exaggeration: float = 0.5,
 ) -> dict:
+    validate_text_matches_target_language(content, target_language)
+
     access_code = str(uuid.uuid4())[:8].upper()
     output_dir = os.path.join(AUDIO_TRACKS_DIR, access_code)
     os.makedirs(output_dir, exist_ok=True)
