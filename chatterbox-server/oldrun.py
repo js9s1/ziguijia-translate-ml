@@ -76,9 +76,9 @@ def _scan_dir(dirpath: str) -> tuple[list[dict], list[dict], list[dict]]:
                 continue
             entry = {"name": name, "path": os.path.join(root, name)}
             low = name.lower()
-            if low.endswith(".zh+en.srt"):
+            if low.endswith((".zh+en.srt", ".zh+en.corrected.srt")):
                 zh_en.append(entry)
-            elif low.endswith(".en.srt"):
+            elif low.endswith((".en.srt", ".en.corrected.srt")):
                 en.append(entry)
             else:
                 zh.append(entry)

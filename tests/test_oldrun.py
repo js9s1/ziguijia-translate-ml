@@ -101,6 +101,24 @@ class TestScanDir:
         assert en == []
         assert len(zh_en) == 1
 
+    def test_corrected_zh_en_goes_to_zh_en(self, tmp_path):
+        from oldrun import _scan_dir
+
+        _make_srt(str(tmp_path), "00007.zh+en.corrected.srt")
+        zh, en, zh_en = _scan_dir(str(tmp_path))
+        assert zh == []
+        assert en == []
+        assert len(zh_en) == 1 and zh_en[0]["name"] == "00007.zh+en.corrected.srt"
+
+    def test_corrected_en_goes_to_en(self, tmp_path):
+        from oldrun import _scan_dir
+
+        _make_srt(str(tmp_path), "00008.en.corrected.srt")
+        zh, en, zh_en = _scan_dir(str(tmp_path))
+        assert zh == []
+        assert len(en) == 1 and en[0]["name"] == "00008.en.corrected.srt"
+        assert zh_en == []
+
 
 # ── _collect_incremental ────────────────────────────────────────
 
