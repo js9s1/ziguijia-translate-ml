@@ -89,9 +89,10 @@
           self.textContent = '取消中...';
           fetchWithCsrf('/api/jobs/' + code + '/cancel', { method: 'POST' })
             .then(function (r) {
-              return r.json();
+              return handleApiResponse(r);
             })
             .then(function (result) {
+              if (!result) return;
               if (result.success) {
                 location.reload();
               } else {
@@ -117,8 +118,9 @@
           self.disabled = true;
           self.textContent = '提交中...';
           fetchWithCsrf('/api/jobs/' + code + '/resubmit', { method: 'POST' })
-            .then(function (r) { return r.json(); })
+            .then(function (r) { return handleApiResponse(r); })
             .then(function (result) {
+              if (!result) return;
               if (result.success) {
                 location.reload();
               } else {
@@ -145,9 +147,10 @@
           self.textContent = '删除中...';
           fetchWithCsrf('/api/jobs/' + code + '/delete', { method: 'POST' })
             .then(function (r) {
-              return r.json();
+              return handleApiResponse(r);
             })
             .then(function (result) {
+              if (!result) return;
               if (result.success) {
                 location.reload();
               } else {

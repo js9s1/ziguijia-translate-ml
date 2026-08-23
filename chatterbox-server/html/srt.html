@@ -57,21 +57,12 @@
                 body: formData
             })
             .then(function(response) {
-                if (response.status === 401) {
-                    overlay.classList.remove('active');
-                    alert('请先登录');
-                    window.location.href = '/auth/login?next=' + encodeURIComponent('/srt');
-                    return;
-                }
-                return response.json();
+                return handleApiResponse(response, '/srt');
             })
             .then(function(data) {
                 if (!data) return;
                 overlay.classList.remove('active');
-                if (data.error) {
-                    alert('错误: ' + data.error);
-                    return;
-                }
+                if (showApiError(data)) return;
                 showResult(data.access_code, '/result?code=' + data.access_code, 'checkProgressLink');
             })
             .catch(err => {

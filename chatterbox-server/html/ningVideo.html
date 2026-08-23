@@ -125,11 +125,16 @@
                     fd.set('ocr_only', getOcrOnlyValue());
                 }
                 overlay.classList.add('active');
-                fetchWithCsrf(_submitUrl, { method: 'POST', body: fd })
-                .then(function(r) { return r.json(); })
+                fetchWithCsrf(_submitUrl, {
+                    method: 'POST',
+                    body: fd,
+                    headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
+                })
+                .then(function(r) { return handleApiResponse(r, '/video/ning'); })
                 .then(function(d) {
                     overlay.classList.remove('active');
-                    if (d.error) { alert('错误: ' + d.error); return; }
+                    if (!d) return;
+                    if (showApiError(d)) return;
                     showResult(d.access_code, '/result?code=' + d.access_code, 'checkProgressLink');
                 })
                 .catch(function(err) { overlay.classList.remove('active'); alert('错误: ' + err.message); });

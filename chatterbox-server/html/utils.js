@@ -36,6 +36,30 @@ function fetchWithCsrf(url, options) {
     });
 }
 
+/* ── Shared API error handling ─────────────────────────── */
+
+function handleApiResponse(response, redirectPath) {
+    // Centralize 401 handling + JSON parsing for API POSTs.  Resolves to
+    // the parsed body, or null when the user is redirected to login or the
+    // response is not JSON.
+    if (response.status === 401) {
+        alert('请先登录');
+        window.location.href = '/auth/login?next=' + encodeURIComponent(redirectPath || window.location.pathname);
+        return Promise.resolve(null);
+    }
+    return response.json().catch(function () { return null; });
+}
+
+function showApiError(data, prefix) {
+    // Alert the server error message if *data* carries one.
+    // Returns true when an error was shown (caller should stop).
+    if (data && data.error) {
+        alert((prefix || '错误') + ': ' + data.error);
+        return true;
+    }
+    return false;
+}
+
 /* ── Language select (shared) ──────────────────────────── */
 
 var _langOptions = null;
@@ -394,41 +418,40 @@ function submitJob(url, bodyOrFormData, resultLinkId, redirectPath) {
             return;
         }
 
-        getCsrfToken().then(function(csrf) {
-            var overlay = document.getElementById('loadingOverlay');
-            if (overlay) overlay.classList.add('active');
+        var overlay = document.getElementById('loadingOverlay');
+        if (overlay) overlay.classList.add('active');
 
-            var form = document.createElement('form');
-            form.method = 'POST';
-            form.action = url;
-            form.enctype = 'multipart/form-data';
-            addHidden(form, 'csrf_token', csrf);
+        var body = bodyOrFormData;
+        if (!(body instanceof FormData)) {
+            body = new FormData();
+            for (var key in bodyOrFormData) { body.append(key, bodyOrFormData[key]); }
+        }
 
-            if (bodyOrFormData instanceof FormData) {
-                bodyOrFormData.forEach(function(value, key) {
-                    if (value instanceof File) {
-                        var original = document.querySelector('[name="' + key + '"]');
-                        if (original) form.appendChild(original);
-                    } else {
-                        addHidden(form, key, value);
-                    }
-                });
-            } else {
-                for (var key in bodyOrFormData) { addHidden(form, key, bodyOrFormData[key]); }
+        // AJAX headers keep the server from converting the JSON response
+        // into a redirect, so errors can be shown in-page like other errors
+        // instead of rendering raw JSON (black screen).
+        fetchWithCsrf(url, {
+            method: 'POST',
+            body: body,
+            headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
+        }).then(function(response) {
+            return handleApiResponse(response, redirectPath);
+        }).then(function(data) {
+            if (overlay) overlay.classList.remove('active');
+            if (!data) return;
+            if (showApiError(data)) return;
+            if (data.cached_found && typeof window.showCachedPrompt === 'function') {
+                window.showCachedPrompt(data);
+                return;
             }
-
-            document.body.appendChild(form);
-            form.submit();
+            if (data.access_code) {
+                window.location.href = '/result?code=' + data.access_code;
+            }
+        }).catch(function(err) {
+            if (overlay) overlay.classList.remove('active');
+            alert('错误: ' + (err && err.message ? err.message : err));
         });
     });
-}
-
-function addHidden(form, name, value) {
-    var input = document.createElement('input');
-    input.type = 'hidden';
-    input.name = name;
-    input.value = value;
-    form.appendChild(input);
 }
 
 
