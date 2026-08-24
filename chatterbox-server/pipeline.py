@@ -538,13 +538,17 @@ def run_extract_audio_ckpt(
         return audio_path
 
     job_log(access_code, output_dir, "Extracting audio from video...")
-    subprocess.run(
+    result = subprocess.run(
         ["ffmpeg", "-i", video_file, "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", audio_path, "-y"],
         stdout=proc_log,
-        stderr=proc_log,
+        stderr=subprocess.PIPE,
+        text=True,
         timeout=3600,
-        check=True,
     )
+    if result.returncode != 0:
+        if result.stderr:
+            proc_log.write(result.stderr)
+        result.check_returncode()
     if ckpt:
         ckpt.mark("extract_audio")
     return audio_path

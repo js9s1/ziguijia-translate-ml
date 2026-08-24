@@ -36,6 +36,7 @@ def _run_video_custom_job(job_data: dict):
     access_code = job_data["access_code"]
     srt_path = job_data["srt_path"]
     output_dir = job_data["output_dir"]
+    blur = job_data.get("blur", "yes")
 
     os.makedirs(output_dir, exist_ok=True)
     gen_audio_dir = os.path.join(output_dir, "audio_tracks")
@@ -52,7 +53,15 @@ def _run_video_custom_job(job_data: dict):
     )
 
     job_log(access_code, output_dir, "Step 2: Processing video")
-    run_video_ckpt(video_file, srt_path, audio_out, output_dir, access_code, output_filename="output_modified.mp4")
+    run_video_ckpt(
+        video_file,
+        srt_path,
+        audio_out,
+        output_dir,
+        access_code,
+        output_filename="output_modified.mp4",
+        blur=(blur == "yes"),
+    )
     _adjust_original_audio_nonfatal(video_file, srt_path, audio_out, output_dir, access_code)
     job_log(access_code, output_dir, "Done!")
 
@@ -62,6 +71,7 @@ def process_video_custom(
     srt_file,
     temperature: float,
     user_id: int = None,
+    blur: str = "yes",
     target_language: str = "en",
     cfg_weight: float = 0.5,
     exaggeration: float = 0.5,
@@ -96,6 +106,7 @@ def process_video_custom(
         "output_dir": output_dir,
         "access_code": access_code,
         "temperature": temperature,
+        "blur": blur,
         "target_language": target_language,
         "cfg_weight": cfg_weight,
         "exaggeration": exaggeration,
@@ -109,6 +120,7 @@ def _run_video_auto_job(job_data: dict):
     access_code = job_data["access_code"]
     output_dir = job_data["output_dir"]
     ap = get_audio_params(job_data)
+    blur = job_data.get("blur", "yes")
 
     os.makedirs(output_dir, exist_ok=True)
     log_file = os.path.join(output_dir, "job.log")
@@ -147,6 +159,7 @@ def _run_video_auto_job(job_data: dict):
             access_code,
             ckpt=ckpt,
             output_filename="output_modified.mp4",
+            blur=(blur == "yes"),
         )
         _adjust_original_audio_nonfatal(video_file, translated_srt, audio_out, output_dir, access_code)
 
@@ -157,6 +170,7 @@ def process_video_auto(
     video_file,
     temperature: float,
     user_id: int = None,
+    blur: str = "yes",
     target_language: str = "en",
     cfg_weight: float = 0.5,
     exaggeration: float = 0.5,
@@ -174,6 +188,7 @@ def process_video_auto(
         "output_dir": output_dir,
         "temperature": temperature,
         "user_id": user_id,
+        "blur": blur,
         "target_language": target_language,
         "cfg_weight": cfg_weight,
         "exaggeration": exaggeration,
@@ -187,6 +202,7 @@ def _run_video_ocr_job(job_data: dict):
     access_code = job_data["access_code"]
     output_dir = job_data["output_dir"]
     ap = get_audio_params(job_data)
+    blur = job_data.get("blur", "yes")
 
     os.makedirs(output_dir, exist_ok=True)
     log_file = os.path.join(output_dir, "job.log")
@@ -198,7 +214,7 @@ def _run_video_ocr_job(job_data: dict):
         run_ocr_full_pipeline(
             video_file, output_dir, access_code, ap, ckpt, proc_log, log_file,
             intro_marker=MARKER_INTRO, outro_marker=MARKER_OUTRO,
-            audio_subdir="audio_tracks",
+            audio_subdir="audio_tracks", blur=(blur == "yes"),
         )
 
 
@@ -206,6 +222,7 @@ def process_video_ocr(
     video_file,
     temperature: float,
     user_id: int = None,
+    blur: str = "yes",
     target_language: str = "en",
     cfg_weight: float = 0.5,
     exaggeration: float = 0.5,
@@ -223,6 +240,7 @@ def process_video_ocr(
         "output_dir": output_dir,
         "temperature": temperature,
         "user_id": user_id,
+        "blur": blur,
         "target_language": target_language,
         "cfg_weight": cfg_weight,
         "exaggeration": exaggeration,
@@ -261,6 +279,7 @@ def process_video_ocr_translate_only(
     video_file,
     temperature: float,
     user_id: int = None,
+    blur: str = "yes",
     target_language: str = "en",
     cfg_weight: float = 0.5,
     exaggeration: float = 0.5,
@@ -279,6 +298,7 @@ def process_video_ocr_translate_only(
         "output_dir": output_dir,
         "temperature": temperature,
         "user_id": user_id,
+        "blur": blur,
         "target_language": target_language,
         "cfg_weight": cfg_weight,
         "exaggeration": exaggeration,

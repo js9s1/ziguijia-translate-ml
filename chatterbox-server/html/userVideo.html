@@ -51,6 +51,14 @@
                 <input type="file" id="srt_file" name="srt_file" accept=".srt">
             </div>
 
+            <div class="form-row" id="blurRow">
+                <label>模糊处理</label>
+                <div style="display:flex;gap:8px;align-items:center;padding-top:4px;">
+                    <span><input type="radio" name="blur" value="yes"> 是</span>
+                    <span><input type="radio" name="blur" value="no" checked> 否</span>
+                </div>
+            </div>
+
             <div id="floatSliders"></div>
 
             <button type="submit">开始处理！</button>
@@ -66,6 +74,8 @@
                 e.preventDefault();
                 var formData = collectCommonVideoFields();
                 formData.append('video_file', document.getElementById('video_file').files[0]);
+                var blurEl = document.querySelector('input[name="blur"]:checked');
+                formData.append('blur', blurEl ? blurEl.value : 'yes');
 
                 var mode = document.getElementById('mode').value;
                 var url;

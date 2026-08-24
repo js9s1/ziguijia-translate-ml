@@ -8,7 +8,9 @@ first parameter (``jq``) and access its attributes directly.
 import logging
 import multiprocessing  # used by _safe_close_proc type annotation
 import os
+import re
 import sqlite3
+import subprocess
 import time
 
 import psutil
@@ -17,6 +19,38 @@ from job_types import JobStatus, _get_run_func
 from valkey_util import publish_job_status
 
 logger = logging.getLogger(__name__)
+
+
+# Matches "Command '['ffmpeg', ...]' returned non-zero exit status 1."
+# from subprocess.CalledProcessError so the raw command line never
+# reaches the user-facing job error field.
+_CMD_LINE_RE = re.compile(r"Command\s+'?\[.*?\]'?\s+returned non-zero exit status -?\d+\.", re.DOTALL)
+
+
+def _format_job_error(e: BaseException) -> str:
+    """Format an exception for the job error field.
+
+    Subprocess command lines are never shown: for
+    ``subprocess.CalledProcessError`` with captured stderr, the last
+    stderr lines (the actual error message) are used; otherwise the
+    program name and exit status are shown.  Command-line snippets
+    embedded in other messages (e.g. tracebacks from sub-scripts) are
+    stripped as well.
+    """
+    if isinstance(e, subprocess.CalledProcessError):
+        stderr = getattr(e, "stderr", None)
+        if stderr:
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", "replace")
+            lines = [ln.strip() for ln in str(stderr).splitlines() if ln.strip()]
+            if lines:
+                return "; ".join(lines[-3:])[:500]
+        prog = ""
+        cmd = getattr(e, "cmd", None)
+        if isinstance(cmd, (list, tuple)) and cmd:
+            prog = os.path.basename(str(cmd[0]))
+        return f"{prog or 'command'} failed with exit status {e.returncode}"[:500]
+    return _CMD_LINE_RE.sub("", str(e))[:500]
 
 
 # ── Helpers ──────────────────────────────────────────────────

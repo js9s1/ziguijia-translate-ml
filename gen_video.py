@@ -26,6 +26,25 @@ from video_util import read_srt_text
 VAAPI_DEVICE = "/dev/dri/renderD128"
 
 
+def _ffmpeg_error_lines(stderr: str | None, exit_status: int) -> str:
+    """Last stderr lines of a failed ffmpeg run (no command line)."""
+    lines = [ln.strip() for ln in (stderr or "").splitlines() if ln.strip()]
+    return "; ".join(lines[-3:]) or f"exit status {exit_status}"
+
+
+def _run_ffmpeg(cmd, timeout=3600):
+    """Run an ffmpeg command, raising a clean error message on failure.
+
+    ffmpeg stderr (which contains the real error) is printed to the job
+    log; the raised exception never includes the raw command line.
+    """
+    result = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
+    if result.returncode != 0:
+        if result.stderr:
+            print(result.stderr, file=sys.stderr)
+        raise RuntimeError(f"FFmpeg failed: {_ffmpeg_error_lines(result.stderr, result.returncode)}")
+
+
 def get_video_info(video_file):
     """Get video duration using ffprobe."""
     # Reject empty files early with a clear error
@@ -270,7 +289,7 @@ def process_video(video_file, segments, output_file):
             result = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=3600)
             if result.returncode != 0:
                 print(f"FFmpeg batch error: {result.stderr[:50000]}", file=sys.stderr)
-                result.check_returncode()
+                raise RuntimeError(f"FFmpeg failed: {_ffmpeg_error_lines(result.stderr, result.returncode)}")
 
             # Validate
             probe = subprocess.run(
@@ -331,7 +350,9 @@ def process_video(video_file, segments, output_file):
                     result = subprocess.run(cmd, check=False, capture_output=True, text=True)
                     if result.returncode != 0:
                         print(f"FFmpeg error (L{level} batch {bi}): {result.stderr[:50000]}", file=sys.stderr)
-                        result.check_returncode()
+                        raise RuntimeError(
+                            f"FFmpeg failed: {_ffmpeg_error_lines(result.stderr, result.returncode)}"
+                        )
                     next_batch.append(out_name)
                 batch_list = next_batch
 
@@ -527,7 +548,7 @@ def main():
         if audio_duration:
             correct_cmd.extend(["-t", str(audio_duration)])
         correct_cmd.append(corrected)
-        subprocess.run(correct_cmd, check=True)
+        _run_ffmpeg(correct_cmd)
         output_file = corrected
     else:
         print(f"Video timing accurate ({actual_dur:.2f}s vs designed {designed_total:.2f}s)")
@@ -570,7 +591,7 @@ def main():
             else:
                 blur_cmd.append("-shortest")
             blur_cmd.append(temp_output)
-            subprocess.run(blur_cmd, check=True)
+            _run_ffmpeg(blur_cmd)
         else:
             mux_cmd = [
                 "ffmpeg",
@@ -599,9 +620,9 @@ def main():
             else:
                 mux_cmd.append("-shortest")
             mux_cmd.append(temp_output)
-            subprocess.run(mux_cmd, check=True)
+            _run_ffmpeg(mux_cmd)
 
-        subprocess.run(
+        _run_ffmpeg(
             [
                 "ffmpeg",
                 "-y",
@@ -617,7 +638,6 @@ def main():
                 "language=eng",
                 final_output,
             ],
-            check=True,
         )
     finally:
         if os.path.exists(temp_output):

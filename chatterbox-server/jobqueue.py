@@ -55,6 +55,7 @@ from job_orphan import (
 )
 from job_types import _JOB_TYPE_LABELS, _SKIP_QUEUE_INIT, JobStatus, _get_job_type_label
 from job_worker import (
+    _format_job_error,
     _now_str,
     _run_job,
     _safe_close_proc,
@@ -289,7 +290,7 @@ class JobQueue:
                 self._process_job(access_code)
             except BaseException as e:
                 logger.exception(f"_process_job {access_code} raised {type(e).__name__}: {e}")
-                self._try_mark_failed(access_code, str(e)[:500])
+                self._try_mark_failed(access_code, _format_job_error(e))
             finally:
                 with self._cancel_lock:
                     self._current_access_code = None

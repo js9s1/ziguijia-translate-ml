@@ -204,11 +204,13 @@ def video_custom_process():
     params = parse_job_params(request.form)
 
     process_video_custom = _lazy("video_custom_job", "process_video_custom")
+    blur = request.form.get("blur", "yes")
     result = process_video_custom(
         video_file,
         srt_file,
         params["temperature"],
         session["user_id"],
+        blur,
         target_language=params["target_language"],
         cfg_weight=params["cfg_weight"],
         exaggeration=params["exaggeration"],
@@ -229,10 +231,12 @@ def video_custom_auto_process():
     params = parse_job_params(request.form)
 
     process_video_auto = _lazy("video_custom_job", "process_video_auto")
+    blur = request.form.get("blur", "yes")
     result = process_video_auto(
         video_file,
         params["temperature"],
         session["user_id"],
+        blur,
         target_language=params["target_language"],
         cfg_weight=params["cfg_weight"],
         exaggeration=params["exaggeration"],
@@ -285,10 +289,12 @@ def video_custom_ocr_process():
     if mode == "translate-only":
         kwargs["ocr_only"] = ocr_only
 
+    blur = request.form.get("blur", "yes")
     result = process_video_ocr(
         video_file,
         params["temperature"],
         session["user_id"],
+        blur,
         **kwargs,
     )
     return jsonify(result)
