@@ -315,18 +315,44 @@ class TestSRTCorrect:
         assert "When we suffer" in data["content"]
         assert "It's possession" in data["content"]
 
-    def test_unmatched_displayed_segments_emptied(self, auth_client, csrf_headers):
+    def test_unmatched_displayed_segments_copied(self, auth_client, csrf_headers):
         client, _ = auth_client
-        # Displayed contains a segment (含一) with no match in the standard file.
-        path = self._write_displayed(
-            "correct_unmatched.srt", self.DISPLAYED + "6\n00:00:20,000 --> 00:00:21,000\n含一\n"
+        # An extra displayed segment in the MIDDLE of the match range is
+        # copied; segments before the first / after the last match are
+        # silenced (per the copy-window rule).
+        displayed = (
+            "1\n00:00:00,000 --> 00:00:01,000\n开头无匹配\n\n"
+            + self.DISPLAYED
+            + "6\n00:00:20,000 --> 00:00:21,000\n尾部无匹配\n"
         )
+        path = self._write_displayed("correct_unmatched.srt", displayed)
         resp = self._post(client, path, self.STANDARD.encode("utf-8"))
         assert resp.status_code == 200
         data = resp.get_json()
-        # The unmatched segment keeps its timing but is silenced.
-        assert "6\n00:00:20,000 --> 00:00:21,000\n" in data["content"]
-        assert "含一" not in data["content"]
+        # Middle unmatched displayed segments are copied as-is.
+        assert data["matched"] == 5
+        # Leading/trailing displayed segments are silenced.
+        assert "开头无匹配" not in data["content"]
+        assert "尾部无匹配" not in data["content"]
+
+    def test_unmatched_standard_segment_in_middle_copied(self, auth_client, csrf_headers):
+        client, _ = auth_client
+        # An extra standard segment in the middle is copied into the output.
+        displayed = self.DISPLAYED
+        standard = (
+            "1\n00:00:01,000 --> 00:00:03,000\n外成叶情土\n\n"
+            "2\n00:00:06,000 --> 00:00:09,000\n杨宁随缘开示#00001 2012年05月03日\n\n"
+            "3\n00:00:11,000 --> 00:00:12,000\n行\nOkay\n\n"
+            "4\n00:00:12,000 --> 00:00:14,000\n当我们为某个觉受苦的时候\nWhen we suffer\n\n"
+            "5\n00:00:13,000 --> 00:00:14,000\n标准独有片段\n\n"
+            "6\n00:00:14,000 --> 00:00:17,000\n恰恰是因为你占有了这个觉受\nIt's possession\n"
+        )
+        path = self._write_displayed("correct_extra_std_mid.srt", displayed)
+        resp = self._post(client, path, standard.encode("utf-8"))
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert "标准独有片段" in data["content"]
+        assert data["standard_only"] == ["标准独有片段"]
 
     def test_gbk_standard_file(self, auth_client, csrf_headers):
         client, _ = auth_client
@@ -396,6 +422,64 @@ class TestSRTCorrect:
         assert "恰恰是因为你占有了这个觉受" in data["content"]
         # First displayed segment is silenced but keeps timing.
         assert "1\n00:00:12,667 --> 00:00:14,333\n\n" in data["content"]
+
+
+    def test_ok_only_segments_pair_not_duplicated(self, auth_client, csrf_headers):
+        """Segments with no Chinese (e.g. 'OK') pair by plain text so they are
+        not copied twice from both sides."""
+        client, _ = auth_client
+        displayed = (
+            "1\n00:00:01,000 --> 00:00:02,000\n你好\n\n"
+            "2\n00:00:02,000 --> 00:00:03,000\nOK\n\n"
+            "3\n00:00:03,000 --> 00:00:04,000\n世界\n"
+        )
+        standard = (
+            "1\n00:00:01,000 --> 00:00:02,000\n你好\n\n"
+            "2\n00:00:02,500 --> 00:00:03,500\nOK\n\n"
+            "3\n00:00:03,000 --> 00:00:04,000\n世界\n"
+        )
+        path = self._write_displayed("correct_ok_pair.srt", displayed)
+        resp = self._post(client, path, standard.encode("utf-8"))
+        assert resp.status_code == 200
+        data = resp.get_json()
+        # The two OK segments match each other → exactly one OK block.
+        assert data["content"].count("OK") == 1
+        assert data["matched"] == 3
+
+    def test_standard_only_timing_slots_into_gap(self, auth_client, csrf_headers):
+        """A standard-only segment is inserted into the gap between displayed
+        segments without touching the displayed timing."""
+        client, _ = auth_client
+        displayed = (
+            "1\n00:00:01,000 --> 00:00:02,000\n你好\n\n"
+            "2\n00:00:05,000 --> 00:00:08,000\n世界\n"
+        )
+        standard = (
+            "1\n00:00:01,000 --> 00:00:02,000\n你好\n\n"
+            "2\n00:00:02,500 --> 00:00:03,500\n中间多出的一句\n\n"
+            "3\n00:00:05,000 --> 00:00:08,000\n世界\n"
+        )
+        path = self._write_displayed("correct_gap_slot.srt", displayed)
+        resp = self._post(client, path, standard.encode("utf-8"))
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert "中间多出的一句" in data["content"]
+        # Displayed timing untouched; inserted segment sits in the gap.
+        assert "00:00:01,000 --> 00:00:02,000" in data["content"]
+        assert "00:00:05,000 --> 00:00:08,000" in data["content"]
+        assert "00:00:02,500 --> 00:00:03,500" in data["content"]
+
+    def test_ok_token_ignored_in_matching(self, auth_client, csrf_headers):
+        """'OK' inside Chinese text must not prevent a match."""
+        client, _ = auth_client
+        displayed = "1\n00:00:01,000 --> 00:00:02,000\n你要有个东西在享受你就OK了\n"
+        standard = "1\n00:00:01,000 --> 00:00:02,000\n你要有个东西在享受你就了\n"
+        path = self._write_displayed("correct_ok_token.srt", displayed)
+        resp = self._post(client, path, standard.encode("utf-8"))
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["matched"] == 1
+        assert "你要有个东西在享受你就了" in data["content"]
 
 
 class TestSRTCorrectWordDocs:

@@ -226,25 +226,30 @@
             resultStep.style.display = 'none';
         }
 
-        function showCorrectResult(filename, content, matched, total, unmatched) {
+        function showCorrectResult(filename, content, stats) {
             correctedName = filename;
             correctedContent = content;
             document.getElementById('correctPreview').textContent = content;
             var statsEl = document.getElementById('correctStats');
-            if (typeof matched === 'number' && typeof total === 'number') {
+            if (stats) {
+                var matched = stats.matched;
+                var total = stats.total;
+                var dOnly = stats.displayed_only || [];
+                var sOnly = stats.standard_only || [];
                 if (matched === 0) {
                     statsEl.textContent = '警告：按中文内容未匹配到任何片段，请检查上传的标准文件是否包含与当前字幕相同的中文内容。';
                     statsEl.style.color = '#f44336';
                 } else {
-                    statsEl.textContent = '已匹配 ' + matched + ' / ' + total + ' 条字幕（其余片段已静音）。';
-                    statsEl.style.color = '#4CAF50';
-                    if (unmatched && unmatched.length) {
-                        statsEl.textContent += '\n未匹配的标准片段：' + unmatched.length + ' 条';
-                        var details = unmatched.map(function(u) {
-                            return '标准: ' + u.content + ' ｜ 最接近(相似度 ' + u.best_sim + '): ' + (u.best_displayed || '无');
-                        }).join('\n');
-                        statsEl.textContent += '\n' + details;
+                    var msg = '已匹配 ' + matched + ' 条字幕，共输出 ' + total + ' 条。';
+                    if (dOnly.length) {
+                        msg += ' 当前字幕独有的 ' + dOnly.length + ' 条片段已保留；';
                     }
+                    if (sOnly.length) {
+                        msg += ' 标准文件独有的 ' + sOnly.length + ' 条片段已补入：';
+                        msg += sOnly.map(function(c) { return '《' + c + '》'; }).join('、');
+                    }
+                    statsEl.textContent = msg;
+                    statsEl.style.color = '#4CAF50';
                 }
             } else {
                 statsEl.textContent = '';
@@ -308,7 +313,12 @@
                     status.style.color = '#f44336';
                     return;
                 }
-                showCorrectResult(res.data.filename, res.data.content, res.data.matched, res.data.total, res.data.unmatched);
+                showCorrectResult(res.data.filename, res.data.content, {
+                    matched: res.data.matched,
+                    total: res.data.total,
+                    displayed_only: res.data.displayed_only,
+                    standard_only: res.data.standard_only
+                });
             })
             .catch(function(err) {
                 btn.disabled = false;

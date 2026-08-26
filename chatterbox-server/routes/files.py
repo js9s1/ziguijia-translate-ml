@@ -3,6 +3,7 @@
 import logging
 import os
 import re
+from datetime import timedelta
 
 from config import FILENAME_TO_CHECKPOINT_STEP, validate_upload_filename
 from flask import Blueprint, jsonify, request, send_file
@@ -305,50 +306,78 @@ def _read_text_file(path: str) -> str:
 
 # ── SRT calibration (校准) ───────────────────────────────
 
+_OK_TOKEN_RE = re.compile(r"ok", re.IGNORECASE)
+
 
 def _chinese_key(text: str) -> str:
     """Normalize a segment's text into a matching key by its CJK content.
 
     Only CJK ideographs are kept, so segments like ``行\\nOkay`` and ``行``
     share the same key regardless of translations, punctuation or whitespace.
+    ``OK``/``ok`` tokens are ignored explicitly (a stray "OK" must never
+    prevent a match).
     """
-    return "".join(_CJK_RE.findall(text or ""))
+    cleaned = _OK_TOKEN_RE.sub("", text or "")
+    return "".join(_CJK_RE.findall(cleaned))
 
 
-_SRT_DOWNLOAD_MARKER_RE = re.compile(r"#\s*\d+\s*\[\s*\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\s*\]")
+_SRT_DOWNLOAD_MARKER_RE = re.compile(r"#\s*\d+\s*\[\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*\]")
+
+
+def _marker_timing(marker_text: str) -> tuple[timedelta | None, timedelta | None]:
+    """Parse ``#001 [00:11 - 00:14]`` into (start, end) timedeltas."""
+    m = _SRT_DOWNLOAD_MARKER_RE.search(marker_text)
+    if not m:
+        return None, None
+    start = timedelta(minutes=int(m.group(1)), seconds=int(m.group(2)))
+    end = timedelta(minutes=int(m.group(3)), seconds=int(m.group(4)))
+    return start, end
 
 
 def _parse_segments(text: str) -> list[dict]:
     """Parse SRT (or bare-text) content into a list of segment dicts.
 
-    Each dict has ``content`` (full text) and ``key`` (CJK-only match key).
+    Each dict has ``content`` (full text), ``key`` (CJK-only match key) and
+    optional ``start``/``end`` (timedelta, when the source carries timing).
     Three formats are recognized:
 
     1. SRT-download documents that number segments like ``#001 [00:11 - 00:14]``
        followed by the subtitle text — split on those markers wherever they
-       appear (they may sit on their own line or inline).
+       appear (they may sit on their own line or inline); the marker times
+       become the segment timing.
     2. Plain SRT (index + timing + text).
-    3. Anything else: each non-empty line becomes a segment.
+    3. Anything else: each non-empty line becomes a segment (no timing).
     """
-    if len(_SRT_DOWNLOAD_MARKER_RE.findall(text)) >= 2:
-        parts = _SRT_DOWNLOAD_MARKER_RE.split(text)
+    markers = list(_SRT_DOWNLOAD_MARKER_RE.finditer(text))
+    if len(markers) >= 2:
         segments = []
-        # parts[0] is text before the first marker (e.g. a title); keep it so
-        # it can still anchor if the displayed file contains the same title.
-        for part in parts:
-            content = "\n".join(line for line in part.splitlines() if line.strip())
-            if content:
-                segments.append({"content": content, "key": _chinese_key(content)})
+        # Text before the first marker (e.g. a title).
+        head = text[: markers[0].start()]
+        content = "\n".join(line for line in head.splitlines() if line.strip())
+        if content:
+            segments.append({"content": content, "key": _chinese_key(content), "start": None, "end": None})
+        for idx, m in enumerate(markers):
+            seg_end = markers[idx + 1].start() if idx + 1 < len(markers) else len(text)
+            seg_text = text[m.end() : seg_end]
+            content = "\n".join(line for line in seg_text.splitlines() if line.strip())
+            start, end = _marker_timing(m.group(0))
+            segments.append({"content": content, "key": _chinese_key(content), "start": start, "end": end})
         return segments
     try:
         import srt
 
         subs = list(srt.parse(text))
         if subs:
-            return [{"content": s.content, "key": _chinese_key(s.content)} for s in subs]
+            return [
+                {"content": s.content, "key": _chinese_key(s.content), "start": s.start, "end": s.end} for s in subs
+            ]
     except Exception:
         pass
-    return [{"content": line, "key": _chinese_key(line)} for line in text.splitlines() if line.strip()]
+    return [
+        {"content": line, "key": _chinese_key(line), "start": None, "end": None}
+        for line in text.splitlines()
+        if line.strip()
+    ]
 
 
 def _parse_displayed_segments(text: str) -> list[dict]:
@@ -375,6 +404,7 @@ def _format_timestamp(td) -> str:
 
 _MATCH_THRESHOLD = 0.8  # minimum Chinese-content similarity to establish a match
 # (tolerates common OCR errors like 自→白, 叉→又, 毕竞→毕竟)
+_WALK_WINDOW = 10  # look-ahead distance when re-anchoring after a mismatch
 
 
 def _chinese_similarity(a: str, b: str) -> float:
@@ -393,112 +423,203 @@ def _chinese_similarity(a: str, b: str) -> float:
     return difflib.SequenceMatcher(None, a, b, autojunk=False).ratio()
 
 
-def _align_segments(displayed: list[dict], standard: list[dict]) -> tuple[list, list[dict]]:
-    """Align displayed segments to standard segments, standard-driven.
+def _pair_matches(dseg: dict, sseg: dict) -> bool:
+    """True when a displayed segment and a standard segment correspond.
 
-    The uploaded (standard) file drives the matching: starting from its first
-    segment with Chinese content (the file may carry title/intro text at the
-    beginning), we walk down the displayed list to find the first displayed
-    segment that matches it — every displayed segment before that anchor is
-    silenced.  From the anchor on, the two lists are matched segment by
-    segment: standard segments with no matching displayed segment are
-    dropped, and displayed segments with no matching standard segment are
-    silenced (emptied).
+    Prefers the CJK-content key; when neither side has Chinese (e.g. noise
+    segments like ``OK``) the normalized plain text must match exactly, so
+    such segments pair up instead of being duplicated.
+    """
+    dkey = dseg["key"]
+    skey = sseg["key"]
+    if dkey and skey:
+        return _chinese_similarity(dkey, skey) >= _MATCH_THRESHOLD
+    if not dkey and not skey:
+        d = re.sub(r"\s+", "", dseg["content"] or "").lower()
+        s = re.sub(r"\s+", "", sseg["content"] or "").lower()
+        return bool(d) and d == s
+    return False
 
-    Returns ``(alignment, unmatched)`` where ``alignment`` parallels the
-    displayed list and ``unmatched`` lists standard segments that found no
-    match (with their best similarity and the closest displayed segment).
+
+def _align_segments(displayed: list[dict], standard: list[dict]) -> list[dict]:
+    """Merge displayed & standard segment lists, two-pointer walk.
+
+    Matched pairs take the displayed timing with the standard content.
+    Unmatched segments are copied from either side — but only *between the
+    first and the last matched standard segment*.  Before the first match the
+    displayed segments are silenced (emptied) and the leading standard
+    segments are dropped; after the last match the trailing displayed
+    segments are silenced and the trailing standard segments are dropped.
+
+    Standard-only segments keep their own timing when available (otherwise
+    they are slotted right after the previous entry).  After copying a
+    segment the walk moves to the next segment and re-anchors matching at
+    the new pair.
+
+    Returns a list of entries ``{start, end, content, kind}`` in walk order
+    with monotonic non-decreasing timing (``kind`` ∈ matched/displayed/
+    standard).
     """
     n_disp = len(displayed)
     n_std = len(standard)
-    result = [None] * n_disp
-    unmatched = []
+    entries: list[dict] = []
+    di = 0
+    si = 0
 
-    # ── Anchor: first standard segment (with CJK content) that matches some
-    #    displayed segment; displayed segments before it stay silenced.
-    anchor_d = -1
-    anchor_s = -1
-    for si in range(n_std):
-        skey = standard[si]["key"]
-        if not skey:
-            continue
-        for di in range(n_disp):
-            dkey = displayed[di]["key"]
-            if dkey and _chinese_similarity(dkey, skey) >= _MATCH_THRESHOLD:
-                anchor_d, anchor_s = di, si
-                break
-        if anchor_s >= 0:
-            break
-    if anchor_s < 0:
-        # Nothing matched anywhere: report every standard segment.
-        for seg in standard:
-            if seg["key"]:
-                unmatched.append({"content": seg["content"], "best_sim": 0.0, "best_displayed": ""})
-        return result, unmatched
+    def add_displayed(idx):
+        d = displayed[idx]
+        entries.append({"start": d["start"], "end": d["end"], "content": d["content"], "kind": "displayed"})
 
-    result[anchor_d] = standard[anchor_s]
+    def add_standard(idx):
+        s = standard[idx]
+        entries.append({"start": s.get("start"), "end": s.get("end"), "content": s["content"], "kind": "standard"})
 
-    # ── Sequential: match the remaining standard segments against the
-    #    remaining displayed segments, in order.  Displayed segments skipped
-    #    while searching stay silenced; standard segments with no match are
-    #    dropped (the next standard segment still tries from the same place).
-    di = anchor_d + 1
-    si = anchor_s + 1
-    while si < n_std:
-        skey = standard[si]["key"]
-        if not skey:
+    while di < n_disp and si < n_std:
+        if _pair_matches(displayed[di], standard[si]):
+            d = displayed[di]
+            s = standard[si]
+            entries.append({"start": d["start"], "end": d["end"], "content": s["content"], "kind": "matched"})
+            di += 1
             si += 1
             continue
-        search = di
-        best_sim = 0.0
-        best_content = ""
-        while search < n_disp:
-            dkey = displayed[search]["key"]
-            if dkey:
-                sim = _chinese_similarity(dkey, skey)
-                if sim > best_sim:
-                    best_sim = sim
-                    best_content = displayed[search]["content"]
-                if sim >= _MATCH_THRESHOLD:
-                    result[search] = standard[si]
-                    di = search + 1
-                    break
-            search += 1
-        else:
-            unmatched.append(
-                {"content": standard[si]["content"], "best_sim": round(best_sim, 3), "best_displayed": best_content}
-            )
+
+        # Re-anchor: find the nearest future matching pair within the window.
+        found = None
+        for a in range(0, _WALK_WINDOW + 1):
+            for b in range(0, _WALK_WINDOW + 1):
+                if a == 0 and b == 0:
+                    continue
+                if di + a >= n_disp or si + b >= n_std:
+                    continue
+                if _pair_matches(displayed[di + a], standard[si + b]) and (
+                    found is None or a + b < found[0] + found[1]
+                ):
+                    found = (a, b)
+        if found is None:
+            # No future match nearby: copy everything that is left.
+            for x in range(di, n_disp):
+                add_displayed(x)
+            for y in range(si, n_std):
+                add_standard(y)
+            di, si = n_disp, n_std
+            break
+        a, b = found
+        for x in range(di, di + a):
+            add_displayed(x)
+        for y in range(si, si + b):
+            add_standard(y)
+        di += a
+        si += b
+
+    while di < n_disp:
+        add_displayed(di)
+        di += 1
+    while si < n_std:
+        add_standard(si)
         si += 1
-    return result, unmatched
+
+    # Copy-only window: unmatched segments are copied only between the first
+    # and the last matched standard segment.  Outside that window displayed
+    # entries are silenced and standard entries are dropped.
+    first_match = next((i for i, e in enumerate(entries) if e["kind"] == "matched"), None)
+    last_match = max((i for i, e in enumerate(entries) if e["kind"] == "matched"), default=None)
+    if first_match is None:
+        for e in entries:
+            if e["kind"] == "displayed":
+                e["content"] = ""
+            elif e["kind"] == "standard":
+                e["kind"] = "drop"
+    else:
+        for i, e in enumerate(entries):
+            if i < first_match or i > last_match:
+                if e["kind"] == "displayed":
+                    e["content"] = ""
+                elif e["kind"] == "standard":
+                    e["kind"] = "drop"
+    entries = [e for e in entries if e["kind"] != "drop"]
+
+    # Timing: displayed-based entries (matched/displayed) are the gold
+    # standard and are never touched.  Standard-only entries are inserted
+    # into the gaps between them: their timing is taken from the missed
+    # segment's own timing when it overlaps the gap (clamped to fit), else a
+    # 2-second heuristic slot at the start of the gap.
+    _slot_standard_entries(entries)
+    return entries
 
 
-def _build_corrected_srt(displayed: list[dict], matched: list) -> str:
-    """Compose the corrected SRT from displayed segments and alignment."""
+def _slot_standard_entries(entries: list[dict]) -> None:
+    """Assign timing to standard-only entries inside the gaps between
+    displayed-based entries, without ever modifying displayed timing."""
+    i = 0
+    n = len(entries)
+    while i < n:
+        if entries[i]["kind"] != "standard":
+            i += 1
+            continue
+        j = i
+        while j < n and entries[j]["kind"] == "standard":
+            j += 1
+        gap_start = entries[i - 1]["end"] if i > 0 else timedelta(0)
+        gap_end = entries[j]["start"] if j < n else None
+
+        cursor = gap_start
+        for k in range(i, j):
+            e = entries[k]
+            own_start, own_end = e.get("start"), e.get("end")
+            placed = False
+            if own_start is not None and own_end is not None and own_end > own_start:
+                # Reference the missed segment's own timing: use the overlap
+                # with the gap when it exists.
+                hi = gap_end if gap_end is not None else own_end
+                s = max(own_start, cursor)
+                t = min(own_end, hi)
+                if t > s:
+                    e["start"], e["end"] = s, t
+                    cursor = t
+                    placed = True
+                elif own_start >= cursor:
+                    e["start"], e["end"] = own_start, own_end
+                    cursor = own_end
+                    placed = True
+            if not placed:
+                dur = timedelta(seconds=2)
+                s = cursor
+                t = s + dur
+                if gap_end is not None and t > gap_end:
+                    t = gap_end
+                if t <= s:
+                    t = s + dur
+                e["start"], e["end"] = s, t
+                cursor = t
+        i = j
+
+
+def _build_corrected_srt(entries: list[dict]) -> str:
+    """Compose the corrected SRT from merged entries (walk order)."""
     lines = []
-    for i, (seg, std) in enumerate(zip(displayed, matched), start=1):
-        content = std["content"] if std else ""
+    for i, e in enumerate(entries, start=1):
         lines.append(str(i))
-        lines.append(f"{_format_timestamp(seg['start'])} --> {_format_timestamp(seg['end'])}")
-        if content:
-            lines.append(content)
+        lines.append(f"{_format_timestamp(e['start'])} --> {_format_timestamp(e['end'])}")
+        if e["content"]:
+            lines.append(e["content"])
         lines.append("")
     return "\n".join(lines)
 
 
 def build_corrected_srt(displayed_text: str, standard_text: str) -> str:
-    """Rebuild a SRT keeping the displayed timing but swapping in the
-    standard's content, matched segment-by-segment via fuzzy CJK content.
+    """Rebuild a SRT merging the displayed and standard files.
 
-    Both files may be bilingual (e.g. zh+en); the correspondence is made on
-    the Chinese text only. Displayed segments with no close match in the
-    standard file are emptied (silenced) but keep their timing, so the output
-    stays frame-aligned.
+    Matched pairs keep the displayed timing with the standard content
+    (matched by fuzzy CJK content only, ignoring stray ``OK`` tokens).
+    Unmatched segments — from either the displayed or the standard file —
+    are copied into the output between the first and the last matched
+    standard segment, so nothing in that range is lost.
     """
     displayed = _parse_displayed_segments(displayed_text)
     standard = _parse_segments(standard_text)
 
-    matched, _ = _align_segments(displayed, standard)
-    return _build_corrected_srt(displayed, matched)
+    entries = _align_segments(displayed, standard)
+    return _build_corrected_srt(entries)
 
 
 def corrected_srt_name(safe_path: str) -> str:
@@ -683,8 +804,8 @@ def files_correct_srt():
     """Calibrate a displayed SRT against an uploaded standard SRT/text file.
 
     Timing is taken from the displayed file; content is taken from the
-    uploaded standard, matched by CJK content. Displayed segments without a
-    CJK match are emptied (silenced).
+    uploaded standard, matched by CJK content. Unmatched segments are copied
+    from either side between the first and the last matched standard segment.
     """
     file_path = request.form.get("path")
     if not file_path:
@@ -711,28 +832,23 @@ def files_correct_srt():
     if not any(seg["key"] for seg in standard):
         return jsonify({"error": "上传的标准文件中没有检测到中文内容，请确认文件内容正确（需包含中文字幕文字）"}), 400
 
-    matched, unmatched = _align_segments(displayed, standard)
-    corrected = _build_corrected_srt(displayed, matched)
+    entries = _align_segments(displayed, standard)
+    corrected = _build_corrected_srt(entries)
 
-    matched_count = sum(1 for m in matched if m is not None)
+    matched_count = sum(1 for e in entries if e["kind"] == "matched")
+    displayed_only = [e for e in entries if e["kind"] == "displayed" and e["content"].strip()]
+    standard_only = [e for e in entries if e["kind"] == "standard" and e["content"].strip()]
     logger.info(
-        "correct-srt: standard=%s bytes=%d text_len=%d cjk_chars=%d std_segments=%d matched=%d/%d unmatched=%d",
+        "correct-srt: standard=%s bytes=%d text_len=%d cjk_chars=%d std_segments=%d matched=%d displayed_only=%d standard_only=%d",
         standard_file.filename,
         len(raw),
         len(standard_text),
         len(_CJK_RE.findall(standard_text)),
         len(standard),
         matched_count,
-        len(displayed),
-        len(unmatched),
+        len(displayed_only),
+        len(standard_only),
     )
-    for u in unmatched:
-        logger.info(
-            "correct-srt unmatched: %r best_sim=%s best_displayed=%r",
-            u["content"][:80],
-            u["best_sim"],
-            u["best_displayed"][:80],
-        )
     name = corrected_srt_name(safe)
     return jsonify(
         {
@@ -740,8 +856,9 @@ def files_correct_srt():
             "content": corrected,
             "filename": name,
             "matched": matched_count,
-            "total": len(displayed),
-            "unmatched": unmatched,
+            "total": len(entries),
+            "displayed_only": [e["content"] for e in displayed_only],
+            "standard_only": [e["content"] for e in standard_only],
         }
     )
 
