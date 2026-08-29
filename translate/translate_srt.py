@@ -233,7 +233,7 @@ class _DaemonTranslateClient:
                         "intro": intro_marker,
                         "outro": outro_marker,
                     },
-                    timeout=6 * 3600,
+                    timeout=None,
                 )
             except _DaemonUnavailable as e:
                 if self._auto_start and self.ensure_daemon():

@@ -30,6 +30,17 @@ exits anyway, so a cool-but-unused daemon does not hold the GPU forever
 (set to 0 to disable).  Clients restart the daemon on demand
 (translate_srt.py auto mode does this).
 
+A GPU hang watchdog (shared HangGuard in gpu_thermal.py — the same guard
+the gen_audio daemon uses) covers a daemon that never responds at all:
+when a GPU translate/ensure_model job runs past
+TRANSLATE_HANG_TIMEOUT_SECS (default 6 h) it is stuck (e.g. hung GPU
+kernel) and the daemon shuts itself down — SIGTERM first, then SIGKILL
+after TRANSLATE_HANG_GRACE_SECS (default 90 s) if the stuck worker
+thread prevents a clean interpreter exit.  Clients restart the daemon on
+demand, so the next attempt gets a fresh process.  Only GPU jobs trigger
+this: the NPU slot talks to the separate npu-engine.service daemon
+(which keeps its own timeouts) and is left untouched.
+
 Runtime files: socket + pid live in $XDG_RUNTIME_DIR/translate_daemon/
 (tmpfs, 0700, auto-cleaned on reboot).
 
@@ -82,7 +93,7 @@ from rocm_env import setup as _rocm_setup  # noqa: E402
 _rocm_setup()  # before transformers/torch load ROCm libs
 
 from config import TRANSLATE_DAEMON_PID, TRANSLATE_DAEMON_SOCK  # noqa: E402
-from gpu_thermal import ThermalGate, log_system_temp  # noqa: E402
+from gpu_thermal import HangGuard, ThermalGate, log_system_temp  # noqa: E402
 
 # Import at module level (main thread) — translate_srt registers signal
 # handlers and imports hy_mt/transformers at import time.
@@ -93,6 +104,18 @@ DAEMON_PID = Path(TRANSLATE_DAEMON_PID).resolve()
 
 MAX_REQ_BYTES = 1 << 20  # 1 MB cap per request
 MAX_JOBS = max(1, int(os.environ.get("TRANSLATE_MAX_JOBS", "2")))
+
+# Hang watchdog (shared HangGuard, see gpu_thermal): a GPU
+# translate/ensure_model job running longer than this is treated as stuck
+# (e.g. hung GPU kernel) and the daemon kills itself — SIGTERM, then
+# SIGKILL after the grace period if the stuck worker thread still prevents
+# a clean interpreter exit.  GPU only — NPU jobs go through the separate
+# npu-engine.service and are never armed here.
+HANG = HangGuard(
+    hang_timeout_secs=float(os.environ.get("TRANSLATE_HANG_TIMEOUT_SECS", str(6 * 3600))),
+    grace_secs=float(os.environ.get("TRANSLATE_HANG_GRACE_SECS", "90")),
+    check_secs=float(os.environ.get("TRANSLATE_HANG_CHECK_SECS", "10")),
+)
 
 # Worker pools: one NPU worker (HY-MT on the NPU engine) plus
 # TRANSLATE_MAX_JOBS - 1 GPU workers.  Jobs are dispatched NPU-first
@@ -224,6 +247,18 @@ def _monitor():
             return
 
 
+def _hang_watchdog():
+    """GPU hang self-kill (shared HangGuard, see gpu_thermal — the same
+    guard the gen_audio daemon uses).
+
+    A GPU worker stuck in a ROCm call never returns; when such a job
+    exceeds the hang timeout the guard requests a clean exit (SIGTERM)
+    and force-kills after the grace period if the stuck worker thread
+    prevents interpreter shutdown.  Only GPU jobs are armed, so NPU jobs
+    never trigger this.  Clients restart the daemon on demand."""
+    HANG.watch(request_quit=_request_quit, is_quit=lambda: _QUIT)
+
+
 # ── Socket protocol ─────────────────────────────────────────
 
 
@@ -289,6 +324,8 @@ def _run_ensure_model(conn, req, npu):
     global _ACTIVE
     with _ACTIVE_LOCK:
         _ACTIVE += 1
+        if not npu:
+            HANG.arm()
     try:
         if npu:
             from npu_client import NpuEngineClient, NpuEngineUnavailable
@@ -314,6 +351,8 @@ def _run_ensure_model(conn, req, npu):
     finally:
         with _ACTIVE_LOCK:
             _ACTIVE -= 1
+            if not npu:
+                HANG.disarm()
         _release_slot(npu)
 
 
@@ -322,6 +361,8 @@ def _run_translate(conn, req, npu):
     try:
         with _ACTIVE_LOCK:
             _ACTIVE += 1
+            if not npu:
+                HANG.arm()
         GATE.disarm_grace()  # prewarm is consumed — idle-hot shutdown may fire once idle again
         GATE.disarm_idle_timeout()  # a job is here — idle countdown re-arms when it finishes
         input_path = Path(str(req["input_path"])).resolve()
@@ -352,6 +393,8 @@ def _run_translate(conn, req, npu):
         GATE.arm_idle_timeout()  # idle again — exit after the idle countdown even while cool
         with _ACTIVE_LOCK:
             _ACTIVE -= 1
+            if not npu:
+                HANG.disarm()
         _release_slot(npu)
 
 
@@ -504,6 +547,7 @@ def main():
     signal.signal(signal.SIGINT, _set_quit)
 
     threading.Thread(target=_monitor, daemon=True, name="monitor").start()
+    threading.Thread(target=_hang_watchdog, daemon=True, name="hang-watchdog").start()
 
     print(
         f"[daemon] translate daemon ready on {DAEMON_SOCK} "
@@ -511,7 +555,8 @@ def main():
         f"npu slot: {'on' if NPU_SLOT else 'off'}, gpu workers: {N_GPU_WORKERS}, "
         f"temp limit: {GATE.temp_limit:.0f}°C, idle temp: {GATE.idle_temperature:.0f}°C, "
         f"idle grace: {GATE.idle_grace_secs:.0f}s, critical: {GATE.idle_critical_temp:.0f}°C, "
-        f"idle timeout: {GATE.idle_timeout_secs:.0f}s)"
+        f"idle timeout: {GATE.idle_timeout_secs:.0f}s, "
+        f"gpu hang kill: {HANG.hang_timeout_secs / 3600:.1f}h + {HANG.grace_secs:.0f}s grace)"
     )
     log_system_temp("startup")
 

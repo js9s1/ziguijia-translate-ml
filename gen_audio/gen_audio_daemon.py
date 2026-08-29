@@ -30,6 +30,15 @@ anyway, so a cool-but-unused daemon does not hold the GPU forever (set
 to 0 to disable).  Clients restart the daemon on demand (gen_audio.py
 auto mode does this).
 
+A hang watchdog (shared HangGuard in gpu_thermal.py — the same guard the
+GPU translate daemon uses) covers a daemon that never responds at all:
+when a tts/ensure_model job runs past GEN_AUDIO_HANG_TIMEOUT_SECS
+(default 6 h) it is stuck (e.g. hung ROCm kernel) and the daemon shuts
+itself down — SIGTERM first, then SIGKILL after
+GEN_AUDIO_HANG_GRACE_SECS (default 90 s) if the stuck worker thread
+prevents a clean interpreter exit.  Clients restart the daemon on
+demand, so the next attempt gets a fresh process.
+
 Runtime files: socket + pid live in $XDG_RUNTIME_DIR/gen_audio_daemon/
 (tmpfs, 0700, auto-cleaned on reboot).
 
@@ -77,7 +86,7 @@ sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE.parent / "chatterbox-server"))
 
 from config import AUDIO_PROMPT_PATH, GEN_AUDIO_DAEMON_PID, GEN_AUDIO_DAEMON_SOCK  # noqa: E402
-from gpu_thermal import ThermalGate, log_system_temp  # noqa: E402
+from gpu_thermal import HangGuard, ThermalGate, log_system_temp  # noqa: E402
 
 DAEMON_SOCK = Path(GEN_AUDIO_DAEMON_SOCK).resolve()
 DAEMON_PID = Path(GEN_AUDIO_DAEMON_PID).resolve()
@@ -97,6 +106,17 @@ GATE = ThermalGate(
     idle_timeout_secs=float(os.environ.get("GEN_AUDIO_IDLE_TIMEOUT_SECS", "300")),
 )
 _THERMAL_BLOCKED = GATE.blocked  # workers wait on this while the gate is closed
+
+# Hang self-kill (shared HangGuard, see gpu_thermal — same guard the GPU
+# translate daemon uses): a TTS/ensure_model job running longer than this
+# is treated as stuck (e.g. hung ROCm kernel) and the daemon kills itself —
+# SIGTERM first, then SIGKILL after the grace period if the stuck worker
+# thread still prevents a clean interpreter exit.
+HANG = HangGuard(
+    hang_timeout_secs=float(os.environ.get("GEN_AUDIO_HANG_TIMEOUT_SECS", str(6 * 3600))),
+    grace_secs=float(os.environ.get("GEN_AUDIO_HANG_GRACE_SECS", "90")),
+    check_secs=float(os.environ.get("GEN_AUDIO_HANG_CHECK_SECS", "10")),
+)
 
 _QUIT = False
 _ACTIVE = 0
@@ -377,6 +397,17 @@ def _thermal_monitor():
             return
 
 
+def _hang_watchdog():
+    """Hang self-kill for a daemon that never responds (shared HangGuard,
+    see gpu_thermal — the same guard the GPU translate daemon uses).
+
+    A worker stuck in a ROCm call never returns; when a job exceeds the
+    hang timeout the guard requests a clean exit (SIGTERM) and force-kills
+    after the grace period if the stuck worker thread prevents interpreter
+    shutdown.  Clients restart the daemon on demand."""
+    HANG.watch(request_quit=_request_quit, is_quit=lambda: _QUIT)
+
+
 # ── Socket protocol ─────────────────────────────────────────
 
 
@@ -438,6 +469,7 @@ def _submit_ensure_model(conn, req):
         global _ACTIVE
         with _ACTIVE_LOCK:
             _ACTIVE += 1
+        HANG.arm()
         try:
             lang = str(req.get("language", "en"))
             model = _ensure_thread_model(lang)
@@ -448,6 +480,7 @@ def _submit_ensure_model(conn, req):
         finally:
             with _ACTIVE_LOCK:
                 _ACTIVE -= 1
+            HANG.disarm()
             JOB_SLOTS.release()
 
     try:
@@ -460,6 +493,7 @@ def _submit_ensure_model(conn, req):
 def _submit_tts(conn, req):
     def run_job():
         global _ACTIVE
+        HANG.arm()
         try:
             with _ACTIVE_LOCK:
                 _ACTIVE += 1
@@ -503,6 +537,7 @@ def _submit_tts(conn, req):
         finally:
             with _ACTIVE_LOCK:
                 _ACTIVE -= 1
+            HANG.disarm()
             GATE.arm_grace()  # idle again — back-to-back jobs may reuse this model before idle-hot shutdown
             GATE.arm_idle_timeout()  # idle again — exit after the idle countdown even while cool
             JOB_SLOTS.release()
@@ -664,13 +699,19 @@ def main():
     signal.signal(signal.SIGINT, _set_quit)
 
     threading.Thread(target=_thermal_monitor, daemon=True, name="thermal").start()
+    threading.Thread(
+        target=_hang_watchdog,
+        daemon=True,
+        name="hang-watchdog",
+    ).start()
 
     print(
         f"[daemon] TTS daemon ready on {DAEMON_SOCK} "
         f"(device: {device_name}, max concurrent jobs: {MAX_JOBS}, "
         f"temp limit: {GATE.temp_limit:.0f}°C, idle temp: {GATE.idle_temperature:.0f}°C, "
         f"idle grace: {GATE.idle_grace_secs:.0f}s, critical: {GATE.idle_critical_temp:.0f}°C, "
-        f"idle timeout: {GATE.idle_timeout_secs:.0f}s)"
+        f"idle timeout: {GATE.idle_timeout_secs:.0f}s, "
+        f"hang kill: {HANG.hang_timeout_secs / 3600:.1f}h + {HANG.grace_secs:.0f}s grace)"
     )
     log_system_temp("startup")
 

@@ -1,10 +1,12 @@
-"""Shared GPU thermal logic — used by gen_audio.py (client) and the warm daemons.
+"""Shared GPU logic — used by gen_audio.py (client) and the warm daemons.
 
 ``get_gpu_temp`` reads the GPU temperature; ``ThermalGate`` implements the
-thermal gate + idle-temperature shutdown shared by translate_daemon.py and
-gen_audio_daemon.py.
+thermal gate + idle-temperature shutdown and ``HangGuard`` the per-job
+hang self-kill, both shared by translate_daemon.py and gen_audio_daemon.py.
 """
 
+import os
+import signal
 import threading
 import time
 from pathlib import Path
@@ -172,3 +174,83 @@ class ThermalGate:
             return True
         time.sleep(self.poll_secs)
         return False
+
+
+class HangGuard:
+    """Per-job hang self-kill shared by the warm daemons.
+
+    A worker stuck in a GPU/ROCm call never returns, so no response is
+    ever sent and the client waits indefinitely.  Workers call ``arm()``
+    when a job starts and ``disarm()`` when it finishes; the watchdog
+    thread polls ``watch()`` and, if a job runs past ``hang_timeout``,
+    treats the daemon as stuck (e.g. hung GPU kernel) and kills it:
+    SIGTERM first (clean exit / ``request_quit``), then SIGKILL after
+    ``grace_secs`` if the stuck worker thread prevents a clean
+    interpreter exit (ThreadPoolExecutor.shutdown(wait=True) would block
+    forever).  The daemon thread dies with the process, so the SIGKILL
+    only ever fires while something is actually still alive.
+
+    Only jobs registered with ``arm()`` are watched — translate's NPU
+    slot talks to the separate npu-engine.service daemon (own timeouts)
+    and is never armed here.
+    """
+
+    def __init__(self, *, hang_timeout_secs: float, grace_secs: float, check_secs: float = 10.0):
+        self.hang_timeout_secs = hang_timeout_secs
+        self.grace_secs = grace_secs
+        self.check_secs = check_secs
+        self._lock = threading.Lock()
+        self._job_start = {}  # thread ident -> monotonic start time
+
+    def arm(self) -> None:
+        """Mark the running worker's job as started (call after slot acquire)."""
+        with self._lock:
+            self._job_start[threading.get_ident()] = time.monotonic()
+
+    def disarm(self) -> None:
+        """Mark the running worker's job as finished (call in finally)."""
+        with self._lock:
+            self._job_start.pop(threading.get_ident(), None)
+
+    @property
+    def active_jobs(self) -> int:
+        with self._lock:
+            return len(self._job_start)
+
+    def stuck(self) -> list[tuple[int, float]]:
+        """Jobs running past the hang timeout: [(thread_ident, elapsed_s), ...]."""
+        with self._lock:
+            now = time.monotonic()
+            return [
+                (tid, now - started)
+                for tid, started in list(self._job_start.items())
+                if now - started > self.hang_timeout_secs
+            ]
+
+    def watch(self, request_quit=None, is_quit=None) -> None:
+        """Watchdog loop.  On hang: request quit, SIGTERM, grace, SIGKILL.
+
+        *request_quit*: daemon callback that sets its quit flag (optional).
+        *is_quit*: daemon predicate — while True the loop retires early
+        (no forced kill for thermal/operator shutdowns; only hangs trigger
+        SIGKILL).  Runs as a daemon thread, so a clean exit kills it too.
+        """
+        while True:
+            time.sleep(self.check_secs)
+            if is_quit is not None and is_quit():
+                return
+            stuck = self.stuck()
+            if not stuck:
+                continue
+            for _tid, dur in stuck:
+                print(
+                    f"[daemon] job stuck for {dur / 60:.1f}min "
+                    f"(> {self.hang_timeout_secs / 60:.1f}min hang timeout) — shutting down"
+                )
+            if request_quit is not None:
+                request_quit()
+            os.kill(os.getpid(), signal.SIGTERM)
+            deadline = time.monotonic() + self.grace_secs
+            while time.monotonic() < deadline:
+                time.sleep(1)
+            os.kill(os.getpid(), signal.SIGKILL)
