@@ -64,8 +64,10 @@ Protocol (newline-delimited JSON per request, connection-per-request):
 
 SIGTERM or SIGINT stops the daemon cleanly after in-flight jobs finish.
 """
+import functools
 import gc
 import json
+import logging
 import os
 import signal
 import socket
@@ -80,6 +82,20 @@ if sys.stdout is not None:
     sys.stdout.reconfigure(line_buffering=True)
 if sys.stderr is not None:
     sys.stderr.reconfigure(line_buffering=True)
+
+# ── Quiet mode: only errors go to the daemon log ───────────
+# MIOpen/HIP warnings are C++ stderr noise (default level 3 = warning);
+# level 2 shows errors and fatal only.  Must be set before MIOpen loads.
+os.environ.setdefault("MIOPEN_LOG_LEVEL", "2")
+warnings.filterwarnings("ignore")
+logging.getLogger("chatterbox").setLevel(logging.ERROR)
+logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+try:
+    import tqdm as _tqdm
+
+    _tqdm.tqdm = functools.partial(_tqdm.tqdm, disable=True)
+except ImportError:
+    pass
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))

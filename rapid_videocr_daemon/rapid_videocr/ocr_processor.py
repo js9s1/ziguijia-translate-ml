@@ -1,6 +1,9 @@
 # -*- encoding: utf-8 -*-
 # @Author: SWHL
 # @Contact: liekkaskono@163.com
+import logging
+import os
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -8,6 +11,19 @@ import cv2
 import numpy as np
 from rapidocr import RapidOCR
 from tqdm import tqdm
+
+_DISABLE_TQDM = os.environ.get("RAPID_VIDEOCR_PROGRESS", "").strip().lower() in {
+    "0",
+    "false",
+    "no",
+} or not sys.stderr.isatty()
+
+
+class _DropEmptyDetection(logging.Filter):
+    """Silence the per-frame RapidOCR warning when a frame has no text."""
+
+    def filter(self, record):
+        return "The text detection result is empty" not in record.getMessage()
 
 from .utils.logger import Logger
 from .utils.utils import (
@@ -26,7 +42,9 @@ class OCRProcessor:
         self.batch_size = batch_size
 
     def _init_ocr_engine(self, ocr_params: Optional[Dict] = None) -> RapidOCR:
-        return RapidOCR(params=ocr_params)
+        engine = RapidOCR(params=ocr_params)
+        logging.getLogger("RapidOCR").addFilter(_DropEmptyDetection())
+        return engine
 
     def __call__(
         self, img_list: List[Path], is_batch_rec: bool, is_txt_dir: bool
@@ -43,7 +61,7 @@ class OCRProcessor:
         self.logger.info("[OCR] Running with single recognition.")
 
         rec_results = []
-        for i, img_path in enumerate(tqdm(img_list, desc="OCR")):
+        for i, img_path in enumerate(tqdm(img_list, desc="OCR", disable=_DISABLE_TQDM)):
             time_str = self._get_srt_timestamp(img_path)
             ass_time_str = self._get_ass_timestamp(img_path)
             img = self._preprocess_image(img_path)
@@ -125,7 +143,11 @@ class OCRProcessor:
 
         img_nums = len(img_list)
         rec_results = []
-        for start_i in tqdm(range(0, img_nums, self.batch_size), desc="Concat Rec"):
+        for start_i in tqdm(
+            range(0, img_nums, self.batch_size),
+            desc="Concat Rec",
+            disable=_DISABLE_TQDM,
+        ):
             end_i = min(img_nums, start_i + self.batch_size)
 
             concat_img, img_coordinates, img_paths = self._prepare_batch(
