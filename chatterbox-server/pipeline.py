@@ -368,6 +368,14 @@ def run_video_ckpt(
 # ── Download step ───────────────────────────────────────
 
 
+def normalize_video_number(video_number: str) -> str:
+    """Match download_orig.py's filename normalization for letter-prefixed numbers."""
+    video_number = video_number.strip()
+    if video_number[:1].isalpha():
+        return video_number[:1].upper() + video_number[1:]
+    return video_number
+
+
 def run_download_ckpt(
     video_number: str,
     output_dir: str,
@@ -380,6 +388,7 @@ def run_download_ckpt(
 
     Checkpoint-aware: skips if ``"download"`` is already marked.
     """
+    video_number = normalize_video_number(video_number)
     video_path = os.path.join(output_dir, f"{video_number}.mp4")
     if ckpt and ckpt.done("download"):
         job_log(access_code, output_dir, "  ↪ download already done, skipping")

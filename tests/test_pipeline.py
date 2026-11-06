@@ -26,6 +26,7 @@ sys.modules["log_utils"] = mock.MagicMock()
 
 from pipeline import (  # noqa: E402
     _build_atempo_filter,
+    normalize_video_number,
     validate_files,
 )
 
@@ -76,6 +77,20 @@ class TestBuildAtempoFilter:
             value = part.split("=")[1]
             assert "." in value
             assert len(value.split(".")[1]) == 6
+
+
+class TestNormalizeVideoNumber:
+    def test_numeric_unchanged(self):
+        assert normalize_video_number("10001") == "10001"
+
+    def test_lowercase_prefix_uppercased(self):
+        assert normalize_video_number("f1002") == "F1002"
+
+    def test_uppercase_prefix_unchanged(self):
+        assert normalize_video_number("A0001") == "A0001"
+
+    def test_whitespace_stripped(self):
+        assert normalize_video_number(" g0001 ") == "G0001"
 
 
 class TestValidateFiles:
