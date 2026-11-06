@@ -391,7 +391,7 @@ def run_download_ckpt(
         shutil.copy2(cached_path, video_path)
     else:
         job_log(access_code, output_dir, "Downloading original video...")
-        download_script = os.path.join(PROJECT_ROOT, "..", "pre-process", "download_orig.py")
+        download_script = os.path.join(PROJECT_ROOT, "pre-process", "download_orig.py")
         codec = job_data.get("codec", "mp4")
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
