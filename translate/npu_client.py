@@ -98,7 +98,10 @@ class NpuEngineClient:
     def ensure_model(self, timeout: float = 3600.0) -> dict:
         if not self.ensure_engine():
             raise NpuEngineUnavailable("engine not reachable")
-        return self._request({"cmd": "ensure_model"}, timeout=timeout)
+        resp = self._request({"cmd": "ensure_model"}, timeout=timeout)
+        if not resp.get("ok"):
+            raise NpuEngineUnavailable(f"engine ensure_model failed: {resp.get('error')}")
+        return resp
 
     def translate(self, text: str, language: str, timeout: float = 3600.0) -> str:
         resp = self._request(

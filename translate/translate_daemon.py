@@ -7,8 +7,9 @@ AMD NPU via npu-engine.service) plus TRANSLATE_MAX_JOBS - 1 GPU worker
 slots (HY-MT on the iGPU via ROCm).  Jobs are dispatched NPU-first: a
 single job always runs on the NPU; the GPU slot(s) are used only when the
 NPU is already busy.  The NPU slot falls back to the GPU if the engine
-cannot be reached.  Each worker owns its own model/engine handle (HY-MT
-keeps module-global state, so instances cannot be shared).
+cannot be reached or fails a translation (e.g. its NPU device is
+unavailable).  Each worker owns its own model/engine handle (HY-MT keeps
+module-global state, so instances cannot be shared).
 
 A global thermal gate pauses all workers while the GPU is above
 TRANSLATE_TEMP_LIMIT and resumes them once it cools to
@@ -222,6 +223,7 @@ class _ThreadBackend:
         self._npu = npu
 
     def translate(self, text, target_language):
+        from npu_client import NpuEngineUnavailable
         from translate_srt import _translate_with_retry
 
         if self._npu and not getattr(_WORKER_TL, "npu_down", True):
@@ -230,8 +232,16 @@ class _ThreadBackend:
 
                 _WORKER_TL.npu_client = NpuEngineClient()
             if _WORKER_TL.npu_client.ensure_engine():
-                return _WORKER_TL.npu_client.translate(text, target_language)
-            _WORKER_TL.npu_down = True
+                try:
+                    return _WORKER_TL.npu_client.translate(text, target_language)
+                except NpuEngineUnavailable as e:
+                    # The engine can be reachable but unusable (e.g. its NPU
+                    # device failed to initialize).  Mark the NPU slot down and
+                    # translate this and all later segments on the GPU model.
+                    print(f"[daemon] NPU translate failed ({e}) — falling back to GPU")
+                    _WORKER_TL.npu_down = True
+            else:
+                _WORKER_TL.npu_down = True
         model, tokenizer = _thread_model()
         return _translate_with_retry(model, tokenizer, text, target_language)
 
@@ -334,6 +344,7 @@ def _run_ensure_model(conn, req, npu):
                 _WORKER_TL.npu_client = NpuEngineClient()
             try:
                 resp = _WORKER_TL.npu_client.ensure_model()
+                _WORKER_TL.npu_down = False  # recovered (e.g. NPU device restored)
                 GATE.arm_grace()
                 _send_response(conn, {"ok": True, "device": resp.get("device", "npu")})
                 return
