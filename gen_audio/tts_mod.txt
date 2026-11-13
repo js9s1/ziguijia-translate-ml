@@ -27,3 +27,25 @@
 **Fix:** 
 - Reduced long_tail activation threshold from 5 (200ms) to 3 (120ms)
 - Expanded token repetition detection: catches 4x identical tokens, alternating patterns (A,B,A,B or A,A,B,B), and 3x same in last 4
+
+## V3 upgrade (2026-11-08)
+
+Chatterbox Multilingual V3 is not in PyPI 0.1.7. The daemon now installs
+upstream git commit `ab55923c27757c90cfcc407baa57dc25a7d25217` and selects
+the checkpoint via `CHATTERBOX_T3_MODEL` (default `v3`).
+
+Status of the patches above with V3:
+
+- **#1 `drop_invalid_tokens` vocabulary guard — still needed.**
+  V3 still has T3 `speech_tokens_dict_size=8194` versus the flow model's
+  6561-token embedding, and upstream still only strips SOS/EOS. Apply
+  `patches/chatterbox_v3_drop_invalid_tokens.patch` after every reinstall:
+  `patch -p1 -d "$(~/.pyenv/versions/3.11.14/bin/python3.11 -c 'import chatterbox,pathlib;print(pathlib.Path(chatterbox.__file__).parent.parent)')" < gen_audio/patches/chatterbox_v3_drop_invalid_tokens.patch`.
+- **#2 `mtl_tts.py` `map_location="cpu"` — already upstream.** No separate patch.
+- **#3 eager attention / SDPA disable — optional.** Upstream V3 sets
+  `output_attentions=False`; only reapply if ROCm warnings or NaNs persist.
+- **#4 `alignment_stream_analyzer` — obsolete.** Upstream V3 removes the file
+  and all references to it. Do not port this patch.
+
+V3 also lowers `repetition_penalty` from 2.0 to 1.2 and drops the final speech
+token, so the old hallucination analyzer is intentionally gone.

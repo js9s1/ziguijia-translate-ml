@@ -40,6 +40,9 @@ AUDIO_PROMPT_PATH = os.environ.get(
     "AUDIO_PROMPT_PATH",
     os.path.join(ASSETS_DIR, "std_ning.wav"),
 )
+# Chatterbox multilingual T3 checkpoint: "v3" (current) or "v2" (legacy).
+# V3 requires chatterbox-tts from upstream git; PyPI 0.1.7 has no V3 support.
+CHATTERBOX_T3_MODEL = os.environ.get("CHATTERBOX_T3_MODEL", "v3")
 GEN_AUDIO_SCRIPT = os.environ.get(
     "GEN_AUDIO_SCRIPT",
     os.path.join(PROJECT_ROOT, "gen_audio", "gen_audio.py"),

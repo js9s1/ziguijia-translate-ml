@@ -9,7 +9,7 @@ import gc
 import os
 
 import torch
-from config import AUDIO_PROMPT_PATH
+from config import AUDIO_PROMPT_PATH, CHATTERBOX_T3_MODEL
 
 # ── Model globals (exactly one may be non-None) ──────────────
 
@@ -85,7 +85,10 @@ def _load_multilingual_model():
 
     device = _choose_device("cuda")
     print(f"Loading multilingual TTS model to {device}...")
-    _model = ChatterboxMultilingualTTS.from_pretrained(device=device)
+    _model = ChatterboxMultilingualTTS.from_pretrained(
+        device=device,
+        t3_model=CHATTERBOX_T3_MODEL,
+    )
     _model.prepare_conditionals(AUDIO_PROMPT_PATH)
     print(f"Multilingual TTS model ready ({device}, S3Gen on cpu).")
 

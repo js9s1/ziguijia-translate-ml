@@ -101,7 +101,13 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE.parent / "chatterbox-server"))
 
-from config import AUDIO_PROMPT_PATH, GEN_AUDIO_DAEMON_PID, GEN_AUDIO_DAEMON_SOCK  # noqa: E402
+from config import (  # noqa: E402
+    AUDIO_PROMPT_PATH,
+    CHATTERBOX_T3_MODEL,
+    GEN_AUDIO_DAEMON_PID,
+    GEN_AUDIO_DAEMON_SOCK,
+)
+
 from gpu_thermal import HangGuard, ThermalGate, log_system_temp  # noqa: E402
 
 DAEMON_SOCK = Path(GEN_AUDIO_DAEMON_SOCK).resolve()
@@ -234,9 +240,12 @@ def _load_multilingual():
 
     device = _choose_device()
     print(f"[daemon] loading multilingual TTS model to {device}...")
-    model = ChatterboxMultilingualTTS.from_pretrained(device=device)
+    model = ChatterboxMultilingualTTS.from_pretrained(
+        device=device,
+        t3_model=CHATTERBOX_T3_MODEL,
+    )
     model.prepare_conditionals(AUDIO_PROMPT_PATH)
-    print(f"[daemon] multilingual TTS model ready ({device})")
+    print(f"[daemon] multilingual TTS model ready ({device}, t3={CHATTERBOX_T3_MODEL})")
     return model
 
 
@@ -245,7 +254,6 @@ def _load_indonesian():
 
     warnings.filterwarnings("ignore")
     from chatterbox.tts import ChatterboxTTS
-
     from huggingface_hub import hf_hub_download
     from safetensors.torch import load_file
 
