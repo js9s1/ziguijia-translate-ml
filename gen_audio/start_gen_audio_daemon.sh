@@ -12,10 +12,10 @@
 # not running (it also exits once the GPU is hot while idle — GEN_AUDIO_IDLE_TEMPERATURE).
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/../rocm_env.sh"
+GEN_AUDIO_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$GEN_AUDIO_DIR/../rocm_env.sh"
 export GEN_AUDIO_MAX_JOBS="${GEN_AUDIO_MAX_JOBS:-2}"
 
 GEN_AUDIO_PYTHON="${GEN_AUDIO_PYTHON:-$HOME/.pyenv/versions/3.11.14/bin/python3.11}"
 
-exec "$GEN_AUDIO_PYTHON" -u "$SCRIPT_DIR/gen_audio_daemon.py" "$@"
+exec "$GEN_AUDIO_PYTHON" -u "$GEN_AUDIO_DIR/gen_audio_daemon.py" "$@"
