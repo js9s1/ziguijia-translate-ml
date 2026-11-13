@@ -25,6 +25,36 @@ from video_util import read_srt_text
 
 VAAPI_DEVICE = "/dev/dri/renderD128"
 
+# Chinese-text band in the reference 1280x720 frame (x, y, w, h).
+# The downloaded/uploaded source videos are 720p-derived, so the
+# original coordinates were tuned for that size.
+_DELOGO_BASE_W = 1280
+_DELOGO_BASE_H = 720
+_DELOGO_BASE_RECT = (100, 600, 1060, 80)
+
+
+def _delogo_filter(width: int | None, height: int | None) -> str:
+    """Build the delogo filter, scaled to the video's actual dimensions.
+
+    The rectangle is authored against a 1280x720 frame; hard-coding those
+    coordinates broke smaller uploads (e.g. 854x480) with "Logo area is
+    outside of the frame".
+    """
+    if not width or not height:
+        raise RuntimeError("Cannot determine video dimensions for blur")
+    x, y, w, h = _DELOGO_BASE_RECT
+    x = int(round(x * width / _DELOGO_BASE_W))
+    y = int(round(y * height / _DELOGO_BASE_H))
+    w = int(round(w * width / _DELOGO_BASE_W))
+    h = int(round(h * height / _DELOGO_BASE_H))
+    # Keep the rectangle aligned to even pixels for yuv420p chroma planes.
+    x, y, w, h = (v - v % 2 for v in (x, y, w, h))
+    w = max(2, w)
+    h = max(2, h)
+    x = max(0, min(x, width - w))
+    y = max(0, min(y, height - h))
+    return f"format=yuv420p,delogo=x={x}:y={y}:w={w}:h={h}:show=0"
+
 
 def _ffmpeg_error_lines(stderr: str | None, exit_status: int) -> str:
     """Last stderr lines of a failed ffmpeg run (no command line)."""
@@ -559,7 +589,7 @@ def main():
 
     try:
         if args.blur:
-            print("Applying delogo filter to blur Chinese text...")
+            print(f"Applying delogo filter to blur Chinese text ({video_info['width']}x{video_info['height']})...")
             # The delogo filter is software-only and doesn't play well
             # with ffmpeg's auto-inserted VAAPI scaler when hwupload
             # is in the graph.  Run the blur pass entirely on CPU
@@ -574,7 +604,7 @@ def main():
                 "-i",
                 audio_wav,
                 "-vf",
-                "format=yuv420p,delogo=x=100:y=600:w=1060:h=80:show=0",
+                _delogo_filter(video_info["width"], video_info["height"]),
                 "-c:v",
                 "libx264",
                 "-crf",
