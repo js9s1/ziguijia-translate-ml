@@ -150,6 +150,76 @@ class TestSRTSave:
         assert resp.status_code in (400, 404)  # path not allowed, or content invalid
 
 
+class TestSRTSaveCancelsRunningJob:
+    """Saving an upstream SRT while the job runs must stop the job.
+
+    Regression for C6A9BA84: editing whisper.srt during audio generation
+    purged translated.srt while the worker kept running, so it failed at
+    the video step and re-marked the stale audio checkpoint.
+    """
+
+    def _setup_job(self):
+        import os
+
+        from config import VIDEO_DIR
+        from jobqueue import JobStatus, get_job_queue
+        from middleware import ALLOWED_FILE_DIRS
+
+        video_dir = str(VIDEO_DIR)
+        os.makedirs(video_dir, exist_ok=True)
+        real = os.path.realpath(video_dir)
+        if real not in ALLOWED_FILE_DIRS:
+            ALLOWED_FILE_DIRS.append(real)
+
+        output_dir = os.path.join(video_dir, "CANCEL01")
+        os.makedirs(output_dir, exist_ok=True)
+        whisper = os.path.join(output_dir, "whisper.srt")
+        with open(whisper, "w", encoding="utf-8") as fh:
+            fh.write("1\n00:00:01,000 --> 00:00:02,000\n你好\n")
+        translated = os.path.join(output_dir, "translated.srt")
+        with open(translated, "w", encoding="utf-8") as fh:
+            fh.write("1\n00:00:01,000 --> 00:00:02,000\nHello\n")
+
+        jq = get_job_queue()
+        code = "CANCEL01"
+        conn = jq._get_conn()
+        conn.execute(
+            "INSERT INTO jobs (access_code, output_dir, run_func_name, status, checkpoint) VALUES (?, ?, ?, ?, ?)",
+            (code, output_dir, "_stub_job", JobStatus.PROCESSING.value, "extract_audio,whisper,translate,audio"),
+        )
+        conn.commit()
+        return code, output_dir, whisper, translated
+
+    def test_save_cancels_and_invalidates(self, auth_client, csrf_headers):
+        import os
+        from unittest import mock
+
+        from jobqueue import JobStatus, get_job_queue
+
+        client, _ = auth_client
+        code, _output_dir, whisper, translated = self._setup_job()
+
+        with mock.patch("jobqueue.psutil.process_iter", return_value=[]):
+            resp = client.post(
+                "/files/save-srt",
+                json={
+                    "path": whisper,
+                    "content": "1\n00:00:01,000 --> 00:00:02,000\n你好，世界\n",
+                    "access_code": code,
+                },
+                headers=csrf_headers,
+            )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["success"] is True
+        assert data["cancelled"] is True
+
+        jq = get_job_queue()
+        assert jq.get_status(code)["status"] == JobStatus.CANCELLED.value
+        assert jq.get_checkpoint(code) == "extract_audio,whisper"
+        assert not os.path.exists(translated)
+
+
 class TestSRTProcess:
     """/srt/process must reject multi-language SRTs before a job is queued.
 

@@ -682,7 +682,9 @@
             })
             .then(data => {
                 if (data.success) {
-                    statusEl.textContent = '✅ 保存成功！下游步骤已标记为重新运行。点击"重新提交"以继续。';
+                    statusEl.textContent = data.cancelled
+                        ? '✅ 保存成功！正在运行的任务已停止。点击"重新提交"以继续。'
+                        : '✅ 保存成功！下游步骤已标记为重新运行。点击"重新提交"以继续。';
                     statusEl.className = 'editor-status success';
                     const filename = _editingFilePath.split('/').pop();
                     editedSrtFiles.push(filename);

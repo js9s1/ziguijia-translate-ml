@@ -289,8 +289,11 @@ class JobQueue:
             try:
                 self._process_job(access_code)
             except BaseException as e:
-                logger.exception(f"_process_job {access_code} raised {type(e).__name__}: {e}")
-                self._try_mark_failed(access_code, _format_job_error(e))
+                if self.cancel_requested(access_code):
+                    logger.info(f"Job {access_code} cancelled while running")
+                else:
+                    logger.exception(f"_process_job {access_code} raised {type(e).__name__}: {e}")
+                    self._try_mark_failed(access_code, _format_job_error(e))
             finally:
                 with self._cancel_lock:
                     self._current_access_code = None
@@ -404,6 +407,11 @@ class JobQueue:
             }
             for r in rows
         ]
+
+    def cancel_requested(self, access_code: str) -> bool:
+        """Return True when a cancel was requested for the running job."""
+        with self._cancel_lock:
+            return self._cancel_event.is_set() and self._current_access_code == access_code
 
     def cancel_job(self, access_code: str) -> dict:
         conn = self._get_conn()

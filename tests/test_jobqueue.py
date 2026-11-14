@@ -84,6 +84,18 @@ class TestJobQueueCancel:
         status = jq.get_status(code)
         assert status["status"] == JobStatus.CANCELLED.value
 
+    def test_cancel_requested_only_for_current_job(self, jq):
+        with jq._cancel_lock:
+            jq._current_access_code = "ABC12345"
+            jq._cancel_event.set()
+        try:
+            assert jq.cancel_requested("ABC12345") is True
+            assert jq.cancel_requested("OTHER123") is False
+        finally:
+            with jq._cancel_lock:
+                jq._cancel_event.clear()
+                jq._current_access_code = None
+
     def test_cancel_nonexistent(self, jq):
         result = jq.cancel_job("NOPE1234")
         assert result["success"] is False

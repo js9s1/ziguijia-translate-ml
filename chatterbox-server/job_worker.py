@@ -276,6 +276,9 @@ def _run_job(jq, access_code: str):
         raise
 
     if success:
+        if jq.cancel_requested(access_code):
+            logger.info(f"Job {access_code} was cancelled while running — not marking completed")
+            return
         now = _now_str()
         conn.execute(
             "UPDATE jobs SET status = ?, status_changed_at = ?, completed_at = ? WHERE access_code = ?",

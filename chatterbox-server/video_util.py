@@ -203,7 +203,10 @@ class CheckpointHelper:
 
     def mark(self, name: str):
         """Mark a checkpoint step as completed."""
-        ckpt = get_job_queue().get_checkpoint(self.access_code)
+        jq = get_job_queue()
+        if jq.cancel_requested(self.access_code):
+            raise RuntimeError("job cancelled")
+        ckpt = jq.get_checkpoint(self.access_code)
         parts = ([s for s in ckpt.split(",") if s] if ckpt else []) + [name]
-        get_job_queue().set_checkpoint(self.access_code, ",".join(parts))
+        jq.set_checkpoint(self.access_code, ",".join(parts))
         job_log(self.access_code, self.output_dir, f"  ✓ checkpoint {name}")

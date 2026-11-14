@@ -7,7 +7,7 @@ from datetime import timedelta
 
 from config import FILENAME_TO_CHECKPOINT_STEP, validate_upload_filename
 from flask import Blueprint, jsonify, request, send_file
-from jobqueue import get_job_queue
+from jobqueue import JobStatus, get_job_queue
 from middleware import _SRT_TIMING_RE, api_endpoint, csrf_required, login_required, safe_file_path, validate_srt_content
 
 logger = logging.getLogger("chatterbox_server")
@@ -770,6 +770,17 @@ def files_save_srt():
     jq = get_job_queue()
     basename = os.path.basename(safe)
     step = FILENAME_TO_CHECKPOINT_STEP.get(basename)
+
+    # If the job is still running, stop it before purging downstream
+    # checkpoints.  Otherwise the worker keeps going and re-marks steps
+    # (or fails on files we just deleted) after the user edited an
+    # upstream SRT — see job C6A9BA84.
+    cancelled = False
+    if access_code and step:
+        status = jq.get_status(access_code)
+        if status and status["status"] in (JobStatus.PENDING.value, JobStatus.PROCESSING.value):
+            cancelled = bool(jq.cancel_job(access_code).get("success"))
+
     if step:
         jq.invalidate_checkpoints_after(access_code, step)
 
@@ -777,7 +788,10 @@ def files_save_srt():
         jq.set_checkpoint_edited(access_code, True)
         jq.set_edited_srt_file(access_code, basename)
 
-    return jsonify({"success": True, "message": "File saved, downstream steps marked for re-run"})
+    message = "File saved, downstream steps marked for re-run"
+    if cancelled:
+        message += "; running job cancelled"
+    return jsonify({"success": True, "cancelled": cancelled, "message": message})
 
 
 def _extract_standard_text(raw: bytes, filename: str) -> str:
