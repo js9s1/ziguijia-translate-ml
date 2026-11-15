@@ -5,14 +5,15 @@
 # Default: jobs deleted more than 7 days ago.
 #
 # Usage:
-#   ./cleanup_old_deleted_jobs.sh [--days N] [--dry-run] [--verbose] [--force] [--all]
+#   ./cleanup_old_deleted_jobs.sh [--days N] [--all-days N] [--dry-run] [--verbose] [--force] [--all]
 #
 # Options:
 #   --days N      Number of days to keep deleted jobs (default: 7)
+#   --all-days N  Also remove ALL jobs (any status) older than N days
 #   --dry-run     Show what would be removed without actually removing
 #   --verbose     Print detailed output
 #   --force       Remove ALL deleted jobs regardless of age
-#   --all         Remove ALL jobs (any status) older than N days
+#   --all         Remove ALL jobs (any status) older than --days
 #   --help        Show this help message
 #
 # Examples:
@@ -29,10 +30,13 @@
 #   ./cleanup_old_deleted_jobs.sh --force
 #
 #   # Remove ALL jobs (any status) older than 14 days
-#   ./cleanup_old_deleted_jobs.sh --all --days 14
+#   ./cleanup_old_deleted_jobs.sh --all-days 14
+#
+#   # Daily cleanup: deleted jobs after 5 days, every job after 15 days
+#   ./cleanup_old_deleted_jobs.sh --days 5 --all-days 15
 #
 #   # Daily cleanup via cron (run at 2 AM daily):
-#   0 2 * * * /path/to/chatterbox-server/cleanup_old_deleted_jobs.sh --days 7 >> /var/log/job_cleanup.log 2>&1
+#   0 2 * * * /path/to/chatterbox-server/cleanup_old_deleted_jobs.sh --days 5 --all-days 15 >> /var/log/job_cleanup.log 2>&1
 
 set -euo pipefail
 
@@ -42,6 +46,7 @@ DB_FILE="${SCRIPT_DIR}/chatterbox-server/jobs.db"
 
 # ─── Default values ───────────────────────────────────────────────
 DAYS_KEEP=7
+ALL_DAYS_KEEP=""
 DRY_RUN=false
 VERBOSE=false
 FORCE_CLEAN=false
@@ -73,7 +78,11 @@ log_verbose() {
 }
 
 show_help() {
-    head -20 "$0" | grep "^#" | sed 's/^# \?//'
+    # Print the comment block after the shebang, stopping at the first
+    # non-comment line.
+    awk 'NR == 1 { next }
+         /^#/ { sub(/^# ?/, ""); print; in_block=1; next }
+         in_block { exit }' "$0"
     exit 0
 }
 
@@ -101,6 +110,10 @@ parse_args() {
                 ALL_STATUSES=true
                 shift
                 ;;
+            --all-days)
+                ALL_DAYS_KEEP="$2"
+                shift 2
+                ;;
             --help)
                 show_help
                 ;;
@@ -111,10 +124,22 @@ parse_args() {
         esac
     done
 
+    # --all is shorthand for --all-days "$DAYS_KEEP"
+    if [[ "$ALL_STATUSES" == true ]] && [[ -z "$ALL_DAYS_KEEP" ]]; then
+        ALL_DAYS_KEEP="$DAYS_KEEP"
+    fi
+
     # Validate DAYS_KEEP is a positive integer (unless --force is used)
     if [[ "$FORCE_CLEAN" == false ]]; then
         if ! [[ "$DAYS_KEEP" =~ ^[0-9]+$ ]] || [[ "$DAYS_KEEP" -lt 1 ]]; then
             log_error "Invalid days value: $DAYS_KEEP (must be positive integer)"
+            exit 1
+        fi
+    fi
+
+    if [[ -n "$ALL_DAYS_KEEP" ]]; then
+        if ! [[ "$ALL_DAYS_KEEP" =~ ^[0-9]+$ ]] || [[ "$ALL_DAYS_KEEP" -lt 1 ]]; then
+            log_error "Invalid all-days value: $ALL_DAYS_KEEP (must be positive integer)"
             exit 1
         fi
     fi
@@ -135,33 +160,57 @@ check_dependencies() {
 
 # ─── Calculate cutoff timestamp ──────────────────────────────────
 get_cutoff_date() {
+    local days="${1:-$DAYS_KEEP}"
     local days_ago
     # Calculate date N days ago in ISO format
     if [[ "$OSTYPE" == "linux-gnu"* ]]; then
         # Linux: GNU date
-        days_ago=$(date -d "${DAYS_KEEP} days ago" +"%Y-%m-%d %H:%M:%S")
+        days_ago=$(date -d "${days} days ago" +"%Y-%m-%d %H:%M:%S")
     elif [[ "$OSTYPE" == "darwin"* ]]; then
         # macOS: BSD date
-        days_ago=$(date -v-"${DAYS_KEEP}"d +"%Y-%m-%d %H:%M:%S")
+        days_ago=$(date -v-"${days}"d +"%Y-%m-%d %H:%M:%S")
     else
         # Fallback: use python for portability
-        days_ago=$(python3 -c "from datetime import datetime, timedelta; print((datetime.now() - timedelta(days=$DAYS_KEEP)).strftime('%Y-%m-%d %H:%M:%S'))")
+        days_ago=$(python3 -c "from datetime import datetime, timedelta; print((datetime.now() - timedelta(days=$days)).strftime('%Y-%m-%d %H:%M:%S'))")
     fi
     echo "$days_ago"
 }
 
-# ─── Find old deleted jobs ───────────────────────────────────────
+# ─── Find jobs due for cleanup ───────────────────────────────────
 find_old_deleted_jobs() {
     local cutoff_date="$1"
+    local all_cutoff_date="${2:-}"
 
-    # If --all, return ALL jobs (any status) older than cutoff
-    if [[ "$ALL_STATUSES" == true ]]; then
+    # Deleted jobs are due when they have been deleted for longer than the
+    # deleted-job retention period.  Legacy rows without deleted_at fall back
+    # to created_at; rows with neither timestamp are always cleaned up.
+    # --force removes every deleted job regardless of age.
+    local deleted_condition
+    if [[ "$FORCE_CLEAN" == true ]]; then
+        deleted_condition="status = 'deleted'"
+    else
+        deleted_condition="status = 'deleted'
+  AND (
+    (deleted_at IS NOT NULL AND deleted_at < '${cutoff_date}')
+    OR
+    (deleted_at IS NULL AND created_at IS NOT NULL AND created_at < '${cutoff_date}')
+    OR
+    (deleted_at IS NULL AND created_at IS NULL)
+  )"
+    fi
+
+    # With --all-days (or --all), also clean up every job whose creation time
+    # is older than the all-jobs retention period, regardless of status.
+    if [[ -n "$all_cutoff_date" ]]; then
         sqlite3 -separator '|' "$DB_FILE" <<EOF
-SELECT access_code, output_dir, 
-       COALESCE(updated_at, created_at, 'unknown') as effective_date
+SELECT access_code, output_dir,
+       COALESCE(deleted_at, created_at, 'unknown') as effective_date
 FROM jobs
 WHERE (
-    (created_at IS NOT NULL AND created_at < '${cutoff_date}')
+    ${deleted_condition}
+  )
+  OR (
+    (created_at IS NOT NULL AND created_at < '${all_cutoff_date}')
     OR
     (created_at IS NULL)
   )
@@ -170,41 +219,18 @@ EOF
         return
     fi
 
-    # If force clean, return all deleted jobs
-    if [[ "$FORCE_CLEAN" == true ]]; then
-        sqlite3 -separator '|' "$DB_FILE" <<EOF
-SELECT access_code, output_dir, 
-       COALESCE(deleted_at, created_at, 'unknown') as effective_date
-FROM jobs
-WHERE status = 'deleted'
-ORDER BY effective_date ASC;
-EOF
-        return
-    fi
-
-    # Find jobs where:
-    # 1. deleted_at exists and is older than cutoff, OR
-    # 2. deleted_at is NULL but created_at is older than cutoff (legacy jobs), OR
-    # 3. Both timestamps are NULL (very old legacy jobs, always clean up)
     sqlite3 -separator '|' "$DB_FILE" <<EOF
-SELECT access_code, output_dir, 
+SELECT access_code, output_dir,
        COALESCE(deleted_at, created_at, 'unknown') as effective_date
 FROM jobs
-WHERE status = 'deleted'
-  AND (
-    (deleted_at IS NOT NULL AND deleted_at < '${cutoff_date}')
-    OR 
-    (deleted_at IS NULL AND created_at IS NOT NULL AND created_at < '${cutoff_date}')
-    OR
-    (deleted_at IS NULL AND created_at IS NULL)
-  )
+WHERE ${deleted_condition}
 ORDER BY effective_date ASC;
 EOF
 }
 
-# ─── Count total jobs (filtered by ALL_STATUSES) ─────────────────
+# ─── Count total jobs (filtered by cleanup scope) ────────────────
 count_all_deleted_jobs() {
-    if [[ "$ALL_STATUSES" == true ]]; then
+    if [[ "$ALL_STATUSES" == true ]] || [[ -n "$ALL_DAYS_KEEP" ]]; then
         sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM jobs;"
     else
         sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM jobs WHERE status = 'deleted';"
@@ -255,44 +281,51 @@ delete_job_from_db() {
 
 # ─── Main cleanup function ───────────────────────────────────────
 main_cleanup() {
-    local cutoff_date
-    cutoff_date=$(get_cutoff_date)
-
-    local total_deleted
-    total_deleted=$(count_all_deleted_jobs)
-    if [[ "$ALL_STATUSES" == true ]]; then
-        log_info "Total jobs in database: $total_deleted"
-        local scope_label="all jobs"
-    else
-        log_info "Total deleted jobs in database: $total_deleted"
-        local scope_label="deleted jobs"
+    local cutoff_date all_cutoff_date
+    cutoff_date=$(get_cutoff_date "$DAYS_KEEP")
+    all_cutoff_date=""
+    if [[ -n "$ALL_DAYS_KEEP" ]]; then
+        all_cutoff_date=$(get_cutoff_date "$ALL_DAYS_KEEP")
     fi
-    log_info "Cutoff date: $cutoff_date"
-    log_info "Removing $scope_label older than: $DAYS_KEEP days"
+
+    local total_jobs
+    total_jobs=$(count_all_deleted_jobs)
+    local scope_label
+    if [[ -n "$ALL_DAYS_KEEP" ]]; then
+        log_info "Total jobs in database: $total_jobs"
+        scope_label="jobs"
+    else
+        log_info "Total deleted jobs in database: $total_jobs"
+        scope_label="deleted jobs"
+    fi
+
+    log_info "Deleted jobs cutoff: $cutoff_date (older than $DAYS_KEEP days)"
+    if [[ -n "$ALL_DAYS_KEEP" ]]; then
+        log_info "All jobs cutoff: $all_cutoff_date (older than $ALL_DAYS_KEEP days)"
+    fi
+    if [[ "$FORCE_CLEAN" == true ]]; then
+        log_info "Force mode: all deleted jobs regardless of age"
+    fi
     echo ""
 
-    if [[ "$total_deleted" -eq 0 ]]; then
+    if [[ "$total_jobs" -eq 0 ]]; then
         log_info "No $scope_label found in database."
         return 0
     fi
 
     # Get jobs to process
     local jobs_data
-    jobs_data=$(find_old_deleted_jobs "$cutoff_date")
+    jobs_data=$(find_old_deleted_jobs "$cutoff_date" "$all_cutoff_date")
 
     if [[ -z "$jobs_data" ]]; then
-        local label
-        [[ "$ALL_STATUSES" == true ]] && label="jobs" || label="deleted jobs"
-        log_info "No $label older than $DAYS_KEEP days found."
+        log_info "No $scope_label matched the cleanup thresholds."
         return 0
     fi
 
     # Count jobs to process
     local job_count
     job_count=$(echo "$jobs_data" | wc -l)
-    local label
-    [[ "$ALL_STATUSES" == true ]] && label="job(s)" || label="deleted job(s)"
-    log_info "Found $job_count $label older than $DAYS_KEEP days"
+    log_info "Found $job_count job(s) to remove"
     echo ""
 
     if [[ "$DRY_RUN" == true ]]; then
@@ -304,21 +337,21 @@ main_cleanup() {
     local error_count=0
 
     # Process each job
-    while IFS='|' read -r access_code output_dir deleted_at; do
+    while IFS='|' read -r access_code output_dir effective_date; do
         # Skip empty lines
         [[ -z "$access_code" ]] && continue
 
-        log_verbose "Processing job: $access_code (deleted: $deleted_at)"
+        log_verbose "Processing job: $access_code (matched date: $effective_date)"
 
         # Remove output directory
         if ! remove_output_dir "$output_dir" "$access_code"; then
-            ((error_count++))
+            ((++error_count))
             continue
         fi
 
         # Delete from database
         if ! delete_job_from_db "$access_code"; then
-            ((error_count++))
+            ((++error_count))
             continue
         fi
 
@@ -333,10 +366,8 @@ main_cleanup() {
         log_info "[DRY RUN] Would remove: $removed_count job(s)"
         [[ "$error_count" -gt 0 ]] && log_warn "[DRY RUN] Errors encountered: $error_count"
     else
-        local label
-        [[ "$ALL_STATUSES" == true ]] && label="Jobs" || label="Deleted jobs"
         log_info "Cleanup complete!"
-        log_info "$label removed: $removed_count"
+        log_info "Jobs removed: $removed_count"
         [[ "$error_count" -gt 0 ]] && log_warn "Errors encountered: $error_count"
     fi
 
