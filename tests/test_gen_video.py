@@ -7,7 +7,12 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from gen_video import _delogo_filter  # noqa: E402
+from gen_video import (  # noqa: E402
+    _build_concat_cmd,
+    _build_segment_batch_cmd,
+    _delogo_filter,
+    _segment_filter,
+)
 
 
 def _parse_filter(filter_str: str) -> dict[str, int]:
@@ -66,3 +71,43 @@ def test_854x480_rectangle():
 def test_missing_dimensions_raise(width, height):
     with pytest.raises(RuntimeError, match="dimensions"):
         _delogo_filter(width, height)
+
+
+_BATCH = [
+    {"start": 0.0, "end": 2.0, "stretch": 1.0},
+    {"start": 2.0, "end": 5.0, "stretch": 1.5},
+]
+
+
+def test_segment_filter_vaapi_and_cpu_labels():
+    hw_filter, hw_label = _segment_filter(_BATCH, use_vaapi=True)
+    assert "hwupload" in hw_filter
+    assert hw_label == "[hw]"
+
+    cpu_filter, cpu_label = _segment_filter(_BATCH, use_vaapi=False)
+    assert "format=yuv420p" in cpu_filter
+    assert "hwupload" not in cpu_filter
+    assert cpu_label == "[out]"
+
+
+def test_segment_batch_cmd_encoders():
+    hw_cmd = _build_segment_batch_cmd("/tmp/in.mp4", _BATCH, "/tmp/out.mp4", use_vaapi=True)
+    assert "h264_vaapi" in hw_cmd
+    assert "-vaapi_device" in hw_cmd
+    assert "libx264" not in hw_cmd
+
+    cpu_cmd = _build_segment_batch_cmd("/tmp/in.mp4", _BATCH, "/tmp/out.mp4", use_vaapi=False)
+    assert "libx264" in cpu_cmd
+    assert "h264_vaapi" not in cpu_cmd
+    assert "-vaapi_device" not in cpu_cmd
+
+
+def test_concat_cmd_encoders():
+    hw_cmd = _build_concat_cmd(["/tmp/a.mp4", "/tmp/b.mp4"], "/tmp/out.mp4", use_vaapi=True)
+    assert any("concat=n=2" in part for part in hw_cmd)
+    assert "h264_vaapi" in hw_cmd
+
+    cpu_cmd = _build_concat_cmd(["/tmp/a.mp4", "/tmp/b.mp4"], "/tmp/out.mp4", use_vaapi=False)
+    assert any("concat=n=2" in part for part in cpu_cmd)
+    assert "libx264" in cpu_cmd
+    assert "hwupload" not in " ".join(cpu_cmd)

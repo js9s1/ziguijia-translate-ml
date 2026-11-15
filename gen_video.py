@@ -56,6 +56,69 @@ def _delogo_filter(width: int | None, height: int | None) -> str:
     return f"format=yuv420p,delogo=x={x}:y={y}:w={w}:h={h}:show=0"
 
 
+def _segment_filter(batch: list[dict], use_vaapi: bool) -> tuple[str, str]:
+    """Build the per-batch filter graph and its output label."""
+    filter_parts = []
+    for i, seg in enumerate(batch):
+        stretch = seg["stretch"]
+        if stretch != 1.0:
+            filter_parts.append(f"[{i}:v]setpts={stretch}*PTS,setpts=PTS-STARTPTS[v{i}]")
+        else:
+            filter_parts.append(f"[{i}:v]setpts=PTS-STARTPTS[v{i}]")
+    n = len(batch)
+    labels = "".join(f"[v{i}]" for i in range(n))
+    filter_parts.append(f"{labels}concat=n={n}:v=1:a=0[outv]")
+    if use_vaapi:
+        filter_parts.append("[outv]format=nv12,hwupload[hw]")
+        return ";".join(filter_parts), "[hw]"
+    filter_parts.append("[outv]format=yuv420p[out]")
+    return ";".join(filter_parts), "[out]"
+
+
+def _build_segment_batch_cmd(video_file: str, batch: list[dict], out_path: str, use_vaapi: bool) -> list[str]:
+    """Encode one batch on VAAPI, or with libx264 when the GPU is unusable."""
+    cmd = ["ffmpeg", "-y"]
+    if use_vaapi:
+        cmd.extend(["-hwaccel_output_format", "nv12"])
+    for seg in batch:
+        cmd.extend(["-ss", str(seg["start"]), "-to", str(seg["end"]), "-i", video_file])
+    filter_str, out_label = _segment_filter(batch, use_vaapi)
+    if use_vaapi:
+        cmd.extend(["-vaapi_device", VAAPI_DEVICE])
+    cmd.extend(["-filter_complex", filter_str, "-map", out_label])
+    if use_vaapi:
+        cmd.extend(["-c:v", "h264_vaapi", "-qp", "23"])
+    else:
+        cmd.extend(["-c:v", "libx264", "-crf", "23", "-preset", "fast"])
+    cmd.append(out_path)
+    return cmd
+
+
+def _build_concat_cmd(group: list[str], out_path: str, use_vaapi: bool) -> list[str]:
+    """Concatenate batch files on VAAPI, or with libx264 as a CPU fallback."""
+    cmd = ["ffmpeg", "-y"]
+    if use_vaapi:
+        cmd.extend(["-hwaccel_output_format", "nv12", "-vaapi_device", VAAPI_DEVICE])
+    for path in group:
+        cmd.extend(["-i", path])
+    n = len(group)
+    if n > 1:
+        labels = "".join(f"[{i}:v]" for i in range(n))
+        filter_str = f"{labels}concat=n={n}:v=1:a=0[outv];[outv]"
+    else:
+        filter_str = "[0:v]"
+    if use_vaapi:
+        filter_str += "format=nv12,hwupload[hw]"
+        out_label = "[hw]"
+        encoder = ["-c:v", "h264_vaapi", "-qp", "23"]
+    else:
+        filter_str += "format=yuv420p[out]"
+        out_label = "[out]"
+        encoder = ["-c:v", "libx264", "-crf", "23", "-preset", "fast"]
+    cmd.extend(["-filter_complex", filter_str, "-map", out_label, *encoder, out_path])
+    return cmd
+
+
 def _ffmpeg_error_lines(stderr: str | None, exit_status: int) -> str:
     """Last stderr lines of a failed ffmpeg run (no command line)."""
     lines = [ln.strip() for ln in (stderr or "").splitlines() if ln.strip()]
@@ -285,38 +348,37 @@ def process_video(video_file, segments, output_file):
         # init per batch instead of one per segment.
         MAX_BATCH_SEGMENTS = 42  # -ss/-to pairs + filter_complex ≈ 180 args, well under OS limits
 
+        # VAAPI can lose its amdgpu context under load ("The CS has
+        # cancelled because the context is lost").  Fall back to libx264
+        # for the rest of the job instead of failing the whole render.
+        use_vaapi = True
+
         batch_files = []
         for batch_idx in range(0, len(segment_data), MAX_BATCH_SEGMENTS):
             batch = segment_data[batch_idx : batch_idx + MAX_BATCH_SEGMENTS]
             batch_out = os.path.join(temp_dir, f"batch_{batch_idx:04d}.mp4")
 
-            # Build the command
-            cmd = ["ffmpeg", "-y", "-hwaccel_output_format", "nv12"]
-            for seg in batch:
-                cmd.extend(["-ss", str(seg["start"]), "-to", str(seg["end"]), "-i", video_file])
-            cmd.append("-vaapi_device")
-            cmd.append(VAAPI_DEVICE)
-
-            # Build filter_complex: setpts per input → concat → hwupload
-            # -hwaccel_output_format nv12 ensures the decoder outputs software
-            # nv12 frames that setpts can consume directly.
-            filter_parts = []
-            for i, seg in enumerate(batch):
-                stretch = seg["stretch"]
-                if stretch != 1.0:
-                    filter_parts.append(f"[{i}:v]setpts={stretch}*PTS,setpts=PTS-STARTPTS[v{i}]")
-                else:
-                    filter_parts.append(f"[{i}:v]setpts=PTS-STARTPTS[v{i}]")
-            n = len(batch)
-            concat_labels = "".join(f"[v{i}]" for i in range(n))
-            filter_parts.append(f"{concat_labels}concat=n={n}:v=1:a=0[outv]")
-            filter_parts.append("[outv]format=nv12,hwupload[hw]")
-
-            cmd.extend(["-filter_complex", ";".join(filter_parts)])
-            cmd.extend(["-map", "[hw]", "-c:v", "h264_vaapi", "-qp", "23", batch_out])
-
-            print(f"  Batch {batch_idx:04d}: {n} segments → single ffmpeg")
-            result = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=3600)
+            print(f"  Batch {batch_idx:04d}: {len(batch)} segments → single ffmpeg")
+            result = subprocess.run(
+                _build_segment_batch_cmd(video_file, batch, batch_out, use_vaapi),
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=3600,
+            )
+            if result.returncode != 0 and use_vaapi:
+                print(
+                    f"VAAPI batch failed ({_ffmpeg_error_lines(result.stderr, result.returncode)}); retrying on CPU...",
+                    file=sys.stderr,
+                )
+                use_vaapi = False
+                result = subprocess.run(
+                    _build_segment_batch_cmd(video_file, batch, batch_out, False),
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=3600,
+                )
             if result.returncode != 0:
                 print(f"FFmpeg batch error: {result.stderr[:50000]}", file=sys.stderr)
                 raise RuntimeError(f"FFmpeg failed: {_ffmpeg_error_lines(result.stderr, result.returncode)}")
@@ -355,29 +417,25 @@ def process_video(video_file, segments, output_file):
                         next_batch.append(group[0])
                         continue
                     out_name = os.path.join(temp_dir, f"L{level}_batch{bi:04d}.mp4")
-                    n = len(group)
-                    concat_inputs = "".join(f"[{i}:v]" for i in range(n))
-                    if n > 1:
-                        filter_str = f"{concat_inputs}concat=n={n}:v=1:a=0[outv];[outv]format=nv12,hwupload[hw]"
-                    else:
-                        filter_str = "[0:v]format=nv12,hwupload[hw]"
-                    cmd = ["ffmpeg", "-y", "-hwaccel_output_format", "nv12", "-vaapi_device", VAAPI_DEVICE]
-                    for sf in group:
-                        cmd.extend(["-i", sf])
-                    cmd.extend(
-                        [
-                            "-filter_complex",
-                            filter_str,
-                            "-map",
-                            "[hw]",
-                            "-c:v",
-                            "h264_vaapi",
-                            "-qp",
-                            "23",
-                            out_name,
-                        ]
+                    result = subprocess.run(
+                        _build_concat_cmd(group, out_name, use_vaapi),
+                        check=False,
+                        capture_output=True,
+                        text=True,
                     )
-                    result = subprocess.run(cmd, check=False, capture_output=True, text=True)
+                    if result.returncode != 0 and use_vaapi:
+                        print(
+                            "VAAPI concat failed "
+                            f"({_ffmpeg_error_lines(result.stderr, result.returncode)}); retrying on CPU...",
+                            file=sys.stderr,
+                        )
+                        use_vaapi = False
+                        result = subprocess.run(
+                            _build_concat_cmd(group, out_name, False),
+                            check=False,
+                            capture_output=True,
+                            text=True,
+                        )
                     if result.returncode != 0:
                         print(f"FFmpeg error (L{level} batch {bi}): {result.stderr[:50000]}", file=sys.stderr)
                         raise RuntimeError(
