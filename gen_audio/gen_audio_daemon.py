@@ -9,6 +9,10 @@ instance (Chatterbox keeps mutable per-call state, so instances cannot be
 shared).  A thread lazily loads the model for the requested language and
 swaps when the next request needs the other language.
 
+Target language ``yue`` (Cantonese) uses a shared VoxCPM2 2B model instead of
+Chatterbox.  VoxCPM2 is too large to duplicate per worker, so one instance is
+kept for the whole daemon and its generations are serialized with a lock.
+
 A global thermal gate pauses all workers while the GPU is above
 GEN_AUDIO_TEMP_LIMIT and resumes them once it cools to
 GEN_AUDIO_COOLDOWN_TARGET.
@@ -44,7 +48,8 @@ Runtime files: socket + pid live in $XDG_RUNTIME_DIR/gen_audio_daemon/
 
 Protocol (newline-delimited JSON per request, connection-per-request):
   request  {"cmd": "ping"}
-  response {"ok": true, "engine": "chatterbox", "device": "..."}
+  response {"ok": true, "engine": "chatterbox",
+            "engines": ["chatterbox", "voxcpm"], "device": "..."}
 
   request  {"cmd": "ensure_model", "language": "en"}
   response {"ok": true, "sr": 24000, "device": "cuda"}
@@ -52,6 +57,9 @@ Protocol (newline-delimited JSON per request, connection-per-request):
   request  {"cmd": "tts", "text": "...", "language": "en",
             "prompt_file": "/path/or/null", "temperature": 0.6,
             "cfg_weight": 0.5, "exaggeration": 0.5,
+            "params": {"cfg_value": 2.0, "inference_timesteps": 10,
+                       "seed": 42, "retry_badcase": false},
+            "attempt": 0,
             "output_path": "/path/segment.wav"}
   response {"ok": true, "duration": 1.23, "sr": 24000}
     or     {"ok": false, "error": "..."}
@@ -106,6 +114,12 @@ from config import (  # noqa: E402
     CHATTERBOX_T3_MODEL,
     GEN_AUDIO_DAEMON_PID,
     GEN_AUDIO_DAEMON_SOCK,
+    VOXCPM_CFG_VALUE,
+    VOXCPM_INFERENCE_TIMESTEPS,
+    VOXCPM_MODEL,
+    VOXCPM_OPTIMIZE,
+    VOXCPM_RETRY_BADCASE,
+    VOXCPM_SEED,
 )
 
 from gpu_thermal import HangGuard, ThermalGate, log_system_temp  # noqa: E402
@@ -165,6 +179,12 @@ _GEN_COND = threading.Condition()
 _GENS_ACTIVE = 0
 _LOAD_ACTIVE = False
 _LOAD_MUTEX = threading.Lock()  # serialize loads against each other
+
+# VoxCPM2 is a 2B model (~7.3 GiB).  Keep exactly one instance for Cantonese
+# and serialize its generations: duplicating it per worker would exhaust RAM,
+# and its generation path is not documented as thread-safe.
+_VOXCPM_MODEL = None
+_VOXCPM_GEN_LOCK = threading.Lock()
 
 
 class _GenerationGuard:
@@ -271,6 +291,85 @@ def _load_indonesian():
     return model
 
 
+class _VoxCPMBackend:
+    """Small adapter exposing the same surface the daemon uses for TTS.
+
+    ``VoxCPM.generate`` returns a 1-D NumPy waveform at 48 kHz; the daemon
+    expects a ``[1, n]`` torch tensor and a ``.sr`` attribute.
+    """
+
+    def __init__(self, model, device: str):
+        self.model = model
+        self.device = device
+        self.sr = int(model.tts_model.sample_rate)
+
+    def generate(self, text: str, prompt_file: str | None, params: dict | None = None, attempt: int = 0):
+        import numpy as np
+        import torch
+
+        params = params or {}
+
+        def _param(key, default, cast):
+            value = params.get(key, default)
+            try:
+                if cast is bool and isinstance(value, str):
+                    return value.strip().lower() in {"1", "true", "yes", "on"}
+                return cast(value)
+            except (TypeError, ValueError):
+                return default
+
+        cfg_value = _param("cfg_value", VOXCPM_CFG_VALUE, float)
+        timesteps = _param("inference_timesteps", VOXCPM_INFERENCE_TIMESTEPS, int)
+        seed = _param("seed", VOXCPM_SEED, int)
+        # A fixed seed makes the client's silence retries reproduce the same
+        # bad clip.  Jitter the retry seed so attempt 1/2 get a new sample.
+        if seed >= 0 and attempt > 0:
+            seed += attempt
+        retry_badcase = _param("retry_badcase", VOXCPM_RETRY_BADCASE, bool)
+
+        kwargs = {}
+        reference = prompt_file if prompt_file and os.path.exists(prompt_file) else AUDIO_PROMPT_PATH
+        if reference and os.path.exists(reference):
+            kwargs["reference_wav_path"] = reference
+
+        with _GenerationGuard(), _VOXCPM_GEN_LOCK:
+            wav = self.model.generate(
+                text,
+                cfg_value=cfg_value,
+                inference_timesteps=timesteps,
+                retry_badcase=retry_badcase,
+                seed=seed if seed >= 0 else None,
+                **kwargs,
+            )
+        wav = np.asarray(wav, dtype=np.float32)
+        return torch.from_numpy(wav).unsqueeze(0)
+
+
+def _load_voxcpm():
+    warnings.filterwarnings("ignore")
+    try:
+        from voxcpm import VoxCPM
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "voxcpm is not installed for this Python interpreter; "
+            "install it with: pip install --no-deps "
+            "'voxcpm @ git+https://github.com/OpenBMB/VoxCPM.git@"
+            "300e4260b509066151d623dc9c0aa922cf82232b'"
+        ) from exc
+
+    device = _choose_device()
+    print(f"[daemon] loading VoxCPM2 Cantonese model to {device}...")
+    model = VoxCPM.from_pretrained(
+        VOXCPM_MODEL,
+        load_denoiser=False,
+        optimize=VOXCPM_OPTIMIZE,
+        device=device,
+    )
+    backend = _VoxCPMBackend(model, device)
+    print(f"[daemon] VoxCPM2 Cantonese model ready ({device}, sr={backend.sr})")
+    return backend
+
+
 def _ensure_thread_model(lang: str, force: bool = False):
     """Load (or keep) the model for *lang* on this worker thread.
 
@@ -278,10 +377,13 @@ def _ensure_thread_model(lang: str, force: bool = False):
     blocks new generations, the loader waits for active ones to finish,
     and ``_LOAD_MUTEX`` serializes loads against each other.
     """
-    global _LOAD_ACTIVE
+    global _LOAD_ACTIVE, _VOXCPM_MODEL
     kind = getattr(_WORKER_TL, "kind", None)
     model = getattr(_WORKER_TL, "model", None)
-    if not force and kind == lang and model is not None:
+    if lang == "yue":
+        if not force and _VOXCPM_MODEL is not None:
+            return _VOXCPM_MODEL
+    elif not force and kind == lang and model is not None:
         return model
 
     with _GEN_COND:
@@ -296,6 +398,22 @@ def _ensure_thread_model(lang: str, force: bool = False):
 
         with _LOAD_MUTEX:
             import torch
+
+            if lang == "yue":
+                # Free this worker's Chatterbox model; the shared 2B model
+                # plus per-worker Chatterbox instances would exhaust RAM.
+                if model is not None:
+                    del model
+                    _WORKER_TL.model = None
+                    _WORKER_TL.kind = None
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                if force or _VOXCPM_MODEL is None:
+                    _VOXCPM_MODEL = _load_voxcpm()
+                _WORKER_TL.kind = "yue"
+                _WORKER_TL.model = None
+                _MODEL_LOADED.set()
+                return _VOXCPM_MODEL
 
             if model is not None:
                 del model
@@ -530,6 +648,8 @@ def _submit_tts(conn, req):
             temperature = float(req.get("temperature", 0.6))
             cfg_weight = float(req.get("cfg_weight", 0.5))
             exaggeration = float(req.get("exaggeration", 0.5))
+            params = req.get("params") or {}
+            attempt = int(req.get("attempt", 0))
             output_path = Path(str(req["output_path"])).resolve()
 
             # Thermal gate — pause while the GPU is over temp (monitor
@@ -541,7 +661,9 @@ def _submit_tts(conn, req):
 
             model = _ensure_thread_model(lang)
             t0 = time.time()
-            if lang == "id":
+            if lang == "yue":
+                wav = model.generate(text, prompt_file, params, attempt=attempt)
+            elif lang == "id":
                 wav = _generate_indonesian(model, text, prompt_file, temperature)
             else:
                 if prompt_file:
@@ -592,6 +714,7 @@ def _handle(conn, device_name):
             {
                 "ok": True,
                 "engine": "chatterbox",
+                "engines": ["chatterbox", "voxcpm"],
                 "device": device_name,
                 "max_jobs": MAX_JOBS,
                 "active": _ACTIVE,
@@ -735,7 +858,8 @@ def main():
         f"temp limit: {GATE.temp_limit:.0f}°C, idle temp: {GATE.idle_temperature:.0f}°C, "
         f"idle grace: {GATE.idle_grace_secs:.0f}s, critical: {GATE.idle_critical_temp:.0f}°C, "
         f"idle timeout: {GATE.idle_timeout_secs:.0f}s, "
-        f"hang kill: {HANG.hang_timeout_secs / 3600:.1f}h + {HANG.grace_secs:.0f}s grace)"
+        f"hang kill: {HANG.hang_timeout_secs / 3600:.1f}h + {HANG.grace_secs:.0f}s grace, "
+        f"yue engine: VoxCPM2 ({VOXCPM_MODEL}))"
     )
     log_system_temp("startup")
 

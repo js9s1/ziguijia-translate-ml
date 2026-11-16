@@ -15,6 +15,7 @@ import time
 
 import psutil
 from db_schema import JOB_COLUMNS
+from job_params import get_job_params
 from job_types import JobStatus, _get_run_func
 from valkey_util import publish_job_status
 
@@ -211,6 +212,7 @@ def _run_job(jq, access_code: str):
         return
 
     job = dict(zip(JOB_COLUMNS, row))
+    job["params"] = get_job_params(job)
 
     run_func_name = job.get("run_func_name")
     try:

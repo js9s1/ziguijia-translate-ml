@@ -63,7 +63,7 @@ function showApiError(data, prefix) {
 /* ── Language select (shared) ──────────────────────────── */
 
 var _langOptions = null;
-var _langNames = null;  // code → name map, e.g. {en: 'English', zh: 'Chinese'}
+var _langNames = null;  // code → native display name, e.g. {en: 'English', zh: '中文'}
 
 // Country flag emojis for language codes
 var _langFlags = {
@@ -72,6 +72,7 @@ var _langFlags = {
     it: '🇮🇹', ja: '🇯🇵', ko: '🇰🇷', ms: '🇲🇾', nl: '🇳🇱',
     no: '🇳🇴', pl: '🇵🇱', pt: '🇵🇹', ru: '🇷🇺', sv: '🇸🇪',
     sw: '🇹🇿', tr: '🇹🇷', vi: '🇻🇳', th: '🇹🇭', id: '🇮🇩', zh: '🇨🇳',
+    yue: '🇭🇰',
 };
 
 function loadLanguages() {
@@ -81,21 +82,22 @@ function loadLanguages() {
         .then(function(data) {
             _langNames = {};
             _langOptions = (data.languages || []).map(function(item) {
-                _langNames[item.code] = item.name;
+                var displayName = item.native_name || item.name;
+                _langNames[item.code] = displayName;
                 var flag = _langFlags[item.code] || '';
-                return { v: item.code, l: flag + ' ' + item.name + ' (' + item.code + ')' };
+                return { v: item.code, l: flag + ' ' + displayName + ' (' + item.code + ')' };
             });
             return _langOptions;
         })
         .catch(function() {
             // Fallback to hardcoded list if API unavailable
             _langNames = {
-                ar:'Arabic',da:'Danish',de:'German',el:'Greek',
-                en:'English',es:'Spanish',fi:'Finnish',fr:'French',
-                he:'Hebrew',hi:'Hindi',it:'Italian',ja:'Japanese',
-                ko:'Korean',ms:'Malay',nl:'Dutch',no:'Norwegian',
-                pl:'Polish',pt:'Portuguese',ru:'Russian',sv:'Swedish',
-                sw:'Swahili',tr:'Turkish',zh:'Chinese',vi:'Vietnamese',th:'Thai',id:'Indonesian'
+                ar:'العربية',da:'Dansk',de:'Deutsch',el:'Ελληνικά',
+                en:'English',es:'Español',fi:'Suomi',fr:'Français',
+                he:'עברית',hi:'हिन्दी',it:'Italiano',ja:'日本語',
+                ko:'한국어',ms:'Bahasa Melayu',nl:'Nederlands',no:'Norsk',
+                pl:'Polski',pt:'Português',ru:'Русский',sv:'Svenska',
+                sw:'Kiswahili',tr:'Türkçe',zh:'中文',yue:'粤语',vi:'Tiếng Việt',th:'ไทย',id:'Bahasa Indonesia'
             };
             _langOptions = [];
             for (var k in _langNames) {
@@ -129,6 +131,46 @@ function initLanguageSelect(containerId, defaultVal) {
     return sel;
 }
 
+/* ── Audio parameter display (result page) ────────────── */
+
+var _AUDIO_PARAM_LABELS = {
+    cfg_value: 'CFG',
+    inference_timesteps: '推理步数',
+    seed: '种子',
+    retry_badcase: 'Badcase重试',
+    temperature: '温度',
+    cfg_weight: 'CFG权重',
+    exaggeration: '夸张度',
+};
+var _AUDIO_ENGINE_LABELS = {
+    chatterbox: 'Chatterbox',
+    chatterbox_id: 'Chatterbox (Indonesian)',
+    voxcpm: 'VoxCPM2',
+};
+
+function formatAudioParams(ap) {
+    var parts = [];
+    if (!ap || typeof ap !== 'object') return parts;
+    if (ap.engine) parts.push('模型: ' + (_AUDIO_ENGINE_LABELS[ap.engine] || ap.engine));
+    for (var key in ap) {
+        if (key === 'engine') continue;
+        var value = ap[key];
+        if (typeof value === 'boolean') value = value ? '是' : '否';
+        parts.push((_AUDIO_PARAM_LABELS[key] || key) + ': ' + value);
+    }
+    return parts;
+}
+
+function audioParamParts(data) {
+    var parts = formatAudioParams(data && data.audio_params);
+    if (parts.length) return parts;
+    // Legacy jobs that predate the per-engine schema.
+    if (data && data.temperature != null) parts.push('温度: ' + data.temperature);
+    if (data && data.cfg_weight != null) parts.push('CFG: ' + data.cfg_weight);
+    if (data && data.exaggeration != null) parts.push('夸张: ' + data.exaggeration);
+    return parts;
+}
+
 /* ── Float slider replacements (mobile-friendly) ───────── */
 
 function validateFloatInput(input, min, max) {
@@ -141,54 +183,186 @@ function validateFloatInput(input, min, max) {
     else if (val > max) { input.value = max; }
 }
 
-var _floatSlidersConfig = [
-    { id: 'temperature',   label: '温度',       min: 0.2, max: 1.2, step: 0.01, val: 0.6,  desc: '越高输出越随机，越低越稳定' },
-    { id: 'cfg_weight',    label: 'CFG 权重',    min: 0,   max: 1.5, step: 0.01, val: 0.25, desc: '控制生成音频与提示的契合度' },
-    { id: 'exaggeration',  label: '口音夸张度',  min: 0,   max: 1.0, step: 0.01, val: 0.5,  desc: '口音/语气的夸张程度' },
-];
+/* ── Engine-specific audio params (schema-driven) ─────── */
 
-function initFloatSliders(containerId, label) {
-    var container = document.getElementById(containerId);
-    if (!container) return;
-    container.innerHTML = '';
-    var wrapper = container;
-    if (label) {
-        var fieldset = document.createElement('fieldset');
-        fieldset.style.cssText = 'border:1px solid var(--color-border,#555);border-radius:8px;padding:12px 16px 4px 16px;margin:0;width:100%;box-sizing:border-box;';
-        var legend = document.createElement('legend');
-        legend.style.cssText = 'color:var(--color-text-medium,#aaa);font-weight:bold;font-size:0.9em;padding:0 6px;';
-        legend.textContent = label;
-        fieldset.appendChild(legend);
-        container.appendChild(fieldset);
-        wrapper = fieldset;
-    }
-    _floatSlidersConfig.forEach(function(cfg) {
-        var row = document.createElement('div');
-        row.className = 'form-row';
-        row.innerHTML =
-            '<label for="' + cfg.id + '">' + cfg.label + '</label>' +
-            '<input type="number" class="float-input" id="' + cfg.id + '" name="' + cfg.id + '" ' +
-            'min="' + cfg.min + '" max="' + cfg.max + '" step="' + cfg.step + '" value="' + cfg.val + '">' +
-            '<span class="slider-hint">(' + cfg.min + ' – ' + cfg.max + ') ' + (cfg.desc || '') + '</span>';
-        wrapper.appendChild(row);
-        var input = row.querySelector('input');
-        input.addEventListener('blur', function() {
-            validateFloatInput(this, cfg.min, cfg.max);
-        });
-        input.addEventListener('input', function() {
-            var v = parseFloat(this.value);
-            if (!isNaN(v) && v >= cfg.min && v <= cfg.max) {
-                this.setCustomValidity('');
-            } else {
-                this.setCustomValidity('请输入 ' + cfg.min + ' 到 ' + cfg.max + ' 之间的值');
-            }
-        });
-    });
+var _audioSchema = null;
+var _audioPipeline = 'tts';
+var _audioContainerId = 'floatSliders';
+var _audioValuesByEngine = {};
+var _audioRequestSeq = 0;
+
+function _audioFieldId(key) {
+    return 'audio_param_' + key;
 }
 
-/* ── Auto-init audio params on all pages with #floatSliders ── */
-if (document.getElementById('floatSliders')) {
-    initFloatSliders('floatSliders', '音频模型参数');
+function _currentAudioValues() {
+    var values = {};
+    if (!_audioSchema) return values;
+    _audioSchema.fields.forEach(function(field) {
+        var el = document.getElementById(_audioFieldId(field.key));
+        if (!el) return;
+        if (field.type === 'bool') {
+            values[field.key] = el.tagName === 'SELECT' ? el.value === '1' : !!el.checked;
+        } else {
+            values[field.key] = parseFloat(el.value);
+        }
+    });
+    return values;
+}
+
+function syncAudioParams() {
+    if (!_audioSchema) return null;
+    var values = _currentAudioValues();
+    _audioValuesByEngine[_audioSchema.engine] = values;
+    var payload = { engine: _audioSchema.engine };
+    for (var key in values) payload[key] = values[key];
+
+    var container = document.getElementById(_audioContainerId);
+    if (!container) return payload;
+    var hidden = document.getElementById('audio_params');
+    if (!hidden) {
+        hidden = document.createElement('input');
+        hidden.type = 'hidden';
+        hidden.id = 'audio_params';
+        hidden.name = 'audio_params';
+        container.appendChild(hidden);
+    }
+    hidden.value = JSON.stringify(payload);
+
+    // Canonical nested envelope for pages that submit the form directly.
+    var jobParams = document.getElementById('job_params');
+    if (!jobParams) {
+        jobParams = document.createElement('input');
+        jobParams.type = 'hidden';
+        jobParams.id = 'job_params';
+        jobParams.name = 'job_params';
+        container.appendChild(jobParams);
+    }
+    jobParams.value = JSON.stringify({ audio: payload });
+    return payload;
+}
+
+function collectAudioParams() {
+    return syncAudioParams();
+}
+
+function _fallbackAudioSchema(language) {
+    var code = String(language || '').toLowerCase();
+    var cantonese = code === 'yue' || code === 'zh-hk' || code === 'zh-yue' || code === 'cantonese';
+    if (cantonese) {
+        return {
+            engine: 'voxcpm',
+            engine_label: 'VoxCPM2',
+            fields: [
+                { key: 'cfg_value', label: 'CFG / 引导强度', type: 'float', min: 1.0, max: 3.0, step: 0.05, default: 2.0, help: 'VoxCPM2 CFG guidance；默认 2.0' },
+                { key: 'inference_timesteps', label: '推理步数', type: 'int', min: 5, max: 30, step: 1, default: 10, help: '越高越慢，通常 10 足够' },
+                { key: 'seed', label: '随机种子', type: 'int', min: -1, max: 2147483647, step: 1, default: 42, help: '-1 表示每次随机' },
+                { key: 'retry_badcase', label: 'Badcase 重试', type: 'bool', default: false, help: '音频明显过长/异常时自动重试' },
+            ],
+        };
+    }
+    return {
+        engine: 'chatterbox',
+        engine_label: 'Chatterbox',
+        fields: [
+            { key: 'temperature', label: '温度', type: 'float', min: 0.2, max: 1.2, step: 0.01, default: 0.6, help: '越高输出越随机，越低越稳定' },
+            { key: 'cfg_weight', label: 'CFG 权重', type: 'float', min: 0.0, max: 1.5, step: 0.01, default: 0.25, help: '控制生成音频与提示的契合度' },
+            { key: 'exaggeration', label: '口音夸张度', type: 'float', min: 0.0, max: 1.0, step: 0.01, default: 0.3, help: '口音/语气的夸张程度' },
+        ],
+    };
+}
+
+function _renderAudioParams(schema) {
+    var container = document.getElementById(_audioContainerId);
+    if (!container) return;
+    if (_audioSchema && _audioSchema.engine) {
+        _audioValuesByEngine[_audioSchema.engine] = _currentAudioValues();
+    }
+    _audioSchema = schema;
+    var saved = _audioValuesByEngine[schema.engine] || {};
+
+    container.innerHTML = '';
+    var fieldset = document.createElement('fieldset');
+    fieldset.style.cssText = 'border:1px solid var(--color-border,#555);border-radius:8px;padding:12px 16px 4px 16px;margin:0;width:100%;box-sizing:border-box;';
+    var legend = document.createElement('legend');
+    legend.style.cssText = 'color:var(--color-text-medium,#aaa);font-weight:bold;font-size:0.9em;padding:0 6px;';
+    legend.textContent = '音频模型参数 · ' + (schema.engine_label || schema.engine || '');
+    fieldset.appendChild(legend);
+    container.appendChild(fieldset);
+
+    schema.fields.forEach(function(field) {
+        var value = saved[field.key];
+        if (value == null) value = field.default;
+        var id = _audioFieldId(field.key);
+        var row = document.createElement('div');
+        row.className = 'form-row';
+        if (field.type === 'bool') {
+            row.innerHTML =
+                '<label for="' + id + '">' + field.label + '</label>' +
+                '<select id="' + id + '" class="float-input">' +
+                '<option value="1">是</option><option value="0">否</option></select>' +
+                '<span class="slider-hint">' + (field.help || '') + '</span>';
+            fieldset.appendChild(row);
+            var select = row.querySelector('select');
+            select.value = value ? '1' : '0';
+            select.addEventListener('change', syncAudioParams);
+        } else {
+            row.innerHTML =
+                '<label for="' + id + '">' + field.label + '</label>' +
+                '<input type="number" class="float-input" id="' + id + '" ' +
+                'min="' + field.min + '" max="' + field.max + '" step="' + field.step + '" value="' + value + '">' +
+                '<span class="slider-hint">(' + field.min + ' – ' + field.max + ') ' + (field.help || '') + '</span>';
+            fieldset.appendChild(row);
+            var input = row.querySelector('input');
+            input.addEventListener('blur', function() {
+                validateFloatInput(this, field.min, field.max);
+                syncAudioParams();
+            });
+            input.addEventListener('input', function() {
+                var v = parseFloat(this.value);
+                if (!isNaN(v) && v >= field.min && v <= field.max) {
+                    this.setCustomValidity('');
+                } else {
+                    this.setCustomValidity('请输入 ' + field.min + ' 到 ' + field.max + ' 之间的值');
+                }
+                syncAudioParams();
+            });
+            input.addEventListener('change', syncAudioParams);
+        }
+    });
+    syncAudioParams();
+}
+
+function _loadAudioSchema(pipeline, language) {
+    var url = '/api/param-schema?pipeline=' + encodeURIComponent(pipeline || 'tts') +
+        '&language=' + encodeURIComponent(language || 'en');
+    return fetch(url)
+        .then(function(response) {
+            if (!response.ok) throw new Error('param schema unavailable');
+            return response.json();
+        })
+        .catch(function() {
+            return _fallbackAudioSchema(language);
+        });
+}
+
+function initAudioParams(containerId, pipeline, langSelect) {
+    var container = document.getElementById(containerId);
+    if (!container) return;
+    _audioContainerId = containerId;
+    _audioPipeline = pipeline || 'tts';
+
+    function refresh() {
+        var language = langSelect && langSelect.value ? langSelect.value : 'en';
+        var seq = ++_audioRequestSeq;
+        _loadAudioSchema(_audioPipeline, language).then(function(schema) {
+            if (seq !== _audioRequestSeq) return;
+            _renderAudioParams(schema);
+        });
+    }
+
+    refresh();
+    if (langSelect) langSelect.addEventListener('change', refresh);
 }
 
 /* ── Download file (shared) ────────────────────────────── */
@@ -424,7 +598,12 @@ function submitJob(url, bodyOrFormData, resultLinkId, redirectPath) {
         var body = bodyOrFormData;
         if (!(body instanceof FormData)) {
             body = new FormData();
-            for (var key in bodyOrFormData) { body.append(key, bodyOrFormData[key]); }
+            for (var key in bodyOrFormData) {
+                var value = bodyOrFormData[key];
+                if (value === null || value === undefined) continue;
+                if (typeof value === 'object') value = JSON.stringify(value);
+                body.append(key, value);
+            }
         }
 
         // AJAX headers keep the server from converting the JSON response

@@ -33,9 +33,42 @@ LANG_MAP: dict[str, str] = {
     "sw": "Swahili",
     "tr": "Turkish",
     "zh": "Chinese",
+    "yue": "Cantonese",
     "vi": "Vietnamese",
     "th": "Thai",
     "id": "Indonesian",
+}
+
+# Native-language display names for the UI.  LANG_MAP stays English because
+# it is also used for translation prompts and validation messages.
+NATIVE_LANG_MAP: dict[str, str] = {
+    "ar": "العربية",
+    "da": "Dansk",
+    "de": "Deutsch",
+    "el": "Ελληνικά",
+    "en": "English",
+    "es": "Español",
+    "fi": "Suomi",
+    "fr": "Français",
+    "he": "עברית",
+    "hi": "हिन्दी",
+    "it": "Italiano",
+    "ja": "日本語",
+    "ko": "한국어",
+    "ms": "Bahasa Melayu",
+    "nl": "Nederlands",
+    "no": "Norsk",
+    "pl": "Polski",
+    "pt": "Português",
+    "ru": "Русский",
+    "sv": "Svenska",
+    "sw": "Kiswahili",
+    "tr": "Türkçe",
+    "zh": "中文",
+    "yue": "粤语",
+    "vi": "Tiếng Việt",
+    "th": "ไทย",
+    "id": "Bahasa Indonesia",
 }
 
 # Unicode script ranges for language detection/validation.

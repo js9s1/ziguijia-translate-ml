@@ -85,6 +85,8 @@ _QUIT = False
 _WORKER_TL = threading.local()  # one RapidVideOCR instance per worker thread
 OCR_POOL = None  # ThreadPoolExecutor, max_workers == MAX_JOBS
 JOB_SLOTS = None  # BoundedSemaphore(MAX_JOBS) — admits one job per worker
+_ACTIVE = 0  # jobs currently executing (reported by ping for GPU gating)
+_ACTIVE_LOCK = threading.Lock()
 
 
 def _init_worker():
@@ -157,6 +159,9 @@ def _submit_job(conn, req):
     """Run one OCR job on a worker. The worker replies and frees the slot."""
 
     def run_job():
+        global _ACTIVE
+        with _ACTIVE_LOCK:
+            _ACTIVE += 1
         try:
             img_dir = Path(req["img_dir"]).resolve()
             save_dir = Path(req["save_dir"]).resolve()
@@ -181,6 +186,8 @@ def _submit_job(conn, req):
             _send_response(conn, {"ok": False, "error": f"{type(e).__name__}: {e}"})
             return
         finally:
+            with _ACTIVE_LOCK:
+                _ACTIVE -= 1
             JOB_SLOTS.release()
 
     try:
@@ -198,7 +205,14 @@ def _handle(conn, device_name):
 
     if cmd == "ping":
         _send_response(
-            conn, {"ok": True, "engine": "torch/rocm", "device": device_name}
+            conn,
+            {
+                "ok": True,
+                "engine": "torch/rocm",
+                "device": device_name,
+                "max_jobs": MAX_JOBS,
+                "active": _ACTIVE,
+            },
         )
         return
 

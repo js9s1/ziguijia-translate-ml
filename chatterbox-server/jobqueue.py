@@ -1,3 +1,4 @@
+import json
 import logging
 import multiprocessing
 import os
@@ -27,7 +28,7 @@ except RuntimeError:
     pass  # already set in a parent context
 
 from db_schema import ConnectionManager, INSERT_COLUMNS, init_jobs_schema, insert_job_sql
-from middleware import _DEFAULT_PARAMS
+from job_params import load_job_params, normalize_job_params
 from singleton import singleton
 from valkey_util import publish_job_status, queue_push, queue_pop, JOB_QUEUE_KEY
 
@@ -175,12 +176,16 @@ class JobQueue:
         prev_ckpt = existing_checkpoint[0] if existing_checkpoint else ""
 
         now = _now_str()
+        normalized_params = normalize_job_params(
+            job_data.get("job_params") or job_data.get("params"),
+            job_data.get("target_language"),
+            fallback=job_data,
+        )
 
         values: dict[str, object] = {
             "access_code": access_code,
             "srt_path": job_data.get("srt_path"),
             "output_dir": job_data.get("output_dir"),
-            "temperature": job_data.get("temperature"),
             "status": JobStatus.PENDING.value,
             "error": None,
             "run_func_name": run_func_name,
@@ -188,15 +193,11 @@ class JobQueue:
             "video_file": job_data.get("video_file"),
             "user_id": user_id,
             "text": job_data.get("text"),
-            "blur": job_data.get("blur", "yes"),
             "target_language": job_data.get("target_language", "en"),
-            "cfg_weight": job_data.get("cfg_weight", _DEFAULT_PARAMS["cfg_weight"]),
-            "exaggeration": job_data.get("exaggeration", _DEFAULT_PARAMS["exaggeration"]),
+            "job_params": json.dumps(normalized_params, ensure_ascii=False),
             "start_trim": job_data.get("start_trim"),
             "end_trim": job_data.get("end_trim"),
             "cached_path": job_data.get("cached_path"),
-            "filename": job_data.get("filename"),
-            "ocr_only": job_data.get("ocr_only"),
             "checkpoint": prev_ckpt,
             "created_at": now,
             "status_changed_at": now,
@@ -353,7 +354,7 @@ class JobQueue:
     def get_status(self, access_code: str) -> dict | None:
         conn = self._get_conn()
         row = conn.execute(
-            "SELECT access_code, status, error, output_dir, progress, target_language, created_at, temperature, cfg_weight, exaggeration, checkpoint, checkpoint_edited, edited_srt_files FROM jobs WHERE access_code = ?",
+            "SELECT access_code, status, error, output_dir, progress, target_language, created_at, job_params, checkpoint, checkpoint_edited, edited_srt_files FROM jobs WHERE access_code = ?",
             (access_code,),
         ).fetchone()
 
@@ -368,6 +369,7 @@ class JobQueue:
                 (JobStatus.PENDING.value, row["created_at"]),
             ).fetchone()[0]
 
+        job_params_data = load_job_params(row["job_params"])
         return {
             "access_code": row["access_code"],
             "status": row["status"],
@@ -376,9 +378,8 @@ class JobQueue:
             "progress": row["progress"],
             "target_language": row["target_language"],
             "queue_position": queue_position,
-            "temperature": row["temperature"],
-            "cfg_weight": row["cfg_weight"],
-            "exaggeration": row["exaggeration"],
+            "audio_params": job_params_data.get("audio") if job_params_data else None,
+            "job_params": job_params_data,
             "checkpoint": row["checkpoint"] or "",
             "checkpoint_edited": bool(row["checkpoint_edited"]),
             "edited_srt_files": row["edited_srt_files"].split(",") if row["edited_srt_files"] else [],
@@ -497,7 +498,7 @@ class JobQueue:
         """
         conn = self._get_conn()
         row = conn.execute(
-            "SELECT status, run_func_name, target_language, ocr_only FROM jobs WHERE access_code = ?",
+            "SELECT status, run_func_name, target_language FROM jobs WHERE access_code = ?",
             (access_code,),
         ).fetchone()
 

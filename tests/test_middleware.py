@@ -70,6 +70,35 @@ class TestParseJobParams:
         assert result["target_language"] == "en"
         assert result["cfg_weight"] == 0.25
         assert result["exaggeration"] == 0.3
+        assert result["audio_params"]["engine"] == "chatterbox"
+
+    def test_cantonese_audio_params(self):
+        result = parse_job_params(
+            {
+                "target_language": "yue",
+                "audio_params": '{"cfg_value": 2.5, "inference_timesteps": 12}',
+            }
+        )
+        assert result["audio_params"]["engine"] == "voxcpm"
+        assert result["audio_params"]["cfg_value"] == 2.5
+        assert result["audio_params"]["inference_timesteps"] == 12
+
+    def test_nested_job_params_extracts_video_and_output(self):
+        result = parse_job_params(
+            {
+                "target_language": "en",
+                "job_params": (
+                    '{"audio": {"temperature": 0.7}, '
+                    '"video": {"blur": "no", "ocr_only": "yes"}, '
+                    '"output": {"filename": "nested.wav"}}'
+                ),
+            }
+        )
+        assert result["audio_params"]["temperature"] == 0.7
+        assert result["blur"] == "no"
+        assert result["ocr_only"] == "yes"
+        assert result["filename"] == "nested.wav"
+        assert result["job_params"]["output"]["filename"] == "nested.wav"
 
 
 class TestSRTTimingRegex:
@@ -194,6 +223,12 @@ class TestValidateTextTargetLanguage:
     def test_matching_text_passes(self):
         validate_text_matches_target_language("这是一段中文字幕", "zh")
         validate_text_matches_target_language("Bonjour tout le monde", "fr")
+
+    def test_cantonese_skips_script_validation(self):
+        # Cantonese uses Han characters and is commonly code-mixed; the
+        # zh/ja/ko heuristic must not reject it.
+        validate_text_matches_target_language("今晚打邊爐好唔好啊？", "yue")
+        validate_text_matches_target_language("OK 咗，聽日見", "yue")
 
     def test_no_letters_skips(self):
         validate_text_matches_target_language("123 !!! 456", "zh")

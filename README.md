@@ -35,7 +35,7 @@ encoding.
 |---|---|---|
 | `gunicorn` | Web UI + job queue | `start_server.sh` / `stop_server.sh` |
 | `valkey-server` | Shared job queue + pub/sub | started/stopped by the scripts |
-| TTS daemon (`gen_audio_daemon.py`) | Chatterbox voice-clone TTS | detached; auto-started by `gen_audio.py` clients or prewarmed when the worker picks up a job; auto-exits when the GPU is hot while idle, after a short post-job grace (`GEN_AUDIO_IDLE_TEMPERATURE` / `GEN_AUDIO_IDLE_GRACE_SECS`) |
+| TTS daemon (`gen_audio_daemon.py`) | Chatterbox voice-clone TTS; VoxCPM2 for Cantonese (`yue`) | detached; auto-started by `gen_audio.py` clients or prewarmed when the worker picks up a job; auto-exits when the GPU is hot while idle, after a short post-job grace (`GEN_AUDIO_IDLE_TEMPERATURE` / `GEN_AUDIO_IDLE_GRACE_SECS`) |
 | translate daemon (`translate_daemon.py`) | HY-MT machine translation | detached; auto-started by `translate_srt.py` clients or prewarmed when the worker picks up a job; auto-exits when the GPU is hot while idle (`TRANSLATE_IDLE_TEMPERATURE`) |
 | OCR daemon (`rapid_videocr_daemon.py`) | RapidOCR (burned-in zh subtitles) | started/stopped by the scripts; also shared with the batch pipeline |
 | `jobs_tui.py` | Terminal job monitor | manual |
@@ -78,6 +78,22 @@ Checkpoint order: `download, decompress, trim, extract_audio, whisper, ocr, tran
 Completed steps are skipped on resubmit, so failed/resubmitted jobs resume instead of
 redoing work.
 
+### Whisper ASR backend
+
+`run_whisper_ckpt` prefers the whisper.cpp **Vulkan** build with fp32
+(`GGML_VK_DISABLE_F16=1`) and flash-attention. The default path is
+`~/.local/opt/whisper.cpp-vulkan/whisper-cli` (override with `WHISPER_BIN`).
+Before launching it, a GPU gate (`whisper_gate.py`) skips Vulkan and uses CPU
+while the iGPU is at/above `WHISPER_GPU_MAX_TEMP` (default 76 °C) or while the
+TTS/OCR/translate daemons report active jobs (`WHISPER_GATE_*_ACTIVE`, default
+1; set 0 to disable a check). If Vulkan still fails — missing binary, crash,
+timeout, or empty SRT — it retries on CPU with
+`/usr/bin/whisper-cli -oved CPU -t 16` (`WHISPER_CPU_BIN`,
+`WHISPER_CPU_THREADS`). Keep the bundled `libwhisper.so`/`libggml*.so` files
+next to the Vulkan binary, or point `WHISPER_LIB_DIR` at them. Rebuild with
+`cmake -B build-vulkan -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release` and copy
+`build-vulkan/bin/.` into that directory.
+
 1. **gen_audio** (`gen_audio.py`, subprocess on Python 3.11 + ROCm)
    - Splits the SRT into segments; per segment, asks the TTS daemon to generate speech
      in the target language using the cloned speaker voice.
@@ -99,6 +115,16 @@ redoing work.
 
 ## TTS (gen_audio) key behaviours
 
+- **Cantonese (`yue`)** — uses VoxCPM2 (2B, 48 kHz) instead of Chatterbox. One
+  shared instance serves the daemon and generations are serialized; translation
+  modes are UI-hidden for this language.
+- **Engine-specific audio parameters** — the web UI fetches
+  `/api/param-schema?pipeline=…&language=…` and renders only the controls for
+  the selected engine (Chatterbox vs VoxCPM2).
+- **Canonical job envelope** — the job queue stores `{target_language, audio,
+  video, output}` in `jobs.job_params`; job-specific tuning columns have been
+  removed. Only lifecycle and input columns remain flat. The TTS daemon receives
+  the audio section via `gen_audio.py --audio_params`.
 - **Silence markers** — `<1.5>` inline in cue text inserts intentional silence.
 - **Non-verbal cues** — only text with *no letters at all* (pure symbols) is replaced
   by silence; any letter-based text is spoken, however short (short Japanese/English

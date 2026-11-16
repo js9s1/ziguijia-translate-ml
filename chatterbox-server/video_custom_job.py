@@ -9,6 +9,7 @@ from config import (
     MARKER_OUTRO,
     VIDEO_DIR,
 )
+from job_params import get_video_params
 from jobqueue import get_job_queue
 from log_utils import job_log
 from middleware import (
@@ -36,7 +37,7 @@ def _run_video_custom_job(job_data: dict):
     access_code = job_data["access_code"]
     srt_path = job_data["srt_path"]
     output_dir = job_data["output_dir"]
-    blur = job_data.get("blur", "yes")
+    blur = get_video_params(job_data).get("blur", "yes")
 
     os.makedirs(output_dir, exist_ok=True)
     gen_audio_dir = os.path.join(output_dir, "audio_tracks")
@@ -50,6 +51,7 @@ def _run_video_custom_job(job_data: dict):
         target_language=ap["target_language"],
         cfg_weight=ap["cfg_weight"],
         exaggeration=ap["exaggeration"],
+        audio_params=ap.get("audio_params"),
     )
 
     job_log(access_code, output_dir, "Step 2: Processing video")
@@ -75,6 +77,7 @@ def process_video_custom(
     target_language: str = "en",
     cfg_weight: float = 0.5,
     exaggeration: float = 0.5,
+    audio_params: dict | None = None,
 ) -> dict:
     srt_text = srt_file.read()
     srt_file.seek(0)
@@ -110,6 +113,7 @@ def process_video_custom(
         "target_language": target_language,
         "cfg_weight": cfg_weight,
         "exaggeration": exaggeration,
+        "audio_params": audio_params,
     }
     job_access_code = get_job_queue().add_job(job_data, _run_video_custom_job, user_id)
     return {"access_code": job_access_code, "message": "Job queued successfully"}
@@ -120,7 +124,7 @@ def _run_video_auto_job(job_data: dict):
     access_code = job_data["access_code"]
     output_dir = job_data["output_dir"]
     ap = get_audio_params(job_data)
-    blur = job_data.get("blur", "yes")
+    blur = get_video_params(job_data).get("blur", "yes")
 
     os.makedirs(output_dir, exist_ok=True)
     log_file = os.path.join(output_dir, "job.log")
@@ -148,6 +152,7 @@ def _run_video_auto_job(job_data: dict):
             target_language=ap["target_language"],
             cfg_weight=ap["cfg_weight"],
             exaggeration=ap["exaggeration"],
+            audio_params=ap.get("audio_params"),
             ckpt=ckpt,
             audio_subdir="audio_tracks",
         )
@@ -174,6 +179,7 @@ def process_video_auto(
     target_language: str = "en",
     cfg_weight: float = 0.5,
     exaggeration: float = 0.5,
+    audio_params: dict | None = None,
 ) -> dict:
     access_code = str(uuid.uuid4())[:8].upper()
     output_dir = os.path.join(VIDEO_DIR, access_code)
@@ -192,6 +198,7 @@ def process_video_auto(
         "target_language": target_language,
         "cfg_weight": cfg_weight,
         "exaggeration": exaggeration,
+        "audio_params": audio_params,
     }
     job_access_code = get_job_queue().add_job(job_data, _run_video_auto_job, user_id)
     return {"access_code": job_access_code, "message": "Auto translation job queued"}
@@ -202,7 +209,7 @@ def _run_video_ocr_job(job_data: dict):
     access_code = job_data["access_code"]
     output_dir = job_data["output_dir"]
     ap = get_audio_params(job_data)
-    blur = job_data.get("blur", "yes")
+    blur = get_video_params(job_data).get("blur", "yes")
 
     os.makedirs(output_dir, exist_ok=True)
     log_file = os.path.join(output_dir, "job.log")
@@ -226,6 +233,7 @@ def process_video_ocr(
     target_language: str = "en",
     cfg_weight: float = 0.5,
     exaggeration: float = 0.5,
+    audio_params: dict | None = None,
 ) -> dict:
     access_code = str(uuid.uuid4())[:8].upper()
     output_dir = os.path.join(VIDEO_DIR, access_code)
@@ -244,6 +252,7 @@ def process_video_ocr(
         "target_language": target_language,
         "cfg_weight": cfg_weight,
         "exaggeration": exaggeration,
+        "audio_params": audio_params,
     }
     job_access_code = get_job_queue().add_job(job_data, _run_video_ocr_job, user_id)
     return {"access_code": job_access_code, "message": "OCR translation job queued"}
@@ -262,7 +271,7 @@ def _run_video_ocr_translate_only_job(job_data: dict):
         valid_steps = ["ocr", "translate"]
         ckpt = CheckpointHelper(access_code, output_dir, valid_steps)
 
-        if job_data.get("ocr_only") == "yes":
+        if get_video_params(job_data).get("ocr_only") == "yes":
             run_ocr_only_step(video_file, output_dir, access_code, ckpt, proc_log)
             job_log(access_code, output_dir, "Done! OCR complete (translation/audio/video skipped)")
         else:
@@ -283,6 +292,7 @@ def process_video_ocr_translate_only(
     target_language: str = "en",
     cfg_weight: float = 0.5,
     exaggeration: float = 0.5,
+    audio_params: dict | None = None,
     ocr_only: str = "yes",
 ) -> dict:
     access_code = str(uuid.uuid4())[:8].upper()
@@ -302,6 +312,7 @@ def process_video_ocr_translate_only(
         "target_language": target_language,
         "cfg_weight": cfg_weight,
         "exaggeration": exaggeration,
+        "audio_params": audio_params,
         "ocr_only": ocr_only,
     }
     job_access_code = get_job_queue().add_job(job_data, _run_video_ocr_translate_only_job, user_id)

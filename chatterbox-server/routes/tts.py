@@ -30,12 +30,13 @@ def tts_process():
     params = parse_job_params(data)
     result = process_tts(
         text,
-        data.get("filename", "output.wav"),
+        params.get("filename") or "output.wav",
         session["user_id"],
         temperature=params["temperature"],
         target_language=params["target_language"],
         cfg_weight=params["cfg_weight"],
         exaggeration=params["exaggeration"],
+        audio_params=params["audio_params"],
     )
     return jsonify(result)
 
@@ -112,6 +113,7 @@ def audio_process():
             target_language=params["target_language"],
             cfg_weight=params["cfg_weight"],
             exaggeration=params["exaggeration"],
+            audio_params=params["audio_params"],
         )
         return jsonify(result)
     else:
@@ -125,11 +127,12 @@ def audio_process():
         params = parse_job_params(data)
         result = process_tts(
             text,
-            data.get("filename", "output.wav"),
+            params.get("filename") or "output.wav",
             session["user_id"],
             temperature=params["temperature"],
             target_language=params["target_language"],
             cfg_weight=params["cfg_weight"],
             exaggeration=params["exaggeration"],
+            audio_params=params["audio_params"],
         )
         return jsonify(result)

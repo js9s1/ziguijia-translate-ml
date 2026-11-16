@@ -52,6 +52,10 @@ def _read_srt_text(path: str) -> str:
 
 CHANGED_THRESHOLD = 0.05
 
+# Engine-specific audio parameters supplied by the server.  The daemon
+# decides which keys apply (Chatterbox vs VoxCPM2).
+AUDIO_PARAMS = {}
+
 # Thermal protection — Strix Halo iGPU (gfx1151) can handle sustained load
 # but still benefits from thermal monitoring on fanless/compact systems.
 GPU_TEMP_LIMIT = float(os.environ.get("GPU_TEMP_LIMIT", "90"))  # °C — pause if exceeded
@@ -402,6 +406,7 @@ def _generate_chunk_with_markers(
     cfg_weight,
     exaggeration,
     sample_rate,
+    attempt=0,
 ):
     """Generate one chunk, honouring inline ``<seconds>`` silence markers.
 
@@ -419,6 +424,7 @@ def _generate_chunk_with_markers(
             target_language=target_language,
             cfg_weight=cfg_weight,
             exaggeration=exaggeration,
+            attempt=attempt,
         )
 
     segs = []
@@ -433,6 +439,7 @@ def _generate_chunk_with_markers(
             target_language=target_language,
             cfg_weight=cfg_weight,
             exaggeration=exaggeration,
+            attempt=attempt,
         )
         segs.append(wav)
         total += dur
@@ -451,6 +458,7 @@ def _generate_chunk_with_markers(
                 target_language=target_language,
                 cfg_weight=cfg_weight,
                 exaggeration=exaggeration,
+                attempt=attempt,
             )
             segs.append(wav)
             total += dur
@@ -605,20 +613,22 @@ class _DaemonTTSClient:
         target_language: str,
         cfg_weight: float,
         exaggeration: float,
+        attempt: int = 0,
     ):
-        resp = self._request_retry(
-            {
-                "cmd": "tts",
-                "text": text,
-                "language": target_language,
-                "prompt_file": prompt_file,
-                "temperature": temperature,
-                "cfg_weight": cfg_weight,
-                "exaggeration": exaggeration,
-                "output_path": wav_path,
-            },
-            timeout=1800.0,
-        )
+        payload = {
+            "cmd": "tts",
+            "text": text,
+            "language": target_language,
+            "prompt_file": prompt_file,
+            "temperature": temperature,
+            "cfg_weight": cfg_weight,
+            "exaggeration": exaggeration,
+            "attempt": attempt,
+            "output_path": wav_path,
+        }
+        if AUDIO_PARAMS:
+            payload["params"] = AUDIO_PARAMS
+        resp = self._request_retry(payload, timeout=1800.0)
         if not resp.get("ok"):
             raise RuntimeError(f"daemon tts failed: {resp.get('error')}")
         wav_np, _ = sf.read(wav_path, dtype="float32")
@@ -839,6 +849,7 @@ def process_with_direct(
                             cfg_weight=cfg_weight,
                             exaggeration=exaggeration,
                             sample_rate=sample_rate,
+                            attempt=attempt,
                         )
                     except _DaemonUnavailable as e:
                         # The daemon process died mid-request (e.g. a ROCm
@@ -1010,6 +1021,7 @@ def process_text(
                     cfg_weight=cfg_weight,
                     exaggeration=exaggeration,
                     sample_rate=sample_rate,
+                    attempt=attempt,
                 )
             except _DaemonUnavailable:
                 raise
@@ -1075,6 +1087,11 @@ def main():
     parser.add_argument("--cfg_weight", type=float, default=0.5, help="CFG weight for generation")
     parser.add_argument("--exaggeration", type=float, default=0.5, help="Exaggeration level for voice characteristics")
     parser.add_argument("--output_dir", default="./output", help="Output directory")
+    parser.add_argument(
+        "--audio_params",
+        default=None,
+        help="JSON object with engine-specific audio parameters (e.g. VoxCPM2 cfg_value/timesteps)",
+    )
     parser.add_argument("--output_srt", default="output_adjusted.srt")
     parser.add_argument("--output_wav", default="output.wav")
     parser.add_argument("--changed_json", default="changed_segments.json")
@@ -1085,6 +1102,15 @@ def main():
         help="TTS backend: auto (start daemon if needed), daemon (require running daemon)",
     )
     args = parser.parse_args()
+
+    global AUDIO_PARAMS
+    if args.audio_params:
+        try:
+            AUDIO_PARAMS = json.loads(args.audio_params)
+        except ValueError:
+            parser.error("--audio_params must be a valid JSON object")
+        if not isinstance(AUDIO_PARAMS, dict):
+            parser.error("--audio_params must be a JSON object")
 
     os.makedirs(args.output_dir, exist_ok=True)
     tmp_dir = os.path.join(args.output_dir, "tmp")
@@ -1112,9 +1138,10 @@ def main():
         client.ensure_daemon()
     resp = client.ping()
     if resp is not None and resp.get("ok"):
+        engines = resp.get("engines") or [resp.get("engine")]
         print(
             f"Using gen_audio daemon ({GEN_AUDIO_DAEMON_SOCK}, "
-            f"engine={resp.get('engine')}, device={resp.get('device')}, max_jobs={resp.get('max_jobs')})"
+            f"engines={'+'.join(engines)}, device={resp.get('device')}, max_jobs={resp.get('max_jobs')})"
         )
         backend = client
     else:

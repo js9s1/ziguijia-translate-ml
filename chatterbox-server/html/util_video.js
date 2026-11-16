@@ -15,16 +15,56 @@ var VIDEO_MODE_OPTIONS = {
     ],
 };
 
-function _buildVideoModeSelect(pageType) {
+function _isCantonese(langCode) {
+    var code = String(langCode || '').toLowerCase();
+    return code === 'yue' || code === 'zh-hk' || code === 'zh-yue' || code === 'cantonese';
+}
+
+function _buildVideoModeSelect(pageType, langCode) {
     var options = VIDEO_MODE_OPTIONS[pageType] || VIDEO_MODE_OPTIONS.ning;
     var sel = document.getElementById('mode');
     if (!sel) return;
+    var cantonese = _isCantonese(langCode);
+    var current = sel.value;
+    sel.innerHTML = '';
     options.forEach(function(o) {
+        // Cantonese has no translation pipeline: only "upload SRT" is valid.
+        if (cantonese && o.v !== 'srt') return;
         var opt = document.createElement('option');
         opt.value = o.v;
         opt.textContent = o.l;
         sel.appendChild(opt);
     });
+    if (cantonese) {
+        sel.value = 'srt';
+    } else if (current && options.some(function(o) { return o.v === current; })) {
+        sel.value = current;
+    }
+}
+
+function _showCantoneseNotice(cantonese) {
+    var mode = document.getElementById('mode');
+    if (!mode) return;
+    var row = mode.closest('.form-row');
+    if (!row) return;
+    var notice = document.getElementById('cantoneseNotice');
+    if (!notice) {
+        notice = document.createElement('div');
+        notice.id = 'cantoneseNotice';
+        notice.className = 'info-text';
+        notice.textContent = '粤语目标语言仅支持「上传SRT字幕」模式；自动翻译与OCR翻译流程已隐藏。';
+        row.insertAdjacentElement('afterend', notice);
+    }
+    notice.classList.toggle('hidden', !cantonese);
+}
+
+function _syncVideoModeVisibility() {
+    var mode = document.getElementById('mode');
+    if (!mode) return;
+    _toggleSrtSection(mode.value);
+    _toggleOcrOnlyRadio(mode.value);
+    _toggleAudioParams(mode.value);
+    _toggleBlurRow(mode.value);
 }
 
 function _toggleSrtSection(mode) {
@@ -65,10 +105,14 @@ function getOcrOnlyValue() {
 
 function collectCommonVideoFields(formData) {
     formData = formData || new FormData();
-    formData.append('temperature', document.getElementById('temperature').value);
     formData.append('target_language', document.getElementById('target_language').value);
-    formData.append('cfg_weight', document.getElementById('cfg_weight').value);
-    formData.append('exaggeration', document.getElementById('exaggeration').value);
+    var audioParams = collectAudioParams();
+    var video = {};
+    var modeEl = document.getElementById('mode');
+    if (modeEl) video.mode = modeEl.value;
+    var blurEl = document.querySelector('input[name="blur"]:checked');
+    if (blurEl) video.blur = blurEl.value;
+    formData.append('job_params', JSON.stringify({ audio: audioParams, video: video }));
     return formData;
 }
 
@@ -79,18 +123,26 @@ function initVideoForm(config) {
     _buildVideoModeSelect(pageType);
 
     document.getElementById('mode').addEventListener('change', function() {
-        _toggleSrtSection(this.value);
-        _toggleOcrOnlyRadio(this.value);
-        _toggleAudioParams(this.value);
-        _toggleBlurRow(this.value);
+        _syncVideoModeVisibility();
     });
 
-    _toggleSrtSection(document.getElementById('mode').value);
-    _toggleOcrOnlyRadio(document.getElementById('mode').value);
-    _toggleAudioParams(document.getElementById('mode').value);
-    _toggleBlurRow(document.getElementById('mode').value);
+    _syncVideoModeVisibility();
+    _showCantoneseNotice(false);
 
-    initLanguageSelect('langSelectContainer');
+    var langSelect = initLanguageSelect('langSelectContainer');
+    if (langSelect) {
+        langSelect.addEventListener('change', function() {
+            _buildVideoModeSelect(pageType, this.value);
+            _showCantoneseNotice(_isCantonese(this.value));
+            _syncVideoModeVisibility();
+        });
+    }
+    initAudioParams(
+        'floatSliders',
+        pageType === 'ning' ? 'video_ning' : 'video_custom',
+        langSelect
+    );
+
     initResultSection('resultSection', 'checkProgressLink');
 
     if (config.onSubmit) {

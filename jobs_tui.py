@@ -132,12 +132,10 @@ class Job:
     deleted_at: str | None = None
     target_language: str | None = None
     username: str = ""
-    temperature: float | None = None
-    cfg_weight: float | None = None
-    exaggeration: float | None = None
     start_trim: float | None = None
     end_trim: float | None = None
     text: str | None = None
+    job_params: str | None = None
 
     @property
     def display_type(self) -> str:
@@ -358,7 +356,7 @@ def load_jobs(
     data_sql = (
         "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at, "
         "completed_at, failed_at, cancelled_at, deleted_at, "
-        "temperature, cfg_weight, exaggeration, start_trim, end_trim, text, target_language "
+        "start_trim, end_trim, text, target_language, job_params "
         f"FROM jobs {where_clause} {order_clause} LIMIT ? OFFSET ?"
     )
     rows = conn.execute(data_sql, params + [limit, offset]).fetchall()
@@ -375,7 +373,7 @@ def get_job(code: str) -> Job | None:
     r = conn.execute(
         "SELECT access_code, run_func_name, status, error, output_dir, srt_path, created_at, user_id, status_changed_at, "
         "completed_at, failed_at, cancelled_at, deleted_at, "
-        "temperature, cfg_weight, exaggeration, start_trim, end_trim, text, target_language "
+        "start_trim, end_trim, text, target_language, job_params "
         "FROM jobs WHERE access_code = ?",
         (code.upper(),),
     ).fetchone()
@@ -770,7 +768,9 @@ def render_table(s: State) -> Table:
     t.add_column("用户", width=8)
     t.add_column("访问码", width=9)
     t.add_column("状态", width=10, no_wrap=True)
-    t.add_column("错误", width=28, overflow="fold")
+    # Flexible width: narrow terminals shrink this column before the # column,
+    # so two-digit job numbers stay readable.
+    t.add_column("错误", max_width=28, overflow="fold")
     t.add_column("时间", width=16, no_wrap=True)
 
     for i, j in enumerate(s.visible):
@@ -866,12 +866,29 @@ def render_detail(job: Job, mode: str) -> Panel:
                 label = "处理中" if job.status == "processing" else "等待中"
                 lines.insert(3, f"已{label}: [bold]{elapsed}[/]")
         param_lines = []
-        if job.temperature is not None:
-            param_lines.append(f"温度: {job.temperature}")
-        if job.cfg_weight is not None:
-            param_lines.append(f"CFG权重: {job.cfg_weight}")
-        if job.exaggeration is not None:
-            param_lines.append(f"夸张度: {job.exaggeration}")
+        if job.job_params:
+            try:
+                jp = json.loads(job.job_params)
+                audio = jp.get("audio") or {}
+                labels = {
+                    "engine": "模型",
+                    "cfg_value": "CFG",
+                    "inference_timesteps": "推理步数",
+                    "seed": "种子",
+                    "retry_badcase": "Badcase重试",
+                    "temperature": "温度",
+                    "cfg_weight": "CFG权重",
+                    "exaggeration": "夸张度",
+                }
+                for key, value in audio.items():
+                    if isinstance(value, bool):
+                        value = "是" if value else "否"
+                    param_lines.append(f"{labels.get(key, key)}: {value}")
+                video = jp.get("video") or {}
+                for key, value in video.items():
+                    param_lines.append(f"{key}: {value}")
+            except (TypeError, ValueError):
+                param_lines.append(f"参数: {job.job_params}")
         if param_lines:
             lines.append("")
             lines.extend(param_lines)

@@ -43,6 +43,18 @@ AUDIO_PROMPT_PATH = os.environ.get(
 # Chatterbox multilingual T3 checkpoint: "v3" (current) or "v2" (legacy).
 # V3 requires chatterbox-tts from upstream git; PyPI 0.1.7 has no V3 support.
 CHATTERBOX_T3_MODEL = os.environ.get("CHATTERBOX_T3_MODEL", "v3")
+
+# ── VoxCPM2 (Cantonese / yue only) ───────────────────────────
+# The 2B model is a separate engine used only when target_language == "yue".
+# It is shared across daemon worker threads (one model instance, serialized
+# generation) because two 2B instances would exhaust this host's RAM.
+VOXCPM_MODEL = os.environ.get("VOXCPM_MODEL", "openbmb/VoxCPM2")
+VOXCPM_CFG_VALUE = float(os.environ.get("VOXCPM_CFG_VALUE", "2.0"))
+VOXCPM_INFERENCE_TIMESTEPS = int(os.environ.get("VOXCPM_INFERENCE_TIMESTEPS", "10"))
+# -1 lets VoxCPM sample a fresh seed each request; 42 is deterministic.
+VOXCPM_SEED = int(os.environ.get("VOXCPM_SEED", "42"))
+VOXCPM_OPTIMIZE = os.environ.get("VOXCPM_OPTIMIZE", "0").lower() in ("1", "true", "yes")
+VOXCPM_RETRY_BADCASE = os.environ.get("VOXCPM_RETRY_BADCASE", "0").lower() in ("1", "true", "yes")
 GEN_AUDIO_SCRIPT = os.environ.get(
     "GEN_AUDIO_SCRIPT",
     os.path.join(PROJECT_ROOT, "gen_audio", "gen_audio.py"),
@@ -120,7 +132,33 @@ WHISPER_MODEL = os.environ.get(
     "WHISPER_MODEL",
     os.path.expanduser("~/.local/share/whisper-models/ggml-medium.bin"),
 )
+# Primary ASR binary: whisper.cpp built with the Vulkan backend.  The pipeline
+# forces fp32 (GGML_VK_DISABLE_F16=1) and enables flash-attention; if it fails
+# it falls back to WHISPER_CPU_BIN with WHISPER_CPU_THREADS threads.
+WHISPER_BIN = os.environ.get(
+    "WHISPER_BIN",
+    os.path.expanduser("~/.local/opt/whisper.cpp-vulkan/whisper-cli"),
+)
+# Directory holding libwhisper.so/libggml*.so for a relocatable build.  Only
+# added to LD_LIBRARY_PATH when libwhisper.so.1 is actually present there.
+WHISPER_LIB_DIR = os.environ.get(
+    "WHISPER_LIB_DIR",
+    os.path.dirname(os.path.realpath(WHISPER_BIN)),
+)
+WHISPER_CPU_BIN = os.environ.get("WHISPER_CPU_BIN", "/usr/bin/whisper-cli")
+WHISPER_CPU_THREADS = int(os.environ.get("WHISPER_CPU_THREADS") or "16")
 WHISPER_OV_DEVICE = os.environ.get("WHISPER_OV_DEVICE", "CPU")
+# GPU gate for the primary Vulkan backend: skip Vulkan and use the CPU
+# fallback while the iGPU is hot or a GPU daemon has active work.  Set an
+# active threshold to 0 to disable that check.  Translate is gated because
+# HY-MT falls back to GPU when the NPU fails; set it to 0 if your translate
+# daemon stays on the NPU.
+WHISPER_GPU_MAX_TEMP = float(
+    os.environ.get("WHISPER_GPU_MAX_TEMP") or os.environ.get("GEN_AUDIO_IDLE_TEMPERATURE") or "76"
+)
+WHISPER_GATE_TTS_ACTIVE = int(os.environ.get("WHISPER_GATE_TTS_ACTIVE") or "1")
+WHISPER_GATE_OCR_ACTIVE = int(os.environ.get("WHISPER_GATE_OCR_ACTIVE") or "1")
+WHISPER_GATE_TRANSLATE_ACTIVE = int(os.environ.get("WHISPER_GATE_TRANSLATE_ACTIVE") or "1")
 HY_MT_DIR = os.environ.get(
     "HY_MT_DIR",
     "/home/ziguijia/src/HY-MT",
@@ -137,6 +175,20 @@ RAPID_VIDEOCR_BIN = os.environ.get(
 RAPID_VIDEOCR_DAEMON_CLIENT = os.environ.get(
     "RAPID_VIDEOCR_DAEMON_CLIENT",
     os.path.join(PROJECT_ROOT, "daemon_ocr_client.py"),
+)
+
+
+def _ocr_daemon_runtime_dir():
+    """Per-user tmpfs dir for the shared OCR daemon socket."""
+    base = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    if not base or not os.path.isdir(base):
+        base = "/tmp"
+    return os.path.join(base, "rapid_videocr_daemon")
+
+
+RAPID_VIDEOCR_DAEMON_SOCK = os.environ.get(
+    "RAPID_VIDEOCR_DAEMON_SOCK",
+    os.path.join(_ocr_daemon_runtime_dir(), "daemon.sock"),
 )
 
 # ── Default ports ──────────────────────────────────────────

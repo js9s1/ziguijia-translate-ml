@@ -13,6 +13,7 @@ from functools import wraps
 
 import valkey
 from config import AUDIO_TRACKS_DIR, VIDEO_DIR, is_screen_recording_filename, validate_upload_filename
+from job_params import get_job_params, normalize_job_params
 from werkzeug.exceptions import HTTPException
 from flask import jsonify, request, session
 from valkey_util import (
@@ -149,23 +150,48 @@ def parse_float_param(source: dict, key: str, default: float) -> float:
 def parse_job_params(source: dict) -> dict:
     """Parse common job parameters from request.form or JSON body.
 
+    Legacy flat audio fields are still accepted.  New clients may send a
+    JSON ``audio_params`` object/string; its engine is derived from
+    ``target_language`` and the values are validated against the audio
+    parameter schema.
+
     Raises ValueError (→ 400 via api_endpoint or route handlers) on invalid input.
     """
+    target_language = source.get("target_language", _DEFAULT_PARAMS["target_language"])
+    job_params = normalize_job_params(
+        source.get("job_params") or source.get("params"),
+        target_language,
+        fallback=source,
+    )
+    audio_params = job_params["audio"]
+    video = job_params.get("video", {})
+    output = job_params.get("output", {})
     return {
-        "temperature": parse_float_param(source, "temperature", _DEFAULT_PARAMS["temperature"]),
-        "target_language": source.get("target_language", _DEFAULT_PARAMS["target_language"]),
-        "cfg_weight": parse_float_param(source, "cfg_weight", _DEFAULT_PARAMS["cfg_weight"]),
-        "exaggeration": parse_float_param(source, "exaggeration", _DEFAULT_PARAMS["exaggeration"]),
+        "temperature": audio_params.get("temperature", _DEFAULT_PARAMS["temperature"]),
+        "target_language": target_language,
+        "cfg_weight": audio_params.get("cfg_weight", _DEFAULT_PARAMS["cfg_weight"]),
+        "exaggeration": audio_params.get("exaggeration", _DEFAULT_PARAMS["exaggeration"]),
+        "audio_params": audio_params,
+        "job_params": job_params,
+        "blur": video.get("blur", source.get("blur", "yes")),
+        "ocr_only": video.get("ocr_only", source.get("ocr_only")),
+        "ocr_mode": video.get("ocr_mode", source.get("ocr_mode")),
+        "filename": output.get("filename", source.get("filename")),
     }
 
 
 def get_audio_params(job_data: dict) -> dict:
     """Extract audio parameters from a job_data dict using shared defaults."""
+    target_language = job_data.get("target_language", _DEFAULT_PARAMS["target_language"])
+    job_params = get_job_params(job_data)
+    audio_params = job_params["audio"]
     return {
-        "temperature": job_data.get("temperature", _DEFAULT_PARAMS["temperature"]),
-        "target_language": job_data.get("target_language", _DEFAULT_PARAMS["target_language"]),
-        "cfg_weight": job_data.get("cfg_weight", _DEFAULT_PARAMS["cfg_weight"]),
-        "exaggeration": job_data.get("exaggeration", _DEFAULT_PARAMS["exaggeration"]),
+        "temperature": audio_params.get("temperature", _DEFAULT_PARAMS["temperature"]),
+        "target_language": target_language,
+        "cfg_weight": audio_params.get("cfg_weight", _DEFAULT_PARAMS["cfg_weight"]),
+        "exaggeration": audio_params.get("exaggeration", _DEFAULT_PARAMS["exaggeration"]),
+        "audio_params": audio_params,
+        "job_params": job_params,
     }
 
 
@@ -314,6 +340,11 @@ def validate_text_matches_target_language(
     from language_utils import LANG_MAP, detect_dominant_script
 
     target = str(target_language or "").strip().lower()
+    if target == "yue":
+        # Cantonese uses Han characters and is commonly code-mixed with
+        # English; the zh/ja/ko script heuristic cannot separate it from
+        # Mandarin reliably, so skip the mismatch check for this target.
+        return
     if target not in LANG_MAP:
         return
 

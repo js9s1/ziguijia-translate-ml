@@ -36,13 +36,35 @@ def health_check():
 
 @api_bp.route("/api/languages", methods=["GET"])
 def api_languages():
-    from config import LANG_MAP
+    from language_utils import LANG_MAP, NATIVE_LANG_MAP
 
     return jsonify(
         {
-            "languages": [{"code": code, "name": name} for code, name in sorted(LANG_MAP.items())],
+            "languages": [
+                {
+                    "code": code,
+                    "name": name,
+                    "native_name": NATIVE_LANG_MAP.get(code, name),
+                }
+                for code, name in sorted(LANG_MAP.items())
+            ],
         }
     )
+
+
+@api_bp.route("/api/param-schema", methods=["GET"])
+def api_param_schema():
+    """Return the audio controls a page should render for a pipeline/language."""
+    from job_params import get_audio_param_schema
+
+    try:
+        schema = get_audio_param_schema(
+            request.args.get("pipeline", "tts"),
+            request.args.get("language", "en"),
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(schema)
 
 
 # ── Generic job status ───────────────────────────────────

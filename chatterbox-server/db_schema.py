@@ -10,9 +10,12 @@ Both ``JobQueue`` and ``UserManager`` delegate to it instead of
 duplicating the same boilerplate.
 """
 
+import json
 import logging
 import sqlite3
 import threading
+
+from job_params import normalize_job_params
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +63,48 @@ def _is_duplicate_column_error(exc: sqlite3.OperationalError) -> bool:
     return "duplicate column" in msg or "already exists" in msg
 
 
+_LEGACY_JOB_COLUMNS = (
+    "temperature",
+    "blur",
+    "cfg_weight",
+    "exaggeration",
+    "filename",
+    "ocr_only",
+    "audio_params",
+)
+
+
+def _drop_legacy_job_columns(conn: sqlite3.Connection):
+    """Drop pre-envelope tuning columns after they have been folded into JSON."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}
+    for column in _LEGACY_JOB_COLUMNS:
+        if column not in cols:
+            continue
+        try:
+            conn.execute(f"ALTER TABLE jobs DROP COLUMN {column}")
+        except sqlite3.OperationalError as exc:
+            logger.warning("Could not drop legacy jobs.%s: %s", column, exc)
+
+
+def _backfill_job_params(conn: sqlite3.Connection):
+    """Populate ``job_params`` for rows created before the nested envelope.
+
+    Existing rows keep their flat columns; this writes a normalized JSON
+    envelope so the worker/TUI/result paths all read the same shape.
+    """
+    rows = conn.execute("SELECT * FROM jobs WHERE job_params IS NULL OR job_params = ''").fetchall()
+    for row in rows:
+        job = dict(row)
+        try:
+            params = normalize_job_params(None, job.get("target_language"), fallback=job)
+        except (TypeError, ValueError):
+            continue
+        conn.execute(
+            "UPDATE jobs SET job_params = ? WHERE access_code = ?",
+            (json.dumps(params, ensure_ascii=False), job["access_code"]),
+        )
+
+
 def add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, col_type: str):
     """Add *column* to *table* if it doesn't already exist.
 
@@ -84,7 +129,7 @@ def _create_jobs_table(conn: sqlite3.Connection):
             access_code TEXT PRIMARY KEY,
             srt_path TEXT,
             output_dir TEXT,
-            temperature REAL,
+            job_params TEXT,
             status TEXT,
             error TEXT,
             run_func_name TEXT,
@@ -93,10 +138,7 @@ def _create_jobs_table(conn: sqlite3.Connection):
             video_file TEXT,
             user_id TEXT,
             text TEXT,
-            blur TEXT DEFAULT 'yes',
             target_language TEXT DEFAULT 'en',
-            cfg_weight REAL DEFAULT 0.5,
-            exaggeration REAL DEFAULT 0.5,
             completed_at TIMESTAMP,
             failed_at TIMESTAMP,
             cancelled_at TIMESTAMP,
@@ -108,8 +150,6 @@ def _create_jobs_table(conn: sqlite3.Connection):
             start_trim REAL DEFAULT NULL,
             end_trim REAL DEFAULT NULL,
             cached_path TEXT,
-            filename TEXT,
-            ocr_only TEXT,
             progress TEXT
         )
     """)
@@ -121,10 +161,8 @@ def _migrate_jobs_table(conn: sqlite3.Connection):
         add_column_if_missing(conn, "jobs", col, "TEXT")
 
     add_column_if_missing(conn, "jobs", "progress", "TEXT")
-    add_column_if_missing(conn, "jobs", "blur", "TEXT DEFAULT 'yes'")
     add_column_if_missing(conn, "jobs", "target_language", "TEXT DEFAULT 'en'")
-    add_column_if_missing(conn, "jobs", "cfg_weight", "REAL DEFAULT 0.5")
-    add_column_if_missing(conn, "jobs", "exaggeration", "REAL DEFAULT 0.5")
+    add_column_if_missing(conn, "jobs", "job_params", "TEXT")
     add_column_if_missing(conn, "jobs", "completed_at", "TIMESTAMP")
     add_column_if_missing(conn, "jobs", "failed_at", "TIMESTAMP")
     add_column_if_missing(conn, "jobs", "cancelled_at", "TIMESTAMP")
@@ -136,8 +174,8 @@ def _migrate_jobs_table(conn: sqlite3.Connection):
     add_column_if_missing(conn, "jobs", "start_trim", "REAL DEFAULT NULL")
     add_column_if_missing(conn, "jobs", "end_trim", "REAL DEFAULT NULL")
     add_column_if_missing(conn, "jobs", "cached_path", "TEXT")
-    add_column_if_missing(conn, "jobs", "filename", "TEXT")
-    add_column_if_missing(conn, "jobs", "ocr_only", "TEXT")
+    _backfill_job_params(conn)
+    _drop_legacy_job_columns(conn)
 
 
 # ── users table (used by auth.UserManager) ──────────────────────
@@ -172,7 +210,7 @@ JOB_COLUMNS = [
     "access_code",
     "srt_path",
     "output_dir",
-    "temperature",
+    "job_params",
     "status",
     "error",
     "run_func_name",
@@ -181,15 +219,10 @@ JOB_COLUMNS = [
     "video_file",
     "user_id",
     "text",
-    "blur",
     "target_language",
-    "cfg_weight",
-    "exaggeration",
     "start_trim",
     "end_trim",
     "cached_path",
-    "filename",
-    "ocr_only",
 ]
 
 # Columns written by jobqueue.add_job — drives the parameterised
@@ -199,7 +232,7 @@ INSERT_COLUMNS = [
     "access_code",
     "srt_path",
     "output_dir",
-    "temperature",
+    "job_params",
     "status",
     "error",
     "run_func_name",
@@ -207,15 +240,10 @@ INSERT_COLUMNS = [
     "video_file",
     "user_id",
     "text",
-    "blur",
     "target_language",
-    "cfg_weight",
-    "exaggeration",
     "start_trim",
     "end_trim",
     "cached_path",
-    "filename",
-    "ocr_only",
     "checkpoint",
     "created_at",
     "status_changed_at",

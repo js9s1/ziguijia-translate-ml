@@ -76,6 +76,34 @@ class TestJobsSchema:
         conn.execute("INSERT INTO jobs (access_code, status) VALUES ('A', 'pending')")
         assert conn.execute("SELECT status FROM jobs WHERE access_code='A'").fetchone()["status"] == "pending"
 
+    def test_backfills_job_params_and_drops_legacy_columns(self, isolated_db):
+        conn = isolated_db
+        conn.execute(
+            "CREATE TABLE jobs ("
+            "access_code TEXT PRIMARY KEY, status TEXT, target_language TEXT, "
+            "temperature REAL, cfg_weight REAL, exaggeration REAL, audio_params TEXT, "
+            "blur TEXT, ocr_only TEXT, filename TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO jobs (access_code, status, target_language, temperature, cfg_weight, exaggeration, "
+            "audio_params, blur, ocr_only, filename) "
+            "VALUES ('LEGACY01', 'completed', 'yue', 0.6, 0.25, 0.3, NULL, 'no', 'yes', 'legacy.wav')"
+        )
+        conn.commit()
+        init_jobs_schema(conn)
+        row = conn.execute("SELECT job_params FROM jobs WHERE access_code='LEGACY01'").fetchone()
+        assert row["job_params"] is not None
+        import json
+
+        params = json.loads(row["job_params"])
+        assert params["target_language"] == "yue"
+        assert params["audio"]["engine"] == "voxcpm"
+        assert params["video"]["blur"] == "no"
+        assert params["output"]["filename"] == "legacy.wav"
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(jobs)")}
+        for legacy in ("temperature", "cfg_weight", "exaggeration", "audio_params", "blur", "ocr_only", "filename"):
+            assert legacy not in cols
+
 
 class TestUsersSchema:
     def test_init_creates_table(self, isolated_db):

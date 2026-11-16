@@ -1,10 +1,12 @@
 """TTS job — text-to-wave, runs gen_audio.py subprocess on Python 3.11."""
 
+import json
 import os
 import subprocess
 import uuid
 
 from config import AUDIO_TRACKS_DIR, AUDIO_PROMPT_PATH, GEN_AUDIO_PYTHON, PROJECT_ROOT
+from job_params import get_output_params
 from jobqueue import get_job_queue
 from log_utils import job_log
 from middleware import get_audio_params, validate_text_matches_target_language
@@ -13,7 +15,7 @@ from middleware import get_audio_params, validate_text_matches_target_language
 def _run_tts_job(job_data: dict):
     text = job_data["text"]
     output_dir = job_data["output_dir"]
-    filename = job_data.get("filename", "output.wav")
+    filename = get_output_params(job_data).get("filename", "output.wav")
     ap = get_audio_params(job_data)
     access_code = job_data["access_code"]
     os.makedirs(output_dir, exist_ok=True)
@@ -34,6 +36,8 @@ def _run_tts_job(job_data: dict):
         "--exaggeration", str(ap["exaggeration"]),
         "--output_wav", filename,
     ]
+    if ap.get("audio_params"):
+        cmd.extend(["--audio_params", json.dumps(ap["audio_params"], ensure_ascii=False)])
 
     log_path = os.path.join(output_dir, "job.log")
     with open(log_path, "a") as proc_log:
@@ -55,6 +59,7 @@ def process_tts(
     target_language: str = "en",
     cfg_weight: float = 0.5,
     exaggeration: float = 0.5,
+    audio_params: dict | None = None,
 ) -> dict:
     validate_text_matches_target_language(text, target_language)
 
@@ -71,6 +76,7 @@ def process_tts(
         "target_language": target_language,
         "cfg_weight": cfg_weight,
         "exaggeration": exaggeration,
+        "audio_params": audio_params,
     }
 
     job_access_code = get_job_queue().add_job(job_data, _run_tts_job, user_id)

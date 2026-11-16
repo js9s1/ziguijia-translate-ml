@@ -42,7 +42,8 @@
 
     <script src="/utils.js"></script>
     <script>
-        initLanguageSelect('langSelectContainer');
+        var langSelect = initLanguageSelect('langSelectContainer');
+        initAudioParams('floatSliders', 'srt', langSelect);
         initResultSection('resultSection', 'checkProgressLink');
 
         document.getElementById('srtForm').addEventListener('submit', function(e) {

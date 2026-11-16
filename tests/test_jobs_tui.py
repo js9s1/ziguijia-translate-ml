@@ -37,7 +37,9 @@ CREATE TABLE jobs (
     start_trim REAL DEFAULT 12.25,
     end_trim REAL DEFAULT 40.0,
     cached_path TEXT,
-    filename TEXT
+    filename TEXT,
+    audio_params TEXT,
+    job_params TEXT
 )
 """
 
@@ -364,6 +366,34 @@ class TestRenderSummary:
         assert stats.get("completed", 0) == 2
         assert stats.get("failed", 0) == 1
         assert stats.get("cancelled", 0) == 1
+
+
+# ── render_table tests ──────────────────────────────────────
+
+
+class TestRenderTable:
+    def test_two_digit_index_survives_narrow_terminal(self, tuimod):
+        from rich.console import Console
+
+        jobs = [
+            tuimod.Job(
+                access_code=f"JOB{i:05d}",
+                created_at="2024-01-01 00:00:00",
+                error=None,
+                output_dir="/tmp",
+                run_func_name="_run_gen_audio",
+                srt_path=None,
+                status="completed",
+                user_id=1,
+            )
+            for i in range(10)
+        ]
+        s = tuimod.State(jobs, len(jobs))
+        console = Console(width=90, force_terminal=False)
+        with console.capture() as capture:
+            console.print(tuimod.render_table(s))
+        # The first data row shows job #10.
+        assert "10" in capture.get().splitlines()[2]
 
 
 # ── show_user_jobs_tui tests ─────────────────────────────────

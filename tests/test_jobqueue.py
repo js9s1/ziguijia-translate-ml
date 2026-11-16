@@ -73,7 +73,30 @@ class TestJobQueueStatus:
         assert status is not None
         assert status["access_code"] == code
         assert status["status"] == JobStatus.PENDING.value
-        assert status["temperature"] == 0.5
+        assert status["job_params"]["audio"]["temperature"] == 0.5
+
+    def test_audio_params_round_trip(self, jq, user_id):
+        code = jq.add_job(
+            {
+                "target_language": "yue",
+                "audio_params": {
+                    "engine": "voxcpm",
+                    "cfg_value": 2.5,
+                    "inference_timesteps": 12,
+                    "seed": 42,
+                    "retry_badcase": False,
+                },
+            },
+            _run_gen_audio_stub,
+            user_id,
+        )
+        status = jq.get_status(code)
+        assert status is not None
+        assert status["audio_params"]["engine"] == "voxcpm"
+        assert status["audio_params"]["cfg_value"] == 2.5
+        assert status["audio_params"]["inference_timesteps"] == 12
+        assert status["job_params"]["target_language"] == "yue"
+        assert status["job_params"]["audio"]["engine"] == "voxcpm"
 
 
 class TestJobQueueCancel:
@@ -336,7 +359,9 @@ class TestJobQueueAddJobParams:
             user_id,
         )
         status = jq.get_status(code)
-        assert status["temperature"] == 0.5
         assert status["target_language"] == "fr"
-        assert status["cfg_weight"] == 0.5
-        assert status["exaggeration"] == 1.0
+        assert status["job_params"]["audio"]["temperature"] == 0.5
+        assert status["job_params"]["audio"]["cfg_weight"] == 0.5
+        assert status["job_params"]["audio"]["exaggeration"] == 1.0
+        assert status["job_params"]["video"]["blur"] == "yes"
+        assert status["job_params"]["output"]["filename"] == "input.srt"

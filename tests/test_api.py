@@ -23,6 +23,19 @@ class TestLanguagesEndpoint:
         codes = {l["code"] for l in langs}
         assert "en" in codes
         assert "zh" in codes
+        assert "yue" in codes
+        by_code = {l["code"]: l for l in langs}
+        assert by_code["zh"]["native_name"] == "中文"
+        assert by_code["yue"]["native_name"] == "粤语"
+        assert by_code["en"]["native_name"] == "English"
+
+    def test_param_schema_for_cantonese(self, client):
+        resp = client.get("/api/param-schema?pipeline=tts&language=yue")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["engine"] == "voxcpm"
+        keys = {field["key"] for field in data["fields"]}
+        assert keys == {"cfg_value", "inference_timesteps", "seed", "retry_badcase"}
 
 
 class TestStaticPages:
@@ -63,6 +76,7 @@ def _stub_tts(monkeypatch):
 
     def fake_process_tts(text, filename, user_id, **params):
         calls["text"] = text
+        calls["filename"] = filename
         calls["params"] = params
         return {"access_code": "TESTCODE", "message": "Job queued successfully"}
 
@@ -112,6 +126,40 @@ class TestTtsProcess:
         )
         assert resp.status_code == 200
         assert _stub_tts["text"] == "hello json"
+
+    def test_audio_params_passthrough(self, auth_client, _stub_tts):
+        client, _ = auth_client
+        resp = client.post(
+            "/tts/process",
+            data={
+                "text": "今晚打邊爐好唔好啊？",
+                "target_language": "yue",
+                "audio_params": '{"cfg_value": 2.5, "inference_timesteps": 12}',
+                "csrf_token": "test-csrf-token",
+            },
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        assert resp.status_code == 200
+        audio_params = _stub_tts["params"]["audio_params"]
+        assert audio_params["engine"] == "voxcpm"
+        assert audio_params["cfg_value"] == 2.5
+        assert audio_params["inference_timesteps"] == 12
+
+    def test_nested_job_params_passthrough(self, auth_client, _stub_tts):
+        client, _ = auth_client
+        resp = client.post(
+            "/tts/process",
+            data={
+                "text": "今晚打邊爐好唔好啊？",
+                "target_language": "yue",
+                "job_params": '{"audio": {"cfg_value": 2.8}, "output": {"filename": "canto.wav"}}',
+                "csrf_token": "test-csrf-token",
+            },
+            headers={"X-Requested-With": "XMLHttpRequest"},
+        )
+        assert resp.status_code == 200
+        assert _stub_tts["filename"] == "canto.wav"
+        assert _stub_tts["params"]["audio_params"]["cfg_value"] == 2.8
 
     def test_missing_text(self, auth_client, csrf_headers):
         client, _ = auth_client

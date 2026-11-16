@@ -32,6 +32,8 @@ import subprocess
 import threading
 import time
 
+from job_params import get_video_params
+
 logger = logging.getLogger(__name__)
 
 _PREWARM_LOCK = threading.Lock()
@@ -187,7 +189,7 @@ def prewarm_choices(run_func_name: str, job_data: dict) -> tuple[bool, bool]:
 
     Pure mapping, no I/O — unit-testable.
     """
-    ocr_only = job_data.get("ocr_only") == "yes"
+    ocr_only = get_video_params(job_data).get("ocr_only") == "yes"
     needs_tts = run_func_name in _TTS_JOB_TYPES
     needs_translate = run_func_name in _TRANSLATE_JOB_TYPES and not ocr_only
     return needs_tts, needs_translate

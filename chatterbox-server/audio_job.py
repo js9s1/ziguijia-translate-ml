@@ -1,9 +1,11 @@
 """Audio-from-SRT and audio-segmentation jobs."""
 
+import json
 import os
 import uuid
 
 from config import AUDIO_TRACKS_DIR
+from job_params import get_output_params
 from jobqueue import get_job_queue
 from log_utils import job_log
 from middleware import (
@@ -24,6 +26,7 @@ def _run_gen_audio(job_data: dict):
         target_language=ap["target_language"],
         cfg_weight=ap["cfg_weight"],
         exaggeration=ap["exaggeration"],
+        audio_params=ap.get("audio_params"),
     )
 
 
@@ -34,6 +37,7 @@ def process_srt_file(
     target_language: str = "en",
     cfg_weight: float = 0.5,
     exaggeration: float = 0.5,
+    audio_params: dict | None = None,
 ) -> dict:
     srt_text = srt_file.read()
     srt_file.seek(0)
@@ -54,6 +58,7 @@ def process_srt_file(
         "target_language": target_language,
         "cfg_weight": cfg_weight,
         "exaggeration": exaggeration,
+        "audio_params": audio_params,
     }
 
     job_access_code = get_job_queue().add_job(job_data, _run_gen_audio, user_id)
@@ -96,7 +101,7 @@ def _split_text(text, max_len=500):
 def _run_audio_segmentation_job(job_data: dict):
     content = job_data["text"]
     output_dir = job_data["output_dir"]
-    filename = job_data.get("filename", "output.wav")
+    filename = get_output_params(job_data).get("filename", "output.wav")
     ap = get_audio_params(job_data)
     os.makedirs(output_dir, exist_ok=True)
 
@@ -130,6 +135,8 @@ def _run_audio_segmentation_job(job_data: dict):
         "--exaggeration", str(ap["exaggeration"]),
         "--output_wav", filename,
     ]
+    if ap.get("audio_params"):
+        cmd.extend(["--audio_params", json.dumps(ap["audio_params"], ensure_ascii=False)])
 
     # Size-based total timeout, scaled to the number of 120-char chunks
     # gen_audio.py will split the text into (mirrors run_gen_audio_step).
@@ -200,6 +207,7 @@ def process_audio_file(
     target_language: str = "en",
     cfg_weight: float = 0.5,
     exaggeration: float = 0.5,
+    audio_params: dict | None = None,
 ) -> dict:
     validate_text_matches_target_language(content, target_language)
 
@@ -224,6 +232,7 @@ def process_audio_file(
         "target_language": target_language,
         "cfg_weight": cfg_weight,
         "exaggeration": exaggeration,
+        "audio_params": audio_params,
     }
 
     job_access_code = get_job_queue().add_job(job_data, _run_audio_segmentation_job, user_id)

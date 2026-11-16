@@ -24,8 +24,12 @@ charset-normalizer==3.4.9
 torch==2.13.0+rocm7.2
 torchaudio==2.11.0+rocm7.2
 # V3 support is only in upstream git (PyPI 0.1.7 lacks t3_model).
-# Install with --no-deps so pip does not replace ROCm torch/numpy.
+# Install chatterbox-tts and voxcpm with --no-deps so pip does not replace
+# the ROCm torch/numpy builds.
 chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox.git@ab55923c27757c90cfcc407baa57dc25a7d25217
+# Cantonese-only VoxCPM2 engine (imports work with --no-deps; optional
+# denoiser/normalizer dependencies are not needed for inference).
+voxcpm @ git+https://github.com/OpenBMB/VoxCPM.git@300e4260b509066151d623dc9c0aa922cf82232b
 numpy==2.4.6
 srt==3.5.3
 soundfile==0.14.0

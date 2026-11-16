@@ -11,6 +11,14 @@ video_bp = Blueprint("video", __name__)
 logger = logging.getLogger(__name__)
 
 
+def _is_cantonese(language: str) -> bool:
+    return str(language or "").strip().lower() in {"yue", "zh-hk", "zh-yue", "cantonese"}
+
+
+def _cantonese_translation_error():
+    return jsonify({"error": "粤语目标语言仅支持上传SRT字幕，不支持自动翻译或OCR翻译"}), 400
+
+
 # ── Cache helpers ─────────────────────────────────────────
 
 
@@ -93,7 +101,7 @@ def video_ning_process():
 
     process_video_ning = _lazy("video_ning_job", "process_video_ning")
     find_cached = _lazy("video_ning_job", "_find_cached_video")
-    blur = request.form.get("blur", "yes")
+    blur = params.get("blur", "yes")
 
     def _process(**kwargs):
         return jsonify(
@@ -106,6 +114,7 @@ def video_ning_process():
                 target_language=params["target_language"],
                 cfg_weight=params["cfg_weight"],
                 exaggeration=params["exaggeration"],
+                audio_params=params["audio_params"],
                 **kwargs,
             )
         )
@@ -123,19 +132,22 @@ def video_ning_ocr_process():
         return jsonify({"error": "No video number provided"}), 400
 
     params = parse_job_params(request.form)
-    mode = request.form.get("ocr_mode", "full")
-    ocr_only = request.form.get("ocr_only", "yes")
+    if _is_cantonese(params["target_language"]):
+        return _cantonese_translation_error()
+    mode = params.get("ocr_mode") or "full"
+    ocr_only = params.get("ocr_only") or "yes"
     process_video_ning_ocr = _lazy(
         "video_ning_job", "process_video_ning_ocr" if mode == "full" else "process_video_ning_ocr_translate_only"
     )
     find_cached = _lazy("video_ning_job", "_find_cached_video")
-    blur = request.form.get("blur", "yes")
+    blur = params.get("blur", "yes")
 
     def _process(**kwargs):
         kwargs_dict = dict(
             target_language=params["target_language"],
             cfg_weight=params["cfg_weight"],
             exaggeration=params["exaggeration"],
+            audio_params=params["audio_params"],
         )
         if mode != "full":
             kwargs_dict["ocr_only"] = ocr_only
@@ -163,9 +175,11 @@ def video_ning_auto_process():
         return jsonify({"error": "No video number provided"}), 400
 
     params = parse_job_params(request.form)
+    if _is_cantonese(params["target_language"]):
+        return _cantonese_translation_error()
     process_video_ning_auto = _lazy("video_ning_job", "process_video_ning_auto")
     find_cached = _lazy("video_ning_job", "_find_cached_video")
-    blur = request.form.get("blur", "yes")
+    blur = params.get("blur", "yes")
 
     def _process(**kwargs):
         return jsonify(
@@ -177,6 +191,7 @@ def video_ning_auto_process():
                 target_language=params["target_language"],
                 cfg_weight=params["cfg_weight"],
                 exaggeration=params["exaggeration"],
+                audio_params=params["audio_params"],
                 **kwargs,
             )
         )
@@ -204,7 +219,7 @@ def video_custom_process():
     params = parse_job_params(request.form)
 
     process_video_custom = _lazy("video_custom_job", "process_video_custom")
-    blur = request.form.get("blur", "yes")
+    blur = params.get("blur", "yes")
     result = process_video_custom(
         video_file,
         srt_file,
@@ -214,6 +229,7 @@ def video_custom_process():
         target_language=params["target_language"],
         cfg_weight=params["cfg_weight"],
         exaggeration=params["exaggeration"],
+        audio_params=params["audio_params"],
     )
     return jsonify(result)
 
@@ -229,9 +245,11 @@ def video_custom_auto_process():
     video_file = request.files["video_file"]
     validate_file_upload(video_file, "video")
     params = parse_job_params(request.form)
+    if _is_cantonese(params["target_language"]):
+        return _cantonese_translation_error()
 
     process_video_auto = _lazy("video_custom_job", "process_video_auto")
-    blur = request.form.get("blur", "yes")
+    blur = params.get("blur", "yes")
     result = process_video_auto(
         video_file,
         params["temperature"],
@@ -240,6 +258,7 @@ def video_custom_auto_process():
         target_language=params["target_language"],
         cfg_weight=params["cfg_weight"],
         exaggeration=params["exaggeration"],
+        audio_params=params["audio_params"],
     )
     return jsonify(result)
 
@@ -273,8 +292,10 @@ def video_custom_ocr_process():
     video_file = request.files["video_file"]
     validate_file_upload(video_file, "video")
     params = parse_job_params(request.form)
-    mode = request.form.get("ocr_mode", "full")
-    ocr_only = request.form.get("ocr_only", "yes")
+    if _is_cantonese(params["target_language"]):
+        return _cantonese_translation_error()
+    mode = params.get("ocr_mode") or "full"
+    ocr_only = params.get("ocr_only") or "yes"
 
     if mode == "translate-only":
         process_video_ocr = _lazy("video_custom_job", "process_video_ocr_translate_only")
@@ -285,11 +306,12 @@ def video_custom_ocr_process():
         target_language=params["target_language"],
         cfg_weight=params["cfg_weight"],
         exaggeration=params["exaggeration"],
+        audio_params=params["audio_params"],
     )
     if mode == "translate-only":
         kwargs["ocr_only"] = ocr_only
 
-    blur = request.form.get("blur", "yes")
+    blur = params.get("blur", "yes")
     result = process_video_ocr(
         video_file,
         params["temperature"],

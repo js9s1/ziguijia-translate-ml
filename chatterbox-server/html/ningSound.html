@@ -92,6 +92,7 @@ document.getElementById('inputMode').addEventListener('change', function(e) {
 });
 
 var langSelect = initLanguageSelect('langSelectContainer');
+initAudioParams('floatSliders', 'tts', langSelect);
 initResultSection('resultSection', 'checkLink');
 
 langSelect.addEventListener('change', function() {
@@ -104,17 +105,23 @@ document.getElementById('ttsForm').addEventListener('submit', function(e) {
 
     var inputMode = document.getElementById('inputMode').value;
 
+    var audioParams = collectAudioParams();
     if (inputMode === 'text') {
         var text = document.getElementById('text').value;
         if (!text) { alert('请输入文字内容'); return; }
-        submitJob('/tts/process', {
+        var payload = {
             text: text,
             filename: document.getElementById('filename').value || 'output.wav',
-            temperature: document.getElementById('temperature').value,
             target_language: document.getElementById('target_language').value,
-            cfg_weight: document.getElementById('cfg_weight').value,
-            exaggeration: document.getElementById('exaggeration').value,
-        }, 'checkLink', '/tts');
+            audio_params: audioParams,
+            job_params: audioParams ? { audio: audioParams } : undefined,
+        };
+        if (audioParams && (audioParams.engine === 'chatterbox' || audioParams.engine === 'chatterbox_id')) {
+            payload.temperature = audioParams.temperature;
+            payload.cfg_weight = audioParams.cfg_weight;
+            payload.exaggeration = audioParams.exaggeration;
+        }
+        submitJob('/tts/process', payload, 'checkLink', '/tts');
     } else {
         var fileInput = document.getElementById('file');
         if (!fileInput.files || !fileInput.files[0]) {
@@ -122,11 +129,12 @@ document.getElementById('ttsForm').addEventListener('submit', function(e) {
         }
         var fd = new FormData();
         fd.append('file', fileInput.files[0]);
-        fd.append('temperature', document.getElementById('temperature').value);
         fd.append('target_language', document.getElementById('target_language').value);
-        fd.append('cfg_weight', document.getElementById('cfg_weight').value);
-        fd.append('exaggeration', document.getElementById('exaggeration').value);
         fd.append('filename', document.getElementById('filename').value || 'output.wav');
+        if (audioParams) {
+            fd.append('audio_params', JSON.stringify(audioParams));
+            fd.append('job_params', JSON.stringify({ audio: audioParams }));
+        }
         submitJob('/audio/process', fd, 'checkLink', '/tts');
     }
 

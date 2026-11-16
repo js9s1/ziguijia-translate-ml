@@ -28,6 +28,7 @@ def srt_process():
         target_language=params["target_language"],
         cfg_weight=params["cfg_weight"],
         exaggeration=params["exaggeration"],
+        audio_params=params["audio_params"],
     )
     return jsonify(result)
 

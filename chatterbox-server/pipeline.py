@@ -28,12 +28,17 @@ from config import (
     RAPID_VIDEOCR_BIN,
     RAPID_VIDEOCR_PIPELINE_SCRIPT,
     TRANSLATE_PYTHON,
+    WHISPER_BIN,
+    WHISPER_CPU_BIN,
+    WHISPER_CPU_THREADS,
+    WHISPER_LIB_DIR,
     WHISPER_MODEL,
     WHISPER_OV_DEVICE,
 )
 from jobqueue import get_job_queue
 from log_utils import job_log, job_log_lines
 from segment_utils import build_segment_defs
+from whisper_gate import gpu_block_reason
 
 # ── Low-level subprocess wrappers ──────────────────────────
 
@@ -47,6 +52,7 @@ def run_gen_audio_step(
     target_language: str = "en",
     cfg_weight: float = 0.5,
     exaggeration: float = 0.5,
+    audio_params: dict | None = None,
     output_srt: str = "output_adjusted.srt",
     output_wav: str = "output.wav",
     changed_json: str = "changed_segments.json",
@@ -102,6 +108,8 @@ def run_gen_audio_step(
         "--output_wav", output_wav,
         "--changed_json", changed_json,
     ]
+    if audio_params:
+        cmd.extend(["--audio_params", json.dumps(audio_params, ensure_ascii=False)])
 
     # ── Size-based total timeout, scaled by job size ──────────
     n_segments = 0
@@ -294,6 +302,7 @@ def run_audio_ckpt(
     target_language: str = "en",
     cfg_weight: float = 0.5,
     exaggeration: float = 0.5,
+    audio_params: dict | None = None,
     ckpt=None,
     audio_subdir: str = "audio_tracks",
 ) -> dict[str, str]:
@@ -319,6 +328,7 @@ def run_audio_ckpt(
         target_language=target_language,
         cfg_weight=cfg_weight,
         exaggeration=exaggeration,
+        audio_params=audio_params,
     )
     if ckpt:
         ckpt.mark("audio")
@@ -566,6 +576,44 @@ def run_extract_audio_ckpt(
 # ── Whisper step ─────────────────────────────────────────
 
 
+def _whisper_vulkan_env() -> dict[str, str]:
+    """Environment for the Vulkan whisper build.
+
+    ``GGML_VK_DISABLE_F16=1`` forces fp32 accumulation.  The RADV
+    fp16/coopmat path garbles noisy speech (measured ~16% character
+    disagreement); fp32 matched the CPU transcript exactly and was no
+    slower.  ``LD_LIBRARY_PATH`` lets the relocatable build find its
+    bundled libwhisper/libggml next to the binary.
+    """
+    env = os.environ.copy()
+    env["GGML_VK_DISABLE_F16"] = "1"
+    if WHISPER_LIB_DIR and os.path.exists(os.path.join(WHISPER_LIB_DIR, "libwhisper.so.1")):
+        old = env.get("LD_LIBRARY_PATH")
+        env["LD_LIBRARY_PATH"] = f"{WHISPER_LIB_DIR}:{old}" if old else WHISPER_LIB_DIR
+    return env
+
+
+def _run_whisper_cmd(
+    cmd: list[str],
+    whisper_srt: str,
+    proc_log,
+    *,
+    env: dict[str, str] | None = None,
+    label: str,
+) -> None:
+    """Run one Whisper backend command and require a non-empty SRT."""
+    subprocess.run(
+        cmd,
+        env=env,
+        stdout=proc_log,
+        stderr=proc_log,
+        timeout=7200,
+        check=True,
+    )
+    if not os.path.exists(whisper_srt) or os.path.getsize(whisper_srt) == 0:
+        raise RuntimeError(f"{label} whisper produced no SRT")
+
+
 def run_whisper_ckpt(
     audio_path: str,
     output_dir: str,
@@ -574,7 +622,14 @@ def run_whisper_ckpt(
     proc_log,
     whisper_srt_name: str = "whisper.srt",
 ) -> str:
-    """Run whisper-cli speech recognition. Returns path to the generated SRT.
+    """Run speech recognition. Returns path to the generated SRT.
+
+    Primary backend is whisper.cpp + Vulkan with fp32 and flash-attention.
+    It is skipped when the GPU is hot or a GPU daemon (TTS/OCR/translate)
+    is active; on any failure (missing binary, crash, timeout, empty
+    output) it also falls back to the CPU binary with
+    ``WHISPER_CPU_THREADS`` threads and the OpenVINO encoder on
+    ``WHISPER_OV_DEVICE``.
 
     Checkpoint-aware: skips if ``"whisper"`` is already marked.
     """
@@ -583,29 +638,48 @@ def run_whisper_ckpt(
         job_log(access_code, output_dir, "  ↪ whisper already done, skipping")
         return whisper_srt
 
-    job_log(access_code, output_dir, f"Running whisper speech recognition (OpenVINO device={WHISPER_OV_DEVICE})...")
-    subprocess.run(
-        [
-            "whisper-cli",
-            "-m",
-            WHISPER_MODEL,
-            "-f",
-            audio_path,
-            "-osrt",
-            "-of",
-            whisper_srt.replace(".srt", ""),
-            "-l",
-            "zh",
-            "-oved",
-            WHISPER_OV_DEVICE,
-        ],
-        stdout=proc_log,
-        stderr=proc_log,
-        timeout=7200,
-        check=True,
-    )
-    if not os.path.exists(whisper_srt):
-        raise RuntimeError("Whisper failed to generate SRT")
+    srt_base = os.path.splitext(whisper_srt)[0]
+    common = ["-m", WHISPER_MODEL, "-f", audio_path, "-osrt", "-of", srt_base, "-l", "zh"]
+    vulkan_cmd = [WHISPER_BIN, *common, "-fa"]
+    cpu_cmd = [
+        WHISPER_CPU_BIN,
+        *common,
+        "-oved",
+        WHISPER_OV_DEVICE,
+        "-t",
+        str(WHISPER_CPU_THREADS),
+    ]
+
+    block_reason = gpu_block_reason()
+    if block_reason:
+        job_log(
+            access_code,
+            output_dir,
+            f"  ⏸ GPU gate: {block_reason}; using CPU fallback "
+            f"({WHISPER_CPU_THREADS} threads, OpenVINO device={WHISPER_OV_DEVICE})...",
+        )
+        _run_whisper_cmd(cpu_cmd, whisper_srt, proc_log, label="CPU")
+    else:
+        job_log(access_code, output_dir, "Running whisper speech recognition (Vulkan fp32 + flash-attn)...")
+        try:
+            _run_whisper_cmd(
+                vulkan_cmd,
+                whisper_srt,
+                proc_log,
+                env=_whisper_vulkan_env(),
+                label="Vulkan",
+            )
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired, RuntimeError) as exc:
+            job_log(
+                access_code,
+                output_dir,
+                f"  ⚠ Vulkan whisper failed ({exc}); falling back to CPU "
+                f"({WHISPER_CPU_THREADS} threads, OpenVINO device={WHISPER_OV_DEVICE})...",
+            )
+            if os.path.exists(whisper_srt):
+                os.remove(whisper_srt)
+            _run_whisper_cmd(cpu_cmd, whisper_srt, proc_log, label="CPU")
+
     if ckpt:
         ckpt.mark("whisper")
     return whisper_srt
@@ -928,6 +1002,7 @@ def run_ocr_full_pipeline(
         target_language=ap["target_language"],
         cfg_weight=ap["cfg_weight"],
         exaggeration=ap["exaggeration"],
+        audio_params=ap.get("audio_params"),
         ckpt=ckpt,
         audio_subdir=audio_subdir,
     )

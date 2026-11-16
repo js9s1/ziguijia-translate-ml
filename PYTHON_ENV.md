@@ -24,5 +24,8 @@ separate, pyenv-managed Python that sits **below** that floor on purpose.
   `requires-python` constraint.
 - Every interpreter path is overridable via the matching environment variable
   (e.g. `GEN_AUDIO_PYTHON`, `TRANSLATE_PYTHON`, `PYTHON_BIN`).
+- The TTS env contains `chatterbox-tts` and `voxcpm` from pinned git commits;
+  install both with `--no-deps` so pip does not replace the ROCm torch/numpy
+  builds.
 - Keep in-flight comments in code consistent with this matrix — gen_audio runs
   on Python **3.11**, not 3.13.
