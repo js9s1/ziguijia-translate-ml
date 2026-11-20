@@ -82,7 +82,9 @@ esac
 echo "OCR engine: $OCR_ENGINE"
 
 # Always crop lower portion of frame before OCR (removes watermark/logo/borders)
-# Percentage of frame height to keep from the bottom. 40 = lower 40%.
+# Percentage of frame height to keep from the bottom.  40 = lower 40%.
+# Portrait phone videos usually place subtitles above the bottom quarter,
+# so widen the crop for them (static titles/watermarks are filtered below).
 CROP_PCT=25
 
 # ---- parse args ----
@@ -114,6 +116,14 @@ fi
 INPUT_VIDEO="$(realpath "$INPUT_VIDEO")"
 FRAMES_DIR="$(realpath -m "$FRAMES_DIR")"
 OUTPUT_SRT="$(realpath -m "$OUTPUT_SRT")"
+
+# Portrait videos (height > width) need a taller crop; subtitle text often
+# sits above the bottom quarter while a decorative title fills the border.
+VIDEO_W="$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$INPUT_VIDEO" 2>/dev/null | head -1)"
+VIDEO_H="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$INPUT_VIDEO" 2>/dev/null | head -1)"
+if [[ "$VIDEO_W" =~ ^[0-9]+$ && "$VIDEO_H" =~ ^[0-9]+$ && "$VIDEO_H" -gt "$VIDEO_W" ]]; then
+    CROP_PCT=50
+fi
 
 echo "=== RapidVideOCR Pipeline ==="
 echo "Input:      $INPUT_VIDEO"
@@ -234,6 +244,7 @@ echo "Raw SRT: $RAW_SRT (${#ALL_SRTS[@]} chunks, ${TOTAL_FRAMES} frames)"
 echo "[4/4] Merging adjacent duplicate segments..."
 "${PYTHON_BIN}" -c "
 import re
+from collections import Counter
 from difflib import SequenceMatcher
 
 with open('${RAW_SRT}') as f:
@@ -247,6 +258,32 @@ for block in raw.strip().split('\n\n'):
     time_line = lines[1]
     text = '\n'.join(lines[2:]).strip()
     entries.append((time_line, text))
+
+# Drop static lines (decorative titles, channel watermarks) and one-frame
+# OCR hallucinations.  Real subtitles change every few frames; a line that
+# persists across half the video is a static overlay, not dialogue.
+line_counts = Counter()
+for _, text in entries:
+    for line in {ln.strip() for ln in text.split('\n') if ln.strip()}:
+        line_counts[line] += 1
+
+static_cutoff = max(2, int(len(entries) * 0.5))
+static_lines = {line for line, count in line_counts.items() if count >= static_cutoff}
+dynamic_lines = {line for line, count in line_counts.items() if count < static_cutoff}
+if dynamic_lines:
+    entries = [
+        (time_line, '\n'.join(ln for ln in text.split('\n') if ln.strip() and ln.strip() not in static_lines))
+        for time_line, text in entries
+    ]
+    entries = [(time_line, text) for time_line, text in entries if text]
+
+noise_lines = {line for line, count in line_counts.items() if count == 1}
+if len(entries) > 10:
+    entries = [
+        (time_line, '\n'.join(ln for ln in text.split('\n') if ln.strip() and ln.strip() not in noise_lines))
+        for time_line, text in entries
+    ]
+    entries = [(time_line, text) for time_line, text in entries if text]
 
 def clean_text(t):
     t = re.sub(r'^1[\n\s]*', '', t)
