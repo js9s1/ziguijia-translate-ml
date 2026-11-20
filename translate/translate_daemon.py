@@ -143,6 +143,7 @@ _QUIT = False
 _ACTIVE = 0
 _ACTIVE_LOCK = threading.Lock()
 _MODEL_LOADED = threading.Event()  # set once any worker has loaded the model
+_MODEL_LOAD_LOCK = threading.Lock()  # serialize model loads across worker threads
 
 
 def _request_quit():
@@ -172,10 +173,19 @@ def _thread_model():
     if getattr(_WORKER_TL, "model", None) is not None:
         return _WORKER_TL.model, _WORKER_TL.tokenizer
 
+    # Loading two 1.8B checkpoints concurrently (NPU fallback + GPU worker)
+    # raced inside transformers/accelerate and left a model with mixed
+    # float32/float16 weights.  Serialize the loads.
+    with _MODEL_LOAD_LOCK:
+        if getattr(_WORKER_TL, "model", None) is not None:
+            return _WORKER_TL.model, _WORKER_TL.tokenizer
+        return _load_thread_model()
+
+
+def _load_thread_model():
+    import hy_mt
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
-
-    import hy_mt
 
     warnings.filterwarnings("ignore")
     model_path = hy_mt.MODEL_PATH

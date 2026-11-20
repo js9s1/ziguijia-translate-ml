@@ -259,3 +259,50 @@ class TestRunWhisperCkpt:
         assert result == str(out / "whisper.srt")
         run.assert_not_called()
         ckpt.mark.assert_not_called()
+
+
+class TestRunTranslateCkpt:
+    def test_retries_in_process_on_failure(self, tmp_path, monkeypatch):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return mock.Mock(returncode=1 if len(calls) == 1 else 0)
+
+        monkeypatch.setattr(pipeline.subprocess, "run", mock.Mock(side_effect=fake_run))
+        ckpt = mock.Mock()
+        ckpt.done.return_value = False
+
+        result = pipeline.run_translate_ckpt(
+            "in.srt",
+            str(tmp_path),
+            "CODE",
+            ckpt,
+            mock.Mock(),
+            str(tmp_path / "job.log"),
+            "en",
+        )
+
+        assert len(calls) == 2
+        assert "--mode" not in calls[0]
+        assert calls[1][-2:] == ["--mode", "direct"]
+        ckpt.mark.assert_called_once_with("translate")
+        assert result == str(tmp_path / "translated.srt")
+
+    def test_success_does_not_retry(self, tmp_path, monkeypatch):
+        run = mock.Mock(return_value=mock.Mock(returncode=0))
+        monkeypatch.setattr(pipeline.subprocess, "run", run)
+        ckpt = mock.Mock()
+        ckpt.done.return_value = False
+
+        pipeline.run_translate_ckpt(
+            "in.srt",
+            str(tmp_path),
+            "CODE",
+            ckpt,
+            mock.Mock(),
+            str(tmp_path / "job.log"),
+            "en",
+        )
+
+        assert run.call_count == 1

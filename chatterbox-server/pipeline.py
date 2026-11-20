@@ -519,13 +519,24 @@ def run_translate_ckpt(
         log_fh.write(f"+ {' '.join(cmd)}\n")
         log_fh.flush()
 
-    with open(log_file, "a") as log_fh:
-        result = subprocess.run(
-            cmd,
-            stdout=log_fh,
-            stderr=subprocess.STDOUT,
-            check=False,
-        )
+    # First try the warm daemon.  If it fails (transient GPU/model state),
+    # retry in-process — this bypasses a potentially corrupt daemon worker.
+    result = None
+    for attempt, attempt_cmd in enumerate((cmd, [*cmd, "--mode", "direct"]), 1):
+        if attempt > 1:
+            job_log(access_code, output_dir, "  ⚠ translation failed — retrying in-process")
+            with open(log_file, "a") as log_fh:
+                log_fh.write(f"+ retry: {' '.join(attempt_cmd)}\n")
+                log_fh.flush()
+        with open(log_file, "a") as log_fh:
+            result = subprocess.run(
+                attempt_cmd,
+                stdout=log_fh,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+        if result.returncode == 0:
+            break
 
     if result.returncode != 0:
         raise RuntimeError(f"translate_srt exited with code {result.returncode}")
