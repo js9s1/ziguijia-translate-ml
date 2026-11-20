@@ -49,12 +49,39 @@ CHATTERBOX_T3_MODEL = os.environ.get("CHATTERBOX_T3_MODEL", "v3")
 # It is shared across daemon worker threads (one model instance, serialized
 # generation) because two 2B instances would exhaust this host's RAM.
 VOXCPM_MODEL = os.environ.get("VOXCPM_MODEL", "openbmb/VoxCPM2")
+# 2.0 is what VoxCPM2's own examples use: it keeps the cloned timbre without
+# the repetition artifacts higher guidance introduces on short cues.
 VOXCPM_CFG_VALUE = float(os.environ.get("VOXCPM_CFG_VALUE", "2.0"))
+# 10 diffusion steps is the quality/latency knee on this GPU; the checkpoints
+# were published with 10 and 20+ only sharpens fine detail at ~2x cost.
 VOXCPM_INFERENCE_TIMESTEPS = int(os.environ.get("VOXCPM_INFERENCE_TIMESTEPS", "10"))
 # -1 lets VoxCPM sample a fresh seed each request; 42 is deterministic.
 VOXCPM_SEED = int(os.environ.get("VOXCPM_SEED", "42"))
 VOXCPM_OPTIMIZE = os.environ.get("VOXCPM_OPTIMIZE", "0").lower() in ("1", "true", "yes")
-VOXCPM_RETRY_BADCASE = os.environ.get("VOXCPM_RETRY_BADCASE", "0").lower() in ("1", "true", "yes")
+# Continuation cloning on 1-2 s subtitle cues is where VoxCPM2 runs away, so
+# retry the (at most 3) bad cases instead of emitting a 30 s segment.
+VOXCPM_RETRY_BADCASE = os.environ.get("VOXCPM_RETRY_BADCASE", "1").lower() in ("1", "true", "yes")
+# Audio-to-text ratio that counts as a bad case.  The library default (6.0)
+# only fires at ~38 s for a 10-character cue; 2.0 still allows expressive
+# delivery but catches repetition loops while they are still short.
+VOXCPM_RETRY_RATIO = float(os.environ.get("VOXCPM_RETRY_RATIO", "2.0"))
+# Hi-fi ("ultimate") cloning: prime the model with the reference clip *and*
+# its verbatim transcript so it continues the speaker instead of only
+# borrowing their timbre.  Falls back to reference-only cloning when no
+# transcript is available.
+VOXCPM_HIFI_CLONE = os.environ.get("VOXCPM_HIFI_CLONE", "1").lower() in ("1", "true", "yes")
+# Short (5-10 s), clean, single-clause clip of the same speaker.  The default
+# is a 5.6 s cut of std_ning.wav (35.62-41.22 s) paired with
+# ning_prompt.txt next to it.  Jobs that pass the long std_ning.wav default
+# explicitly are upgraded to this clip, otherwise hi-fi cloning would have no
+# transcript to work with.
+VOXCPM_PROMPT_WAV = os.environ.get(
+    "VOXCPM_PROMPT_WAV",
+    os.path.join(ASSETS_DIR, "ning_prompt.wav"),
+)
+# Optional inline transcript for VOXCPM_PROMPT_WAV.  Leave empty to read the
+# <prompt>.txt sidecar, which is what speaker-specific *_voice.wav files use.
+VOXCPM_PROMPT_TEXT = os.environ.get("VOXCPM_PROMPT_TEXT", "")
 GEN_AUDIO_SCRIPT = os.environ.get(
     "GEN_AUDIO_SCRIPT",
     os.path.join(PROJECT_ROOT, "gen_audio", "gen_audio.py"),

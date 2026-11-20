@@ -29,7 +29,7 @@ class TestAudioParamSchema:
         schema = get_audio_param_schema("tts", "yue")
         assert schema["engine"] == "voxcpm"
         keys = {field["key"] for field in schema["fields"]}
-        assert keys == {"cfg_value", "inference_timesteps", "seed", "retry_badcase"}
+        assert keys == {"cfg_value", "inference_timesteps", "seed", "retry_badcase", "hifi_clone"}
 
     def test_english_schema(self):
         schema = get_audio_param_schema("srt", "en")
@@ -64,6 +64,11 @@ class TestNormalizeAudioParams:
         )
         assert params["cfg_value"] == 3.0
         assert params["inference_timesteps"] == 5
+
+    def test_hifi_clone_passthrough(self):
+        params = normalize_audio_params('{"hifi_clone": false}', "yue")
+        assert params["hifi_clone"] is False
+        assert normalize_audio_params(None, "yue")["hifi_clone"] is True
 
     def test_legacy_flat_fallback(self):
         params = normalize_audio_params(

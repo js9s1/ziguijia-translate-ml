@@ -93,14 +93,16 @@ def _voxcpm_fields() -> list[dict[str, Any]]:
     try:
         from config import (
             VOXCPM_CFG_VALUE,
+            VOXCPM_HIFI_CLONE,
             VOXCPM_INFERENCE_TIMESTEPS,
             VOXCPM_RETRY_BADCASE,
             VOXCPM_SEED,
         )
     except Exception:
         VOXCPM_CFG_VALUE = 2.0
+        VOXCPM_HIFI_CLONE = True
         VOXCPM_INFERENCE_TIMESTEPS = 10
-        VOXCPM_RETRY_BADCASE = False
+        VOXCPM_RETRY_BADCASE = True
         VOXCPM_SEED = 42
 
     return [
@@ -112,7 +114,7 @@ def _voxcpm_fields() -> list[dict[str, Any]]:
             "max": 3.0,
             "step": 0.05,
             "default": float(VOXCPM_CFG_VALUE),
-            "help": "VoxCPM2 CFG guidance；默认 2.0",
+            "help": "VoxCPM2 CFG guidance；2.0 音色最稳，>2.5 易重复",
         },
         {
             "key": "inference_timesteps",
@@ -122,7 +124,7 @@ def _voxcpm_fields() -> list[dict[str, Any]]:
             "max": 30,
             "step": 1,
             "default": int(VOXCPM_INFERENCE_TIMESTEPS),
-            "help": "越高越慢，通常 10 足够",
+            "help": "10 是质量/速度拐点；16+ 只提升细节",
         },
         {
             "key": "seed",
@@ -139,7 +141,14 @@ def _voxcpm_fields() -> list[dict[str, Any]]:
             "label": "Badcase 重试",
             "type": "bool",
             "default": bool(VOXCPM_RETRY_BADCASE),
-            "help": "音频明显过长/异常时自动重试",
+            "help": "音频明显过长时换种子重试（最多 3 次）",
+        },
+        {
+            "key": "hifi_clone",
+            "label": "Hi-fi 克隆",
+            "type": "bool",
+            "default": bool(VOXCPM_HIFI_CLONE),
+            "help": "用参考片段+文稿复刻语气；关闭则仅克隆音色",
         },
     ]
 

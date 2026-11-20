@@ -138,6 +138,7 @@ var _AUDIO_PARAM_LABELS = {
     inference_timesteps: '推理步数',
     seed: '种子',
     retry_badcase: 'Badcase重试',
+    hifi_clone: 'Hi-fi克隆',
     temperature: '温度',
     cfg_weight: 'CFG权重',
     exaggeration: '夸张度',
@@ -254,10 +255,11 @@ function _fallbackAudioSchema(language) {
             engine: 'voxcpm',
             engine_label: 'VoxCPM2',
             fields: [
-                { key: 'cfg_value', label: 'CFG / 引导强度', type: 'float', min: 1.0, max: 3.0, step: 0.05, default: 2.0, help: 'VoxCPM2 CFG guidance；默认 2.0' },
-                { key: 'inference_timesteps', label: '推理步数', type: 'int', min: 5, max: 30, step: 1, default: 10, help: '越高越慢，通常 10 足够' },
+                { key: 'cfg_value', label: 'CFG / 引导强度', type: 'float', min: 1.0, max: 3.0, step: 0.05, default: 2.0, help: 'VoxCPM2 CFG guidance；2.0 音色最稳，>2.5 易重复' },
+                { key: 'inference_timesteps', label: '推理步数', type: 'int', min: 5, max: 30, step: 1, default: 10, help: '10 是质量/速度拐点；16+ 只提升细节' },
                 { key: 'seed', label: '随机种子', type: 'int', min: -1, max: 2147483647, step: 1, default: 42, help: '-1 表示每次随机' },
-                { key: 'retry_badcase', label: 'Badcase 重试', type: 'bool', default: false, help: '音频明显过长/异常时自动重试' },
+                { key: 'retry_badcase', label: 'Badcase 重试', type: 'bool', default: true, help: '音频明显过长时换种子重试（最多 3 次）' },
+                { key: 'hifi_clone', label: 'Hi-fi 克隆', type: 'bool', default: true, help: '用参考片段+文稿复刻语气；关闭则仅克隆音色' },
             ],
         };
     }

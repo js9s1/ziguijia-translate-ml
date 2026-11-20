@@ -12,6 +12,9 @@ swaps when the next request needs the other language.
 Target language ``yue`` (Cantonese) uses a shared VoxCPM2 2B model instead of
 Chatterbox.  VoxCPM2 is too large to duplicate per worker, so one instance is
 kept for the whole daemon and its generations are serialized with a lock.
+Voice cloning runs in hi-fi ("ultimate") mode: the reference clip is paired
+with its verbatim transcript so the model continues the speaker's delivery,
+falling back to reference-only cloning when no transcript exists.
 
 A global thermal gate pauses all workers while the GPU is above
 GEN_AUDIO_TEMP_LIMIT and resumes them once it cools to
@@ -58,7 +61,8 @@ Protocol (newline-delimited JSON per request, connection-per-request):
             "prompt_file": "/path/or/null", "temperature": 0.6,
             "cfg_weight": 0.5, "exaggeration": 0.5,
             "params": {"cfg_value": 2.0, "inference_timesteps": 10,
-                       "seed": 42, "retry_badcase": false},
+                       "seed": 42, "retry_badcase": true,
+                       "hifi_clone": true},
             "attempt": 0,
             "output_path": "/path/segment.wav"}
   response {"ok": true, "duration": 1.23, "sr": 24000}
@@ -115,10 +119,14 @@ from config import (  # noqa: E402
     GEN_AUDIO_DAEMON_PID,
     GEN_AUDIO_DAEMON_SOCK,
     VOXCPM_CFG_VALUE,
+    VOXCPM_HIFI_CLONE,
     VOXCPM_INFERENCE_TIMESTEPS,
     VOXCPM_MODEL,
     VOXCPM_OPTIMIZE,
+    VOXCPM_PROMPT_TEXT,
+    VOXCPM_PROMPT_WAV,
     VOXCPM_RETRY_BADCASE,
+    VOXCPM_RETRY_RATIO,
     VOXCPM_SEED,
 )
 
@@ -296,12 +304,61 @@ class _VoxCPMBackend:
 
     ``VoxCPM.generate`` returns a 1-D NumPy waveform at 48 kHz; the daemon
     expects a ``[1, n]`` torch tensor and a ``.sr`` attribute.
+
+    With hi-fi ("ultimate") cloning enabled, the reference clip is also used
+    as the continuation prompt together with its transcript, which is what
+    VoxCPM2 needs to reproduce a speaker's rhythm and tone rather than just
+    their timbre.  A clip only joins that path when a transcript is actually
+    available for it (inline ``VOXCPM_PROMPT_TEXT`` for the default prompt,
+    otherwise a ``<clip>.txt`` sidecar) — a mismatched transcript is worse
+    than plain reference cloning.
     """
 
     def __init__(self, model, device: str):
         self.model = model
         self.device = device
         self.sr = int(model.tts_model.sample_rate)
+
+    @staticmethod
+    def _transcript_for(wav_path: str) -> str:
+        if VOXCPM_PROMPT_TEXT and os.path.abspath(wav_path) == os.path.abspath(VOXCPM_PROMPT_WAV):
+            return VOXCPM_PROMPT_TEXT.strip()
+        sidecar = os.path.splitext(wav_path)[0] + ".txt"
+        try:
+            with open(sidecar, encoding="utf-8") as f:
+                return f.read().strip()
+        except OSError:
+            return ""
+
+    def _reference_clip(self, prompt_file: str | None) -> str | None:
+        """Pick the clip to clone (transcript availability is checked later)."""
+        requested = prompt_file if prompt_file and os.path.exists(prompt_file) else None
+        if requested:
+            if self._transcript_for(requested):
+                return requested
+            # The pipeline passes the long default clip explicitly even when
+            # the caller did not choose a speaker.  Upgrade that bare default
+            # to the curated short clip, which is the only one with a
+            # transcript — otherwise hi-fi cloning silently degrades to
+            # reference-only.  Speaker-specific clips are never swapped.
+            if (
+                os.path.abspath(requested) == os.path.abspath(AUDIO_PROMPT_PATH)
+                and os.path.exists(VOXCPM_PROMPT_WAV)
+            ):
+                return VOXCPM_PROMPT_WAV
+            return requested
+        if os.path.exists(VOXCPM_PROMPT_WAV):
+            return VOXCPM_PROMPT_WAV
+        return AUDIO_PROMPT_PATH if os.path.exists(AUDIO_PROMPT_PATH) else None
+
+    def describe(self) -> str:
+        clip = self._reference_clip(None)
+        if not clip:
+            return "no reference (voice design from text)"
+        mode = "reference-only clone"
+        if VOXCPM_HIFI_CLONE and self._transcript_for(clip):
+            mode = "hi-fi clone (clip + transcript)"
+        return f"{mode}: {clip}"
 
     def generate(self, text: str, prompt_file: str | None, params: dict | None = None, attempt: int = 0):
         import numpy as np
@@ -326,10 +383,17 @@ class _VoxCPMBackend:
         if seed >= 0 and attempt > 0:
             seed += attempt
         retry_badcase = _param("retry_badcase", VOXCPM_RETRY_BADCASE, bool)
+        hifi_clone = _param("hifi_clone", VOXCPM_HIFI_CLONE, bool)
 
         kwargs = {}
-        reference = prompt_file if prompt_file and os.path.exists(prompt_file) else AUDIO_PROMPT_PATH
-        if reference and os.path.exists(reference):
+        reference = self._reference_clip(prompt_file)
+        prompt_text = self._transcript_for(reference) if (hifi_clone and reference) else ""
+        if reference:
+            if prompt_text:
+                # Same file on both paths: the upstream README calls this the
+                # maximum-similarity setup (isolated timbre + continuation).
+                kwargs["prompt_wav_path"] = reference
+                kwargs["prompt_text"] = prompt_text
             kwargs["reference_wav_path"] = reference
 
         with _GenerationGuard(), _VOXCPM_GEN_LOCK:
@@ -338,6 +402,7 @@ class _VoxCPMBackend:
                 cfg_value=cfg_value,
                 inference_timesteps=timesteps,
                 retry_badcase=retry_badcase,
+                retry_badcase_ratio_threshold=VOXCPM_RETRY_RATIO,
                 seed=seed if seed >= 0 else None,
                 **kwargs,
             )
@@ -367,6 +432,7 @@ def _load_voxcpm():
     )
     backend = _VoxCPMBackend(model, device)
     print(f"[daemon] VoxCPM2 Cantonese model ready ({device}, sr={backend.sr})")
+    print(f"[daemon] VoxCPM2 voice: {backend.describe()}")
     return backend
 
 

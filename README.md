@@ -118,6 +118,12 @@ next to the Vulkan binary, or point `WHISPER_LIB_DIR` at them. Rebuild with
 - **Cantonese (`yue`)** — uses VoxCPM2 (2B, 48 kHz) instead of Chatterbox. One
   shared instance serves the daemon and generations are serialized; translation
   modes are UI-hidden for this language.
+- **VoxCPM2 cloning is hi-fi by default** — `assets/ning_prompt.wav` (5.6 s cut
+  of `std_ning.wav`) plus its verbatim `ning_prompt.txt` transcript are passed as
+  the continuation prompt *and* the isolated reference, which is VoxCPM2's
+  maximum-similarity setup. A speaker-specific `{speaker}_voice.wav` joins the
+  hi-fi path only when a matching `{speaker}_voice.txt` exists; otherwise it
+  falls back to reference-only cloning.
 - **Engine-specific audio parameters** — the web UI fetches
   `/api/param-schema?pipeline=…&language=…` and renders only the controls for
   the selected engine (Chatterbox vs VoxCPM2).

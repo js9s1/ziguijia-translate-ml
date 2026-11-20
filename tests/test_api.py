@@ -35,7 +35,7 @@ class TestLanguagesEndpoint:
         data = resp.get_json()
         assert data["engine"] == "voxcpm"
         keys = {field["key"] for field in data["fields"]}
-        assert keys == {"cfg_value", "inference_timesteps", "seed", "retry_badcase"}
+        assert keys == {"cfg_value", "inference_timesteps", "seed", "retry_badcase", "hifi_clone"}
 
 
 class TestStaticPages:
