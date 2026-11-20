@@ -272,7 +272,7 @@ def normalize_job_params(
     video_submitted = submitted.get("video")
     video_submitted = video_submitted if isinstance(video_submitted, dict) else {}
     video = {}
-    for key in ("mode", "blur", "ocr_mode", "ocr_only"):
+    for key in ("mode", "blur", "ocr_mode", "ocr_only", "extract_engine"):
         value = video_submitted.get(key, fallback.get(key))
         if value is not None:
             video[key] = value
@@ -319,7 +319,7 @@ def get_video_params(job_data: dict[str, Any]) -> dict[str, Any]:
     params = get_job_params(job_data)
     video = params.get("video", {})
     out = {}
-    for key in ("mode", "blur", "ocr_mode", "ocr_only"):
+    for key in ("mode", "blur", "ocr_mode", "ocr_only", "extract_engine"):
         value = video.get(key, job_data.get(key))
         if value is not None:
             out[key] = value

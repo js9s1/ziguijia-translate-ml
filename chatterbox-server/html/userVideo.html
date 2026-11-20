@@ -33,11 +33,11 @@
                 <select id="mode" name="mode"></select>
             </div>
 
-            <div class="form-row hidden" id="ocrOnlyRow">
-                <label>仅OCR提取字幕（不翻译）</label>
-                <div style="display:flex;gap:8px;align-items:center;padding-top:4px;">
-                    <span><input type="radio" name="ocr_only" value="yes" checked> 是</span>
-                    <span><input type="radio" name="ocr_only" value="no"> 否</span>
+            <div class="form-row hidden" id="extractEngineRow">
+                <label>字幕提取引擎</label>
+                <div style="padding-top:4px;">
+                    <div><input type="radio" name="extract_engine" value="ocr" checked> 画面字幕识别（OCR）</div>
+                    <div><input type="radio" name="extract_engine" value="whisper"> 语音识别（Whisper）</div>
                 </div>
             </div>
             <div class="form-row">
@@ -82,14 +82,17 @@
                 if (mode === 'srt') {
                     formData.append('srt_file', document.getElementById('srt_file').files[0]);
                     url = '/video/custom/process';
-                } else if (mode === 'auto') {
-                    url = '/video/custom/auto-process';
+                } else if (mode === 'extract-srt') {
+                    formData.append('extract_engine', getExtractEngineValue());
+                    url = '/video/custom/extract-srt-process';
+                } else if (mode === 'translate-only') {
+                    formData.append('extract_engine', getExtractEngineValue());
+                    url = '/video/custom/translate-only-process';
                 } else {
-                    formData.append('ocr_mode', mode === 'ocr-translate-only' ? 'translate-only' : 'full');
-                    if (mode === 'ocr-translate-only') {
-                        formData.append('ocr_only', getOcrOnlyValue());
-                    }
-                    url = '/video/custom/ocr-process';
+                    // mode === 'full': engine radio picks OCR or Whisper extraction
+                    var engine = getExtractEngineValue();
+                    formData.append('extract_engine', engine);
+                    url = engine === 'whisper' ? '/video/custom/auto-process' : '/video/custom/ocr-process';
                 }
 
                 submitJob(url, formData, 'checkProgressLink', '/video/custom');

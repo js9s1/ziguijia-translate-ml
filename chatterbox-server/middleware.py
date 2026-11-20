@@ -176,6 +176,7 @@ def parse_job_params(source: dict) -> dict:
         "blur": video.get("blur", source.get("blur", "yes")),
         "ocr_only": video.get("ocr_only", source.get("ocr_only")),
         "ocr_mode": video.get("ocr_mode", source.get("ocr_mode")),
+        "extract_engine": video.get("extract_engine", source.get("extract_engine")),
         "filename": output.get("filename", source.get("filename")),
     }
 

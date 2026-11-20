@@ -35,11 +35,11 @@
                 <select id="mode" name="mode"></select>
             </div>
 
-            <div class="form-row hidden" id="ocrOnlyRow">
-                <label>仅OCR提取字幕（不翻译）</label>
-                <div style="display:flex;gap:8px;align-items:center;padding-top:4px;">
-                    <span><input type="radio" name="ocr_only" value="yes" checked> 是</span>
-                    <span><input type="radio" name="ocr_only" value="no"> 否</span>
+            <div class="form-row hidden" id="extractEngineRow">
+                <label>字幕提取引擎</label>
+                <div style="padding-top:4px;">
+                    <div><input type="radio" name="extract_engine" value="ocr" checked> 画面字幕识别（OCR）</div>
+                    <div><input type="radio" name="extract_engine" value="whisper"> 语音识别（Whisper）</div>
                 </div>
             </div>
 
@@ -84,14 +84,17 @@
                 if (mode === 'srt') {
                     formData.append('srt_file', document.getElementById('srt_file').files[0]);
                     _submitUrl = '/video/ning/process';
-                } else if (mode === 'auto') {
-                    _submitUrl = '/video/ning/auto-process';
+                } else if (mode === 'extract-srt') {
+                    formData.append('extract_engine', getExtractEngineValue());
+                    _submitUrl = '/video/ning/extract-srt-process';
+                } else if (mode === 'translate-only') {
+                    formData.append('extract_engine', getExtractEngineValue());
+                    _submitUrl = '/video/ning/translate-only-process';
                 } else {
-                    formData.append('ocr_mode', mode === 'ocr-translate-only' ? 'translate-only' : 'full');
-                    if (mode === 'ocr-translate-only') {
-                        formData.append('ocr_only', getOcrOnlyValue());
-                    }
-                    _submitUrl = '/video/ning/ocr-process';
+                    // mode === 'full': engine radio picks OCR or Whisper extraction
+                    var engine = getExtractEngineValue();
+                    formData.append('extract_engine', engine);
+                    _submitUrl = engine === 'whisper' ? '/video/ning/auto-process' : '/video/ning/ocr-process';
                 }
 
                 submitJob(_submitUrl, formData, 'checkProgressLink', '/video/ning');
@@ -113,17 +116,9 @@
             var btnRow = document.createElement('div');
             btnRow.style.cssText = 'display:flex;gap:12px;justify-content:flex-end;';
 
-            var cachedMode = document.getElementById('mode').value;
-
             function doResubmit(extraParams) {
                 var fd = new FormData(document.getElementById('videoForm'));
                 for (var k in extraParams) { fd.set(k, extraParams[k]); }
-                if (cachedMode === 'ocr' || cachedMode === 'ocr-translate-only') {
-                    fd.set('ocr_mode', cachedMode === 'ocr-translate-only' ? 'translate-only' : 'full');
-                }
-                if (cachedMode === 'ocr-translate-only') {
-                    fd.set('ocr_only', getOcrOnlyValue());
-                }
                 overlay.classList.add('active');
                 fetchWithCsrf(_submitUrl, {
                     method: 'POST',

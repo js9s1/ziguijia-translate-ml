@@ -320,3 +320,135 @@ def video_custom_ocr_process():
         **kwargs,
     )
     return jsonify(result)
+
+
+# ── Extract-SRT-only routes ───────────────────────────────
+
+
+_EXTRACT_ENGINES = ("ocr", "whisper")
+
+
+def _parse_extract_engine(params: dict) -> str:
+    engine = str(params.get("extract_engine") or "ocr").strip().lower()
+    if engine not in _EXTRACT_ENGINES:
+        raise ValueError("Invalid extract_engine (use 'ocr' or 'whisper')")
+    return engine
+
+
+@video_bp.route("/video/custom/extract-srt-process", methods=["POST"])
+@login_required
+@csrf_required
+@api_endpoint
+def video_custom_extract_srt_process():
+    if "video_file" not in request.files:
+        return jsonify({"error": "No video file uploaded"}), 400
+
+    video_file = request.files["video_file"]
+    validate_file_upload(video_file, "video")
+    params = parse_job_params(request.form)
+    engine = _parse_extract_engine(params)
+
+    process_video_extract_srt = _lazy("video_custom_job", "process_video_extract_srt")
+    result = process_video_extract_srt(video_file, engine, session["user_id"])
+    return jsonify(result)
+
+
+@video_bp.route("/video/ning/extract-srt-process", methods=["POST"])
+@login_required
+@csrf_required
+@api_endpoint
+def video_ning_extract_srt_process():
+    number = request.form.get("number")
+    if not number:
+        return jsonify({"error": "No video number provided"}), 400
+
+    params = parse_job_params(request.form)
+    engine = _parse_extract_engine(params)
+    process_video_ning_extract_srt = _lazy("video_ning_job", "process_video_ning_extract_srt")
+    find_cached = _lazy("video_ning_job", "_find_cached_video")
+
+    def _process(**kwargs):
+        return jsonify(
+            process_video_ning_extract_srt(
+                number,
+                engine,
+                session["user_id"],
+                **kwargs,
+            )
+        )
+
+    return _video_process_with_cache(number, find_cached, _process, params.get("blur", "yes"))
+
+
+@video_bp.route("/video/ning/translate-only-process", methods=["POST"])
+@login_required
+@csrf_required
+@api_endpoint
+def video_ning_translate_only_process():
+    number = request.form.get("number")
+    if not number:
+        return jsonify({"error": "No video number provided"}), 400
+
+    params = parse_job_params(request.form)
+    if _is_cantonese(params["target_language"]):
+        return _cantonese_translation_error()
+    engine = _parse_extract_engine(params)
+    find_cached = _lazy("video_ning_job", "_find_cached_video")
+
+    def _process(**kwargs):
+        if engine == "whisper":
+            process = _lazy("video_ning_job", "process_video_ning_whisper_translate_only")
+            return jsonify(
+                process(number, params["target_language"], session["user_id"], **kwargs)
+            )
+        process = _lazy("video_ning_job", "process_video_ning_ocr_translate_only")
+        return jsonify(
+            process(
+                number,
+                params["temperature"],
+                session["user_id"],
+                params.get("blur", "yes"),
+                target_language=params["target_language"],
+                cfg_weight=params["cfg_weight"],
+                exaggeration=params["exaggeration"],
+                audio_params=params["audio_params"],
+                ocr_only="no",
+                **kwargs,
+            )
+        )
+
+    return _video_process_with_cache(number, find_cached, _process, params.get("blur", "yes"))
+
+
+@video_bp.route("/video/custom/translate-only-process", methods=["POST"])
+@login_required
+@csrf_required
+@api_endpoint
+def video_custom_translate_only_process():
+    if "video_file" not in request.files:
+        return jsonify({"error": "No video file uploaded"}), 400
+
+    video_file = request.files["video_file"]
+    validate_file_upload(video_file, "video")
+    params = parse_job_params(request.form)
+    if _is_cantonese(params["target_language"]):
+        return _cantonese_translation_error()
+    engine = _parse_extract_engine(params)
+
+    if engine == "whisper":
+        process_video_translate_only = _lazy("video_custom_job", "process_video_whisper_translate_only")
+        result = process_video_translate_only(video_file, params["target_language"], session["user_id"])
+    else:
+        process_video_translate_only = _lazy("video_custom_job", "process_video_ocr_translate_only")
+        result = process_video_translate_only(
+            video_file,
+            params["temperature"],
+            session["user_id"],
+            params.get("blur", "yes"),
+            target_language=params["target_language"],
+            cfg_weight=params["cfg_weight"],
+            exaggeration=params["exaggeration"],
+            audio_params=params["audio_params"],
+            ocr_only="no",
+        )
+    return jsonify(result)

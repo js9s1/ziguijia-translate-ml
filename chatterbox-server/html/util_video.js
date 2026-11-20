@@ -3,15 +3,15 @@
 var VIDEO_MODE_OPTIONS = {
     ning: [
         { v: 'srt', l: '上传SRT字幕' },
-        { v: 'auto', l: '语音识别翻译（Whisper + HY-MT）' },
-        { v: 'ocr', l: 'OCR识别翻译（RapidVideOCR + HY-MT）' },
-        { v: 'ocr-translate-only', l: 'OCR识别并生成翻译字幕（不生成音频/视频）' },
+        { v: 'extract-srt', l: '提取SRT字幕（仅识别，不翻译）' },
+        { v: 'translate-only', l: '识别并翻译字幕（不生成音频/视频）' },
+        { v: 'full', l: '识别翻译并生成配音视频' },
     ],
     custom: [
         { v: 'srt', l: '上传SRT字幕' },
-        { v: 'auto', l: '语音识别翻译（Whisper + HY-MT）' },
-        { v: 'ocr', l: 'OCR识别翻译（RapidVideOCR + HY-MT）' },
-        { v: 'ocr-translate-only', l: 'OCR识别并生成翻译字幕（不生成音频/视频）' },
+        { v: 'extract-srt', l: '提取SRT字幕（仅识别，不翻译）' },
+        { v: 'translate-only', l: '识别并翻译字幕（不生成音频/视频）' },
+        { v: 'full', l: '识别翻译并生成配音视频' },
     ],
 };
 
@@ -28,8 +28,9 @@ function _buildVideoModeSelect(pageType, langCode) {
     var current = sel.value;
     sel.innerHTML = '';
     options.forEach(function(o) {
-        // Cantonese has no translation pipeline: only "upload SRT" is valid.
-        if (cantonese && o.v !== 'srt') return;
+        // Cantonese has no translation pipeline: only "upload SRT" and
+        // "extract SRT only" (no translation involved) are valid.
+        if (cantonese && o.v !== 'srt' && o.v !== 'extract-srt') return;
         var opt = document.createElement('option');
         opt.value = o.v;
         opt.textContent = o.l;
@@ -62,7 +63,7 @@ function _syncVideoModeVisibility() {
     var mode = document.getElementById('mode');
     if (!mode) return;
     _toggleSrtSection(mode.value);
-    _toggleOcrOnlyRadio(mode.value);
+    _toggleExtractEngineRow(mode.value);
     _toggleAudioParams(mode.value);
     _toggleBlurRow(mode.value);
 }
@@ -80,27 +81,27 @@ function _toggleSrtSection(mode) {
     }
 }
 
-function _toggleOcrOnlyRadio(mode) {
-    var row = document.getElementById('ocrOnlyRow');
+function _toggleExtractEngineRow(mode) {
+    var row = document.getElementById('extractEngineRow');
     if (!row) return;
-    row.classList.toggle('hidden', mode !== 'ocr-translate-only');
+    row.classList.toggle('hidden', !(mode === 'extract-srt' || mode === 'translate-only' || mode === 'full'));
 }
 
 function _toggleAudioParams(mode) {
     var el = document.getElementById('floatSliders');
     if (!el) return;
-    el.classList.toggle('hidden', mode === 'ocr-translate-only');
+    el.classList.toggle('hidden', mode === 'extract-srt' || mode === 'translate-only');
 }
 
 function _toggleBlurRow(mode) {
     var el = document.getElementById('blurRow');
     if (!el) return;
-    el.classList.toggle('hidden', mode === 'ocr-translate-only');
+    el.classList.toggle('hidden', mode === 'extract-srt' || mode === 'translate-only');
 }
 
-function getOcrOnlyValue() {
-    var el = document.querySelector('input[name="ocr_only"]:checked');
-    return el ? el.value : 'yes';
+function getExtractEngineValue() {
+    var el = document.querySelector('input[name="extract_engine"]:checked');
+    return el ? el.value : 'ocr';
 }
 
 function collectCommonVideoFields(formData) {
@@ -112,6 +113,8 @@ function collectCommonVideoFields(formData) {
     if (modeEl) video.mode = modeEl.value;
     var blurEl = document.querySelector('input[name="blur"]:checked');
     if (blurEl) video.blur = blurEl.value;
+    var extractEngineEl = document.querySelector('input[name="extract_engine"]:checked');
+    if (extractEngineEl) video.extract_engine = extractEngineEl.value;
     formData.append('job_params', JSON.stringify({ audio: audioParams, video: video }));
     return formData;
 }

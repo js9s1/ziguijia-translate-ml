@@ -266,6 +266,108 @@ def process_video_ning_ocr_translate_only(
     return {"access_code": job_access_code, "message": "OCR translate-only job queued"}
 
 
+def _run_video_ning_whisper_translate_only_job(job_data: dict):
+    """Download → extract audio → Whisper → translate → SRT only.  No audio/video."""
+    video_number = job_data["video_number"]
+    access_code = job_data["access_code"]
+    output_dir = job_data["output_dir"]
+    target_language = job_data.get("target_language", "en")
+
+    os.makedirs(output_dir, exist_ok=True)
+    log_file = os.path.join(output_dir, "job.log")
+
+    with open_proc_log(log_file) as (proc_log, _):
+        valid_steps = ["download", "extract_audio", "whisper", "translate"]
+        ckpt = CheckpointHelper(access_code, output_dir, valid_steps)
+
+        video_path = run_download_ckpt(video_number, output_dir, access_code, ckpt, proc_log, job_data)
+        audio_path = run_extract_audio_ckpt(video_path, output_dir, access_code, ckpt, proc_log)
+        run_translate_ckpt(
+            run_whisper_ckpt(audio_path, output_dir, access_code, ckpt, proc_log),
+            output_dir,
+            access_code,
+            ckpt,
+            proc_log,
+            log_file,
+            target_language,
+            intro_marker=MARKER_INTRO,
+            outro_marker=MARKER_OUTRO,
+        )
+        job_log(access_code, output_dir, "Done! Whisper → translation complete (audio/video skipped)")
+
+
+def process_video_ning_whisper_translate_only(
+    number: str,
+    target_language: str = "en",
+    user_id: int = None,
+    cached_path: str | None = None,
+) -> dict:
+    access_code = str(uuid.uuid4())[:8].upper()
+    output_dir = os.path.join(VIDEO_DIR, f"{number}-{access_code}")
+    os.makedirs(output_dir, exist_ok=True)
+
+    job_data = {
+        "video_number": number,
+        "output_dir": output_dir,
+        "access_code": access_code,
+        "target_language": target_language,
+    }
+    if cached_path:
+        job_data["cached_path"] = cached_path
+
+    job_access_code = get_job_queue().add_job(job_data, _run_video_ning_whisper_translate_only_job, user_id)
+    return {"access_code": job_access_code, "message": "Whisper translate-only job queued"}
+
+
+def _run_video_ning_extract_srt_job(job_data: dict):
+    """Download → OCR or Whisper → SRT only.  No translation/audio/video."""
+    video_number = job_data["video_number"]
+    access_code = job_data["access_code"]
+    output_dir = job_data["output_dir"]
+    engine = job_data.get("extract_engine") or "ocr"
+
+    os.makedirs(output_dir, exist_ok=True)
+    log_file = os.path.join(output_dir, "job.log")
+
+    with open_proc_log(log_file) as (proc_log, _):
+        if engine == "whisper":
+            valid_steps = ["download", "extract_audio", "whisper"]
+            ckpt = CheckpointHelper(access_code, output_dir, valid_steps)
+            video_path = run_download_ckpt(video_number, output_dir, access_code, ckpt, proc_log, job_data)
+            audio_path = run_extract_audio_ckpt(video_path, output_dir, access_code, ckpt, proc_log)
+            run_whisper_ckpt(audio_path, output_dir, access_code, ckpt, proc_log)
+            job_log(access_code, output_dir, "Done! Whisper extraction complete (whisper.srt)")
+        else:
+            valid_steps = ["download", "ocr"]
+            ckpt = CheckpointHelper(access_code, output_dir, valid_steps)
+            video_path = run_download_ckpt(video_number, output_dir, access_code, ckpt, proc_log, job_data)
+            run_ocr_only_step(video_path, output_dir, access_code, ckpt, proc_log)
+            job_log(access_code, output_dir, "Done! OCR extraction complete (ocr_screen.srt)")
+
+
+def process_video_ning_extract_srt(
+    number: str,
+    engine: str = "ocr",
+    user_id: int = None,
+    cached_path: str | None = None,
+) -> dict:
+    access_code = str(uuid.uuid4())[:8].upper()
+    output_dir = os.path.join(VIDEO_DIR, f"{number}-{access_code}")
+    os.makedirs(output_dir, exist_ok=True)
+
+    job_data = {
+        "video_number": number,
+        "output_dir": output_dir,
+        "access_code": access_code,
+        "extract_engine": engine,
+    }
+    if cached_path:
+        job_data["cached_path"] = cached_path
+
+    job_access_code = get_job_queue().add_job(job_data, _run_video_ning_extract_srt_job, user_id)
+    return {"access_code": job_access_code, "message": "SRT extraction job queued"}
+
+
 def _run_video_ning_auto_job(job_data: dict):
     """Download → extract audio → Whisper → translate → audio → video."""
     video_number = job_data["video_number"]
